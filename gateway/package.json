@@ -1,0 +1,19 @@
+{
+  "name": "databricks-exb-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Serves any Unity Catalog table as an ArcGIS FeatureServer for Experience Builder (provider vendored from koop-provider-databricks @ a08f6e7)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@databricks/sql": "1.12.0",
+    "@koopjs/koop-core": "10.4.17",
+    "cors": "2.8.6",
+    "dotenv": "16.6.1",
+    "express": "4.22.1",
+    "js-sql-parser": "1.6.0",
+    "uuid": "9.0.1"
+  }
+}

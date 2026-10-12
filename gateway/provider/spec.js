@@ -1,0 +1,116 @@
+/*
+  spec.js
+
+  Per-table layer spec for the generic gateway. The upstream provider reads one
+  geometry column / object id from config for every table; here each table is
+  inspected once (DESCRIBE + one sample row) and the result is scoped to the
+  request with AsyncLocalStorage, so model.js can keep its query builders.
+*/
+
+const { AsyncLocalStorage } = require('async_hooks')
+
+const store = new AsyncLocalStorage()
+const cache = new Map() // table -> { spec, at }
+const TTL_MS = parseInt(process.env.SPEC_TTL_MS) || 600000
+
+const ID_NAMES = ['objectid', 'oid', 'fid', 'bigid', 'id', 'object_id']
+const INT_TYPES = /^(tinyint|smallint|int|integer|bigint)$/
+const WKT_NAMES = ['geometry_wkt', 'geom_wkt', 'wkt', 'shape_wkt', 'geometry', 'geom', 'shape']
+const WKB_NAMES = ['geometry_wkb', 'geom_wkb', 'wkb', 'geometry', 'geom', 'shape']
+const LAT_NAMES = ['latitude', 'lat', 'y']
+const LON_NAMES = ['longitude', 'lon', 'lng', 'long', 'x']
+
+const ESRI_TYPE = {
+  point: 'esriGeometryPoint',
+  multipoint: 'esriGeometryMultipoint',
+  linestring: 'esriGeometryPolyline',
+  multilinestring: 'esriGeometryPolyline',
+  polygon: 'esriGeometryPolygon',
+  multipolygon: 'esriGeometryPolygon'
+}
+
+// Columns of a DESCRIBE result, stopping at the metadata sections
+function describeColumns (rows) {
+  const cols = []
+  for (const row of rows) {
+    if (!row.col_name || row.col_name.startsWith('#')) break
+    cols.push({ name: row.col_name, lname: row.col_name.toLowerCase(), type: String(row.data_type).toLowerCase() })
+  }
+  return cols
+}
+
+// Pick geometry source and object id from the column list. Returns null when the
+// table has no usable geometry or no integer id (ArcGIS needs a stable OBJECTID).
+function detect (cols) {
+  const byName = (names, pred) => {
+    for (const n of names) {
+      const c = cols.find(c => c.lname === n && pred(c))
+      if (c) return c
+    }
+    return null
+  }
+
+  let geom = null
+  const nativeCol = cols.find(c => c.type.startsWith('geometry') || c.type.startsWith('geography'))
+  if (nativeCol) {
+    // GEOMETRY(4326) is used as-is; another SRID is reprojected; GEOMETRY(ANY)/GEOGRAPHY assumed lon/lat
+    const srid = (nativeCol.type.match(/\((\d+)\)/) || [])[1]
+    let expr = nativeCol.name
+    if (nativeCol.type.startsWith('geography')) expr = `ST_GeomFromWKB(ST_AsBinary(${nativeCol.name}), 4326)`
+    else if (!srid) expr = `ST_SetSRID(${nativeCol.name}, 4326)`
+    else if (srid !== '4326') expr = `ST_Transform(${nativeCol.name}, 4326)`
+    geom = { column: nativeCol.name, format: 'expr', expr, source: nativeCol.type }
+  }
+  if (!geom) {
+    const c = byName(WKT_NAMES, c => c.type === 'string')
+    if (c) geom = { column: c.name, format: 'wkt', source: 'wkt string' }
+  }
+  if (!geom) {
+    const c = byName(WKB_NAMES, c => c.type === 'binary')
+    if (c) geom = { column: c.name, format: 'wkb', source: 'wkb binary' }
+  }
+  if (!geom) {
+    const num = c => /^(double|float|decimal)/.test(c.type)
+    const lat = byName(LAT_NAMES, num)
+    const lon = byName(LON_NAMES, num)
+    if (lat && lon) {
+      geom = { column: null, format: 'expr', expr: `ST_Point(${lon.name}, ${lat.name}, 4326)`, source: `${lon.name}/${lat.name}` }
+    }
+  }
+  const id = byName(ID_NAMES, c => INT_TYPES.test(c.type))
+  if (!geom || !id) return null
+  return { objectId: id.name, geometryColumn: geom.column, geometryFormat: geom.format, geometryExpr: geom.expr, geometrySource: geom.source, spatialReference: 4326 }
+}
+
+function sqlGeomExpr (spec) {
+  switch (spec.geometryFormat) {
+    case 'wkb': return `ST_GeomFromWKB(${spec.geometryColumn}, 4326)`
+    case 'wkt': return `ST_GeomFromText(${spec.geometryColumn}, 4326)`
+    default: return spec.geometryExpr
+  }
+}
+
+// Inspect a table (cached). exec(sql, kind) -> rows
+async function resolveSpec (table, exec) {
+  const hit = cache.get(table)
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.spec
+
+  const cols = describeColumns(await exec(`DESCRIBE ${table}`, 'describe'))
+  const spec = detect(cols)
+  if (spec) {
+    const expr = sqlGeomExpr(spec)
+    const notNull = spec.geometryColumn ? `${spec.geometryColumn} IS NOT NULL` : 'TRUE'
+    const rows = await exec(`SELECT lower(ST_GeometryType(${expr})) AS t FROM ${table} WHERE ${notNull} LIMIT 1`, 'geomtype')
+    const t = rows[0] && String(rows[0].t || '').replace(/^st_/, '')
+    spec.geometryType = ESRI_TYPE[t] || 'esriGeometryPoint'
+  }
+  cache.set(table, { spec, at: Date.now() })
+  return spec
+}
+
+// Current request's spec; falls back to the upstream config convention
+function current (defaults) {
+  return store.getStore() || defaults
+}
+
+module.exports = { store, resolveSpec, current, detect, describeColumns }

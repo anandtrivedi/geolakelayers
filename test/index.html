@@ -1,0 +1,132 @@
+<!doctype html>
+<!--
+  Standalone check of the widget's runtime path, outside Experience Builder:
+  popup sign-in -> token handoff -> request interceptor -> FeatureLayer(url) from the gateway.
+  Uses ArcGIS Maps SDK 4.24, the version Experience Builder 1.9 / Enterprise 11.0 ships.
+  Serve from an allowed origin, e.g. `python3 -m http.server 5199` in this folder.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Databricks gateway — SDK test</title>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.24/esri/themes/light/main.css">
+  <script src="https://js.arcgis.com/4.24/"></script>
+  <style>
+    html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
+    #wrap { display: flex; height: 100%; }
+    #panel { width: 340px; padding: 12px; box-sizing: border-box; overflow: auto; border-right: 1px solid #ddd; }
+    #view { flex: 1; }
+    input, button { font: inherit; }
+    #gw { width: 100%; box-sizing: border-box; }
+    .t { padding: 4px 6px; cursor: pointer; border-radius: 3px; }
+    .t:hover { background: #eef3f8; }
+    .t small { color: #667; }
+    #status { color: #445; margin: 8px 0; white-space: pre-wrap; }
+    #added div { padding: 3px 0; }
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <div id="panel">
+    <b>Databricks Data</b>
+    <p><input id="gw" value="https://databricks-exb-gateway-1234567890123456.aws.databricksapps.com"></p>
+    <button id="signin">Sign in to Databricks</button>
+    <div id="status">Not signed in.</div>
+    <input id="filter" placeholder="Filter tables" style="width:100%;box-sizing:border-box;display:none">
+    <div id="tables"></div>
+    <h4>On the map</h4>
+    <div id="added"></div>
+  </div>
+  <div id="view"></div>
+</div>
+<script>
+require(['esri/config', 'esri/Map', 'esri/views/MapView', 'esri/layers/FeatureLayer'], (esriConfig, ArcMap, MapView, FeatureLayer) => {
+  const $ = id => document.getElementById(id)
+  const map = new ArcMap({ basemap: 'gray-vector' })
+  const view = new MapView({ container: 'view', map, center: [-98, 38], zoom: 4 })
+  window.view = view
+  let token = null
+  let tables = []
+  const gw = () => $('gw').value.replace(/\/$/, '')
+  const status = s => { $('status').textContent = s }
+
+  // Every SDK request to the gateway carries the user's Databricks token
+  esriConfig.request.interceptors.push({
+    urls: gw(),
+    before: params => {
+      if (!token) return
+      params.requestOptions.headers = Object.assign({}, params.requestOptions.headers, { Authorization: `Bearer ${token}` })
+    }
+  })
+
+  window.addEventListener('message', e => {
+    if (e.origin !== new URL(gw()).origin || !e.data || e.data.type !== 'databricks-gateway-token') return
+    token = e.data.token
+    status(`Signed in as ${e.data.user}. Loading catalog…`)
+    loadCatalog()
+  })
+
+  $('signin').onclick = () => {
+    window.open(`${gw()}/auth/handoff?origin=${encodeURIComponent(location.origin)}`, 'dbx-signin', 'width=520,height=640')
+  }
+
+  async function loadCatalog () {
+    const t0 = performance.now()
+    const r = await fetch(`${gw()}/api/catalog`, { headers: { Authorization: `Bearer ${token}` } })
+    const d = await r.json()
+    if (!r.ok) { status(`Catalog failed: ${d.error || r.status}`); return }
+    tables = d.tables
+    status(`${tables.length} tables in ${d.catalogs.join(', ')} (${Math.round(performance.now() - t0)} ms)`)
+    $('filter').style.display = ''
+    render()
+  }
+
+  function render () {
+    const q = $('filter').value.toLowerCase()
+    $('tables').innerHTML = ''
+    for (const t of tables.filter(t => t.table.includes(q)).slice(0, 200)) {
+      const el = document.createElement('div')
+      el.className = 't'
+      el.innerHTML = `${t.schema}.<b>${t.name}</b><br><small>id ${t.idField} · ${t.geometry}</small>`
+      el.onclick = () => addLayer(t)
+      $('tables').appendChild(el)
+    }
+  }
+  $('filter').oninput = render
+
+  // Distinct color per added layer, symbol by geometry type
+  const PALETTE = ['#e4572e', '#2e86ab', '#3bb273', '#7768ae', '#f3a712', '#d1495b', '#00798c', '#8d6a9f']
+  function rendererFor (geometryType, n) {
+    const c = PALETTE[n % PALETTE.length]
+    const symbol = geometryType === 'polygon'
+      ? { type: 'simple-fill', color: c + '55', outline: { color: c, width: 1 } }
+      : geometryType === 'polyline'
+        ? { type: 'simple-line', color: c, width: 2 }
+        : { type: 'simple-marker', color: c + 'cc', size: 6, outline: { color: '#ffffff', width: 0.5 } }
+    return { type: 'simple', symbol }
+  }
+
+  let addedCount = 0
+  async function addLayer (t) {
+    const url = `${gw()}/databricks/rest/services/${t.table}/FeatureServer/0`
+    const layer = new FeatureLayer({ url, title: t.name, outFields: ['*'], popupTemplate: { title: t.name, content: [{ type: 'fields' }] } })
+    map.add(layer)
+    const row = document.createElement('div')
+    row.textContent = `${t.table} — loading…`
+    $('added').appendChild(row)
+    const t0 = performance.now()
+    try {
+      await layer.load()
+      layer.renderer = rendererFor(layer.geometryType, addedCount++)
+      await view.whenLayerView(layer)
+      if (layer.fullExtent) await view.goTo(layer.fullExtent.expand(1.2)).catch(() => {})
+      const n = await layer.queryFeatureCount()
+      row.textContent = `${t.table} — ${layer.geometryType}, ${n} features, ${layer.fields.length} fields (${Math.round(performance.now() - t0)} ms)`
+    } catch (err) {
+      row.textContent = `${t.table} — failed: ${err.message}`
+    }
+  }
+})
+</script>
+</body>
+</html>

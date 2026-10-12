@@ -1,0 +1,15 @@
+{
+  "name": "databricks-data",
+  "label": "Databricks Data",
+  "type": "widget",
+  "version": "1.9.0",
+  "exbVersion": "1.9.0",
+  "author": "Databricks Field Engineering",
+  "description": "Browse Unity Catalog tables and add them to a map as live layers served by the Databricks feature gateway",
+  "copyright": "",
+  "license": "Apache-2.0",
+  "dependency": ["jimu-arcgis"],
+  "properties": {},
+  "translatedLocales": ["en"],
+  "defaultSize": { "width": 340, "height": 480 }
+}
