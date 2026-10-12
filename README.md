@@ -33,13 +33,13 @@ lon/lat doubles, plus an integer id column (`objectid`, `oid`, `fid`, `bigid`, `
 | Path | What |
 |---|---|
 | `gateway/` | Databricks App (Node, Koop). Provider vendored from `koop-provider-databricks`, made per-table and on-behalf-of-user. |
-| `widget/databricks-data/` | Experience Builder widget for Developer Edition 1.9 (ArcGIS Enterprise 11.0). |
-| `test/index.html` | Same runtime path on plain ArcGIS Maps SDK 4.24, for testing outside Experience Builder. |
+| `widget/databricks-data/` | Experience Builder widget for Developer Edition 1.20 (ArcGIS Enterprise 12.1, JS SDK 5.0). |
+| `test/index.html` | Same runtime path on plain ArcGIS Maps SDK 5.0, for testing outside Experience Builder. |
 | `test/browser-test.mjs` | Headless end-to-end run of the test page against the deployed gateway. |
 
 ## Status
 
 Verified 2026-10-12 against the deployed gateway on your-workspace: cross-origin sign-in and token handoff,
 CORS preflight through the Apps front door, per-user queries, and point, polygon and polyline tables drawing
-in the 4.24 SDK. Not yet run inside Experience Builder itself (needs Developer Edition 1.9) or registered on
+in the 5.0 SDK. Not yet run inside Experience Builder itself (needs Developer Edition 1.20) or registered on
 the Portal.

@@ -2,15 +2,15 @@
 <!--
   Standalone check of the widget's runtime path, outside Experience Builder:
   popup sign-in -> token handoff -> request interceptor -> FeatureLayer(url) from the gateway.
-  Uses ArcGIS Maps SDK 4.24, the version Experience Builder 1.9 / Enterprise 11.0 ships.
+  Uses ArcGIS Maps SDK 5.0, the version Experience Builder 1.20 / Enterprise 12.1 ships.
   Serve from an allowed origin, e.g. `python3 -m http.server 5199` in this folder.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Databricks gateway — SDK test</title>
-  <link rel="stylesheet" href="https://js.arcgis.com/4.24/esri/themes/light/main.css">
-  <script src="https://js.arcgis.com/4.24/"></script>
+  <link rel="stylesheet" href="https://js.arcgis.com/5.0/esri/themes/light/main.css">
+  <script type="module" src="https://js.arcgis.com/5.0/"></script>
   <style>
     html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
     #wrap { display: flex; height: 100%; }
@@ -39,8 +39,9 @@
   </div>
   <div id="view"></div>
 </div>
-<script>
-require(['esri/config', 'esri/Map', 'esri/views/MapView', 'esri/layers/FeatureLayer'], (esriConfig, ArcMap, MapView, FeatureLayer) => {
+<script type="module">
+const [esriConfig, ArcMap, MapView, FeatureLayer] = await $arcgis.import(['@arcgis/core/config.js', '@arcgis/core/Map.js', '@arcgis/core/views/MapView.js', '@arcgis/core/layers/FeatureLayer.js'])
+{
   const $ = id => document.getElementById(id)
   const map = new ArcMap({ basemap: 'gray-vector' })
   const view = new MapView({ container: 'view', map, center: [-98, 38], zoom: 4 })
@@ -126,7 +127,7 @@ require(['esri/config', 'esri/Map', 'esri/views/MapView', 'esri/layers/FeatureLa
       row.textContent = `${t.table} — failed: ${err.message}`
     }
   }
-})
+}
 </script>
 </body>
 </html>

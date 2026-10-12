@@ -1,4 +1,3 @@
-/** @jsx jsx */
 /*
   Databricks Data — runtime
 
@@ -8,7 +7,7 @@
   3. Picking a table adds FeatureLayer(<gateway>/databricks/rest/services/<table>/FeatureServer/0)
      to the selected map, so paging, extent and filtering are the SDK's normal FeatureServer path.
 */
-import { React, jsx } from 'jimu-core'
+import { React } from 'jimu-core'
 import type { AllWidgetProps } from 'jimu-core'
 import { JimuMapViewComponent } from 'jimu-arcgis'
 import type { JimuMapView } from 'jimu-arcgis'
