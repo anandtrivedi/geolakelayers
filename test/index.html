@@ -73,7 +73,7 @@ const [esriConfig, ArcMap, MapView, FeatureLayer] = await $arcgis.import(['@arcg
 
   async function loadCatalog () {
     const t0 = performance.now()
-    const r = await fetch(`${gw()}/api/catalog`, { headers: { Authorization: `Bearer ${token}` } })
+    const r = await fetch(`${gw()}/api/catalog?catalogs=main`, { headers: { Authorization: `Bearer ${token}` } })
     const d = await r.json()
     if (!r.ok) { status(`Catalog failed: ${d.error || r.status}`); return }
     tables = d.tables

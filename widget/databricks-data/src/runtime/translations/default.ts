@@ -8,6 +8,7 @@ export default {
   savedLayersWaiting: 'Sign in to load {n} saved layers.',
   loadingCatalog: 'Loading tables…',
   tableCount: '{n} tables',
+  noCatalogs: 'No catalogs are set up for browsing. Pick them in this widget\'s settings.',
   catalogFailed: 'Could not load tables: {error}',
   filterTables: 'Filter tables',
   tableListLabel: 'Unity Catalog tables',

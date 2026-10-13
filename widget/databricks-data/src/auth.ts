@@ -33,6 +33,43 @@ export function getToken (gateway: string): GatewayToken | undefined {
   return tokens[gateway]
 }
 
+// Warehouse the app author picked for each gateway (the gateway accepts only its allow-listed ones)
+const warehouses: { [gateway: string]: string } = {}
+
+export function setWarehouse (gateway: string, warehouseId: string): void {
+  if (warehouseId) warehouses[gateway] = warehouseId
+  else delete warehouses[gateway]
+}
+
+/** Headers for a gateway request: the user's token and, if one is picked, the warehouse. */
+export function gatewayHeaders (gateway: string): { [k: string]: string } {
+  const h: { [k: string]: string } = {}
+  const t = tokens[gateway]
+  if (t) h.Authorization = `Bearer ${t.token}`
+  if (warehouses[gateway]) h['X-Databricks-Warehouse'] = warehouses[gateway]
+  return h
+}
+
+async function getJson (gateway: string, path: string): Promise<any> {
+  if (!tokens[gateway]) throw new Error('Not signed in')
+  const r = await fetch(`${gateway}${path}`, { headers: gatewayHeaders(gateway) })
+  const d = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(d.error?.message || d.error || `HTTP ${r.status}`)
+  return d
+}
+
+export interface WarehouseInfo { id: string, name: string, state: string, size: string, serverless: boolean }
+
+/** Allow-listed warehouses the signed-in user can use, and the gateway's default. */
+export async function fetchWarehouses (gateway: string): Promise<{ default: string | null, warehouses: WarehouseInfo[] }> {
+  return getJson(gateway, '/api/warehouses')
+}
+
+/** Catalogs the signed-in user can see. */
+export async function fetchCatalogNames (gateway: string): Promise<string[]> {
+  return (await getJson(gateway, '/api/catalogs')).catalogs
+}
+
 export function signIn (gateway: string): void {
   window.open(`${gateway}/auth/handoff?origin=${encodeURIComponent(window.location.origin)}`, 'dbx-signin', 'width=520,height=640')
 }
@@ -58,15 +95,10 @@ export function listenForToken (gateway: string, onToken: (t: GatewayToken) => v
   }
 }
 
-/** Tables the signed-in user can see that the gateway can serve, optionally limited to a catalog/schema prefix. */
-export async function fetchCatalog (gateway: string, prefix: string): Promise<CatalogTable[]> {
-  const t = tokens[gateway]
-  if (!t) throw new Error('Not signed in')
-  const r = await fetch(`${gateway}/api/catalog`, { headers: { Authorization: `Bearer ${t.token}` } })
-  const d = await r.json()
-  if (!r.ok) throw new Error(d.error || String(r.status))
-  const p = (prefix || '').toLowerCase()
-  return d.tables.filter((x: CatalogTable) => !p || x.table.startsWith(p))
+/** Map-ready tables in the given catalogs (empty = the gateway's default scope). */
+export async function fetchCatalog (gateway: string, catalogs: string[]): Promise<CatalogTable[]> {
+  const q = catalogs.length ? `?catalogs=${encodeURIComponent(catalogs.join(','))}` : ''
+  return (await getJson(gateway, `/api/catalog${q}`)).tables
 }
 
 /** catalog.schema.table -> a minimal CatalogTable for layers saved in config */

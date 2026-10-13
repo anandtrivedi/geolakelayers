@@ -13,6 +13,7 @@ import {
 import type { DataSource } from 'jimu-core'
 import type { JimuMapView, JimuLayerView } from 'jimu-arcgis'
 import FeatureLayer from 'esri/layers/FeatureLayer'
+import { gatewayHeaders } from '../auth'
 
 export interface GatewayLayer {
   layer: __esri.FeatureLayer
@@ -40,16 +41,15 @@ export async function addGatewayLayer (opts: {
   widgetId: string
   jmv: JimuMapView
   gateway: string
-  token: string
   table: string
   title: string
 }): Promise<GatewayLayer> {
-  const { widgetId, jmv, gateway, token, table, title } = opts
+  const { widgetId, jmv, gateway, table, title } = opts
   const url = layerUrl(gateway, table)
   const id = dataSourceId(widgetId, table)
   try {
     // Layer definition via our own request, so the token doesn't depend on which code path ExB uses
-    const r = await fetch(`${url}?f=json`, { headers: { Authorization: `Bearer ${token}` } })
+    const r = await fetch(`${url}?f=json`, { headers: gatewayHeaders(gateway) })
     const definition = await r.json()
     if (!r.ok || definition.error) throw new Error(definition.error?.message || `HTTP ${r.status}`)
 

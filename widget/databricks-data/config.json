@@ -1,6 +1,7 @@
 {
   "gatewayUrl": "https://databricks-exb-gateway-1234567890123456.aws.databricksapps.com",
-  "catalogFilter": "",
+  "warehouseId": "",
+  "catalogs": [],
   "layers": [],
   "allowBrowse": true
 }

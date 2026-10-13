@@ -17,7 +17,7 @@ import { Alert, Button, Loading, LoadingType, TextInput } from 'jimu-ui'
 import esriConfig from 'esri/config'
 import * as reactiveUtils from 'esri/core/reactiveUtils'
 import type { IMConfig, CatalogTable } from '../config'
-import { getToken, signIn as openSignIn, listenForToken, fetchCatalog, tableRef } from '../auth'
+import { getToken, signIn as openSignIn, listenForToken, fetchCatalog, tableRef, setWarehouse, gatewayHeaders } from '../auth'
 import { announceLayer } from '../sync'
 import { addGatewayLayer, removeGatewayLayer, forgetGatewayLayer } from './layers'
 import type { GatewayLayer } from './layers'
@@ -41,9 +41,8 @@ function ensureInterceptor (gateway: string): void {
   esriConfig.request.interceptors.unshift({
     urls: gateway,
     before: (params: any) => {
-      const t = getToken(gateway)
-      if (!t) return
-      params.requestOptions.headers = { ...(params.requestOptions.headers || {}), Authorization: `Bearer ${t.token}` }
+      if (!getToken(gateway)) return
+      params.requestOptions.headers = { ...(params.requestOptions.headers || {}), ...gatewayHeaders(gateway) }
     }
   })
 }
@@ -83,7 +82,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   const [user, setUser] = React.useState<string>(getToken(gateway)?.user || null)
   const [tables, setTables] = React.useState<CatalogTable[]>([])
   const [filter, setFilter] = React.useState('')
-  const [catalogState, setCatalogState] = React.useState<'idle' | 'loading' | 'ready' | 'failed'>('idle')
+  const [catalogState, setCatalogState] = React.useState<'idle' | 'loading' | 'ready' | 'failed' | 'noCatalogs'>('idle')
   const [catalogError, setCatalogError] = React.useState('')
   const [added, setAdded] = React.useState<Added[]>([])
   const addedRef = React.useRef<Added[]>([])
@@ -106,21 +105,26 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     setAdded([...addedRef.current])
   }
 
+  // Before any request goes out: the interceptor and the warehouse the author picked
+  if (gateway) setWarehouse(gateway, props.config.warehouseId || '')
   React.useEffect(() => {
     if (gateway) ensureInterceptor(gateway)
   }, [gateway])
+  const catalogs: string[] = props.config.catalogs ? props.config.catalogs.asMutable() : []
 
   const loadCatalog = React.useCallback(async () => {
     if (!getToken(gateway) || !allowBrowse) return
+    // No catalogs picked: don't scan the whole metastore, ask the author to choose instead
+    if (!catalogs.length) { setTables([]); setCatalogState('noCatalogs'); return }
     setCatalogState('loading')
     try {
-      setTables(await fetchCatalog(gateway, props.config.catalogFilter))
+      setTables(await fetchCatalog(gateway, catalogs))
       setCatalogState('ready')
     } catch (err) {
       setCatalogError(err.message)
       setCatalogState('failed')
     }
-  }, [gateway, props.config.catalogFilter, allowBrowse])
+  }, [gateway, catalogs.join(','), props.config.warehouseId, allowBrowse])
 
   React.useEffect(() => {
     if (!gateway) return
@@ -179,7 +183,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     if (inBuilder && !fromConfig) announceLayer(props.id, 'add', t.table)
     const t0 = performance.now()
     try {
-      const gl = await addGatewayLayer({ widgetId: props.id, jmv, gateway, token: token.token, table: t.table, title })
+      const gl = await addGatewayLayer({ widgetId: props.id, jmv, gateway, table: t.table, title })
       // Removed while it was being created: undo the add
       if (!isCurrent(entry)) { removeGatewayLayer(props.id, jmv, gl); return }
       entry.gl = gl
@@ -248,6 +252,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       <div aria-live='polite'>
         {catalogState === 'loading' && <Loading type={LoadingType.Donut} width={18} height={18} text={nls('loadingCatalog')} />}
         {catalogState === 'ready' && allowBrowse && <p className='dbx-hint'>{nls('tableCount', { n: String(tables.length) })}</p>}
+        {catalogState === 'noCatalogs' && <p className='dbx-hint'>{nls('noCatalogs')}</p>}
         {catalogState === 'failed' && (
           <Alert className='dbx-alert' type='error' withIcon closable={false} text={nls('catalogFailed', { error: catalogError })} />
         )}
