@@ -9,7 +9,8 @@
     /api/catalogs       catalogs the caller can see (widget settings)
     /api/warehouses     allow-listed warehouses the caller can use (widget settings)
     /auth/handoff       popup page that hands the signed-in user's token to an allowed origin
-    /                   static test page
+    /                   ArcGateway console (public/, built from console/)
+    /api/info           gateway status and the workspace directory (console)
 
   Every request has already been authenticated by the Databricks Apps front door. A request may name a
   warehouse (X-Databricks-Warehouse); only ALLOWED_WAREHOUSES (plus the bound one) are accepted. Queries run as the
@@ -67,36 +68,30 @@ app.use(express.static(path.join(__dirname, 'public')))
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }))
 
-// Landing page: who the front door says you are, and what the gateway can serve for you
-app.get('/', async (req, res) => {
-  const user = req.headers['x-forwarded-email'] || 'unknown'
-  let tables = []
-  let catalogNames = null
-  let error = null
-  try {
-    // Without a scope, list catalogs instead of scanning the whole metastore's columns
-    if (requestedCatalogs(req).length) tables = await listTables(req)
-    else catalogNames = (await runSql(req, 'SHOW CATALOGS', 30)).map(r => r.catalog || Object.values(r)[0]).filter(c => c && !excludeCatalogs.includes(c))
-  } catch (err) {
-    error = err.message
-  }
-  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-  const rows = tables.slice(0, 500).map(t => {
-    const url = `/databricks/rest/services/${t.table}/FeatureServer/0`
-    return `<tr><td>${esc(t.table)}</td><td>${esc(t.idField)}</td><td>${esc(t.geometry)}</td><td><a href="${esc(url)}?f=json">layer</a> · <a href="${esc(url)}/query?where=1%3D1&outFields=*&resultRecordCount=5&f=json">5 rows</a></td></tr>`
-  }).join('')
-  res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Databricks feature gateway</title>
-<style>body{font:14px system-ui,sans-serif;margin:24px;color:#1b3139}table{border-collapse:collapse}td,th{padding:4px 10px;border-bottom:1px solid #e5e5e5;text-align:left}th{background:#f5f5f5}code{background:#f5f5f5;padding:1px 4px}</style>
-<h2>Databricks feature gateway</h2>
-<p>Signed in as <b>${esc(user)}</b>. Queries run with your Unity Catalog permissions.</p>
-<p>Serves Unity Catalog tables as ArcGIS FeatureServer layers for the Experience Builder <i>Databricks Data</i> widget:
-<code>/databricks/rest/services/&lt;catalog.schema.table&gt;/FeatureServer/0</code></p>
-<p>Browser origins allowed to call it: ${allowedOrigins.map(o => `<code>${esc(o)}</code>`).join(' ') || 'none'}</p>
-${error ? `<p style="color:#b00">Catalog failed: ${esc(error)}</p>`
-  : catalogNames ? `<h3>${catalogNames.length} catalogs you can see</h3><p>Pick one to list its map-ready tables:</p>
-<ul>${catalogNames.map(c => `<li><a href="?catalogs=${encodeURIComponent(c)}">${esc(c)}</a></li>`).join('')}</ul>`
-  : `<h3>${tables.length} tables in ${esc(requestedCatalogs(req).join(', '))}</h3>
-<table><tr><th>Table</th><th>Object id</th><th>Geometry</th><th></th></tr>${rows}</table>`}`)
+// Other ArcGateways (one per workspace), so authors can pick a workspace instead of pasting a URL.
+// DIRECTORY = "name=url;name=url"
+const directory = (process.env.DIRECTORY || '').split(';').map(s => s.trim()).filter(s => s && s !== '-')
+  .map(entry => { const i = entry.indexOf('='); return i > 0 ? { name: entry.slice(0, i).trim(), url: entry.slice(i + 1).trim().replace(/\/$/, '') } : null })
+  .filter(e => e && /^https:\/\//.test(e.url))
+const { version } = require('./package.json')
+
+// Everything the console needs to describe this gateway
+app.get('/api/info', (req, res) => {
+  const host = (process.env.DATABRICKS_HOST || process.env.DATABRICKS_SERVER_HOSTNAME || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
+  res.json({
+    name: process.env.DATABRICKS_APP_NAME || 'arcgateway',
+    version,
+    user: req.headers['x-forwarded-email'] || null,
+    workspaceHost: host || null,
+    gatewayUrl: `https://${req.headers['x-forwarded-host'] || req.headers.host}`,
+    runAs: obo(req) ? 'user' : 'app',
+    defaultWarehouse: defaultWarehouse || null,
+    allowedWarehouses,
+    allowedOrigins,
+    catalogCap: catalogs,
+    excludeCatalogs,
+    directory
+  })
 })
 
 app.get('/api/whoami', (req, res) => {

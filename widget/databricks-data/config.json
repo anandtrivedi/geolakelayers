@@ -3,7 +3,7 @@
     {
       "id": "ws1",
       "label": "prod",
-      "gatewayUrl": "https://databricks-exb-gateway-1234567890123456.aws.databricksapps.com",
+      "gatewayUrl": "https://arcgateway-1234567890123456.aws.databricksapps.com",
       "warehouseId": "",
       "catalogs": []
     }

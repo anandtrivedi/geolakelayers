@@ -198,7 +198,8 @@ Model.prototype.getData = function (req, callback) {
 
         // Layer info (FeatureServer/0 without /query) only needs the schema, a geometry type and an
         // extent: fetch one sample row instead of a full page, and take the extent from SQL (cached)
-        const isLayerInfo = !req.params.method
+        // (Koop doesn't set req.params.method reliably, so look at the path: layer info ends at the layer id)
+        const isLayerInfo = /\/FeatureServer(\/\d+)?\/?$/.test((req.originalUrl || req.url || '').split('?')[0])
         // Regular query
         queryString = buildQuery(table, isLayerInfo ? { ...req.query, resultRecordCount: '1', resultOffset: '0' } : req.query, thisTask)
 

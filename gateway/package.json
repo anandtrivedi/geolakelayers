@@ -1,11 +1,13 @@
 {
-  "name": "databricks-exb-gateway",
-  "version": "0.1.0",
+  "name": "arcgateway",
+  "version": "0.2.0",
   "private": true,
-  "description": "Serves any Unity Catalog table as an ArcGIS FeatureServer for Experience Builder (provider vendored from koop-provider-databricks @ a08f6e7)",
+  "description": "ArcGateway: serves Unity Catalog tables as ArcGIS FeatureServer layers (provider vendored from koop-provider-databricks @ a08f6e7)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "console:dev": "vite --config console/vite.config.ts",
+    "console:build": "vite build --config console/vite.config.ts"
   },
   "dependencies": {
     "@databricks/sql": "1.12.0",
@@ -15,5 +17,14 @@
     "express": "4.22.1",
     "js-sql-parser": "1.6.0",
     "uuid": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "5.6.3",
+    "vite": "5.4.11"
   }
 }

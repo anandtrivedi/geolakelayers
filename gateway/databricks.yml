@@ -1,4 +1,4 @@
-# Databricks feature gateway for the ArcGIS Experience Builder "Databricks Data" widget.
+# ArcGateway: Databricks feature gateway for ArcGIS (Experience Builder "Databricks Data" widget, Map Viewer, Pro).
 #
 # One gateway per workspace (a Databricks sign-in is per workspace). Workspaces that share a metastore
 # see the same Unity Catalog catalogs, so one gateway can serve all of them.
@@ -7,12 +7,12 @@
 # New workspace: copy a target, set its host, warehouse_id and allowed_origins.
 
 bundle:
-  name: databricks-exb-gateway
+  name: arcgateway
 
 variables:
   app_name:
     description: Name of the Databricks App
-    default: databricks-exb-gateway
+    default: arcgateway
   warehouse_id:
     description: SQL warehouse the gateway queries (serverless recommended)
   allowed_origins:
@@ -24,6 +24,9 @@ variables:
   catalogs:
     description: Optional cap on the catalogs the widget may list. "-" = no cap (authors choose any catalog the user can see)
     default: "-"
+  directory:
+    description: Other ArcGateways shown in the console and offered in the widget, "name=url;name=url". "-" = none
+    default: "-"
   exclude_catalogs:
     description: Catalogs never listed
     default: system,samples,hive_metastore,__databricks_internal
@@ -32,7 +35,7 @@ resources:
   apps:
     gateway:
       name: ${var.app_name}
-      description: Serves Unity Catalog tables as ArcGIS FeatureServer layers for the Experience Builder Databricks Data widget
+      description: ArcGateway - serves Unity Catalog tables as ArcGIS FeatureServer layers (Experience Builder Databricks Data widget, Map Viewer, ArcGIS Pro)
       source_code_path: .
       # Queries run as the signed-in user, so Unity Catalog decides what each person sees
       user_api_scopes:
@@ -53,6 +56,8 @@ resources:
             value: ${var.allowed_warehouses}
           - name: CATALOGS
             value: ${var.catalogs}
+          - name: DIRECTORY
+            value: ${var.directory}
           - name: EXCLUDE_CATALOGS
             value: ${var.exclude_catalogs}
           - name: RATE_LIMIT_MAX
@@ -71,6 +76,7 @@ targets:
       host: https://your-workspace.cloud.databricks.com
     variables:
       warehouse_id: abcdef0123456789
+      directory: prod=https://arcgateway-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
 
   # gov (GovCloud, separate metastore): second workspace for multi-workspace testing
@@ -79,4 +85,5 @@ targets:
       host: https://your-gov-workspace.cloud.databricks.us
     variables:
       warehouse_id: fedcba9876543210
+      directory: prod=https://arcgateway-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199

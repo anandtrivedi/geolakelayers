@@ -72,7 +72,17 @@ the new client ID to Developer Edition when it asks for your Portal.
 
 ![Redirect URLs on the credentials item](screenshots/portal-redirect-urls.png)
 
-### Databricks: the feature gateway
+### Databricks: ArcGateway
+
+ArcGateway is the Databricks App behind the widget, one per workspace. Opening its URL shows a console:
+which workspace and warehouse it serves, which Portal addresses may call it, an architecture overview,
+a catalog explorer with each table's layer URL and a live map, and the directory of other workspaces.
+
+![ArcGateway overview with the architecture diagram](screenshots/arcgateway-overview.png)
+
+![Exploring a catalog: Maritime loitering contacts as a FeatureServer layer](screenshots/arcgateway-explore.png)
+
+### Databricks: the feature gateway (details)
 
 The gateway is deployed as the Databricks App `databricks-exb-gateway` on the your-workspace workspace and is open to
 all account users. Opening its URL in a browser shows who you're signed in as and every table it can serve for

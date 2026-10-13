@@ -65,6 +65,11 @@ export async function fetchWarehouses (gateway: string): Promise<{ default: stri
   return getJson(gateway, '/api/warehouses')
 }
 
+/** Other ArcGateways this gateway knows about (its workspace directory). */
+export async function fetchDirectory (gateway: string): Promise<Array<{ name: string, url: string }>> {
+  return (await getJson(gateway, '/api/info')).directory || []
+}
+
 /** Catalogs the signed-in user can see. */
 export async function fetchCatalogNames (gateway: string): Promise<string[]> {
   return (await getJson(gateway, '/api/catalogs')).catalogs

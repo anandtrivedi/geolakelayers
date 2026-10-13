@@ -5,7 +5,7 @@ import { Button, Checkbox, MultiSelect, MultiSelectItem, Option, Select, Switch,
 import { TrashOutlined } from 'jimu-icons/outlined/editor/trash'
 import { PlusOutlined } from 'jimu-icons/outlined/editor/plus'
 import type { IMConfig, CatalogTable, Workspace } from '../config'
-import { getToken, signIn, listenForToken, fetchCatalog, fetchCatalogNames, fetchWarehouses, setWarehouse } from '../auth'
+import { getToken, signIn, listenForToken, fetchCatalog, fetchCatalogNames, fetchWarehouses, fetchDirectory, setWarehouse } from '../auth'
 import type { WarehouseInfo } from '../auth'
 import { workspacesOf, labelFromUrl, newWorkspaceId, normalizeUrl, layerKey, parseLayerKey } from '../workspaces'
 import { TableTree } from '../table-tree'
@@ -33,6 +33,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   const [info, setInfo] = React.useState<{ [id: string]: WorkspaceInfo }>({})
   const [activeId, setActiveId] = React.useState<string>(rows[0]?.id)
   const [filter, setFilter] = React.useState('')
+  const [directory, setDirectory] = React.useState<Array<{ name: string, url: string }>>([])
   const active = workspaces.find(w => w.id === activeId) || workspaces[0]
 
   const setConfig = (key: string, value: any) => {
@@ -44,9 +45,9 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
     props.onSettingChange({ id: props.id, config })
   }
   const updateRow = (id: string, patch: Partial<Workspace>) => setRows(rows.map(w => w.id === id ? { ...w, ...patch } : w))
-  const addRow = () => {
+  const addRow = (label = '', gatewayUrl = '') => {
     const id = newWorkspaceId(rows)
-    setRows([...rows, { id, label: '', gatewayUrl: '', warehouseId: '', catalogs: [] }])
+    setRows([...rows, { id, label, gatewayUrl, warehouseId: '', catalogs: [] }])
     setActiveId(id)
   }
   const removeRow = (id: string) => setRows(rows.filter(w => w.id !== id), selected.filter(k => parseLayerKey(k).workspaceId !== id))
@@ -66,6 +67,12 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
     try {
       const [w, c] = await Promise.all([fetchWarehouses(ws.gatewayUrl), fetchCatalogNames(ws.gatewayUrl)])
       setInfo(i => ({ ...i, [ws.id]: { warehouses: w.warehouses, defaultWarehouse: w.default, catalogs: c } }))
+      // The gateway's directory of other workspaces, offered under "Add from directory"
+      fetchDirectory(ws.gatewayUrl).then(d => setDirectory(prev => {
+        const merged = [...prev]
+        for (const e of d) if (!merged.some(m => normalizeUrl(m.url) === normalizeUrl(e.url))) merged.push(e)
+        return merged
+      })).catch(() => {})
     } catch (err) {
       setInfo(i => ({ ...i, [ws.id]: { warehouses: [], defaultWarehouse: null, catalogs: [], error: err.message } }))
     }
@@ -127,8 +134,18 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
             </SettingRow>
           )
         })}
+        {directory.filter(d => !rows.some(r => normalizeUrl(r.gatewayUrl) === normalizeUrl(d.url))).length > 0 && (
+          <SettingRow flow='wrap' label={nls('addFromDirectory')}>
+            <Select size='sm' className='w-100' value='' aria-label={nls('addFromDirectory')}
+              onChange={(e, value) => { const d = directory.find(x => x.url === value); if (d) addRow(d.name, normalizeUrl(d.url)) }}>
+              <Option value=''>{nls('pickWorkspace')}</Option>
+              {directory.filter(d => !rows.some(r => normalizeUrl(r.gatewayUrl) === normalizeUrl(d.url)))
+                .map(d => <Option key={d.url} value={d.url}>{d.name}</Option>)}
+            </Select>
+          </SettingRow>
+        )}
         <SettingRow>
-          <Button size='sm' type='tertiary' onClick={addRow}><PlusOutlined size='s' /> {nls('addWorkspace')}</Button>
+          <Button size='sm' type='tertiary' onClick={() => addRow()}><PlusOutlined size='s' /> {nls('addWorkspace')}</Button>
         </SettingRow>
         <SettingRow flow='wrap'><small>{nls('workspacesHint')}</small></SettingRow>
       </SettingSection>
