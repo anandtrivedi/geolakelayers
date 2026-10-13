@@ -1,124 +1,196 @@
-# Databricks Data widget for ArcGIS Experience Builder
+# Databricks Data for ArcGIS Experience Builder
 
-A custom Experience Builder widget that puts Unity Catalog tables on an ArcGIS map as live layers. Authors pick
-tables from a list; viewers sign in with their Databricks account and see only what Unity Catalog lets them see.
-Nothing is copied into ArcGIS: every pan and zoom is a query against a Databricks SQL warehouse.
+An Experience Builder widget that puts Unity Catalog tables on an ArcGIS map as live layers, backed by
+**ArcGateway**, a small Databricks App that serves those tables as ArcGIS FeatureServer layers. Authors pick
+tables from one or more Databricks workspaces; viewers sign in with Databricks and see only what Unity Catalog
+lets them see. Nothing is copied into ArcGIS: every pan and zoom is a query on a Databricks SQL warehouse.
 
-![Published experience with two Unity Catalog layers](screenshots/published-app-layers.png)
+![Published experience with Unity Catalog layers](screenshots/published-app-layers.png)
 
-*A published experience loading two saved layers (H3 place density at two resolutions) straight from Unity Catalog.*
+## How it fits
 
-## What's in the box
+![Architecture: ArcGIS clients, ArcGateway per workspace, SQL warehouse and Unity Catalog](screenshots/architecture.png)
 
-- **The widget** (`widget/databricks-data/`). Signs the user in to Databricks, lists the tables they can use, and
-  adds them to the experience's map. Built for Experience Builder Developer Edition 1.20, which matches
-  ArcGIS Enterprise 12.1.
-- **The feature gateway** (`gateway/`). A Databricks App that serves any Unity Catalog table as a standard ArcGIS
-  FeatureServer layer. The widget talks to it, but so can Map Viewer, ArcGIS Pro or any ArcGIS Maps SDK app.
+- **Databricks Data widget** (`widget/databricks-data/`): signs the user in to each workspace, lists the
+  tables they can use, and adds them to the map as Experience Builder data sources, so Map Layers, Legend,
+  Table and Filter treat them like any other layer.
+- **ArcGateway** (`gateway/`): a Databricks App, one per workspace. It turns ArcGIS FeatureServer requests
+  (extent, paging, filters, counts) into SQL and runs them **as the signed-in user**. Map Viewer, ArcGIS Pro
+  and SDK apps can use its layer URLs too.
+- **Your data stays in Unity Catalog.** A table is map-ready if it has an id column and geometry stored as
+  GEOMETRY/GEOGRAPHY, WKT, WKB or longitude/latitude columns.
 
-## Using the widget
+A Databricks sign-in belongs to one workspace, so each workspace runs its own ArcGateway (same code, one
+bundle). Workspaces that share a metastore see the same catalogs and can share one gateway.
 
-### 1. Add it to an experience
+## Deployment
 
-Drag a **Map** widget and the **Databricks Data** widget (under *Custom*) onto the page. In the Databricks Data
-settings, choose the map it should draw on.
+You need: a recent Databricks CLI (built with v1.17) with a profile for each workspace, Databricks Apps enabled
+with user authorization, a serverless SQL warehouse, and ArcGIS Enterprise 11.0 or later (this project is
+built and tested against 12.1).
 
-### 2. Pick the layers the app opens with
+### 1. Deploy ArcGateway to a workspace
 
-In the widget's settings, under **Layers to load when the app opens**, sign in to Databricks and tick tables.
-These are saved with the experience. The switch **Let viewers browse and add tables** decides whether viewers
-also get the full table list or a fixed set of layers.
+ArcGateway is a Databricks Asset Bundle in `gateway/`. Each workspace is a target in
+`gateway/databricks.yml`:
 
-![Settings panel with the layer picker](screenshots/builder-settings-start-layers.png)
+```yaml
+targets:
+  myworkspace:
+    workspace:
+      host: https://<workspace>.cloud.databricks.com
+    variables:
+      warehouse_id: <serverless warehouse id>          # queries run here unless an author picks another allowed one
+      allowed_origins: https://<portal-host>,https://localhost:3001   # browser origins that may call the gateway
+      # optional:
+      allowed_warehouses: <id>,<id>                    # extra warehouses authors may pick
+      catalogs: "-"                                    # cap on listable catalogs; "-" = none
+      directory: prod=https://arcgateway-....databricksapps.com;gov=https://arcgateway-....databricksapps.us
+```
 
-You can also add tables straight from the list on the canvas in Live view. While the settings panel is open,
-anything you add or remove there is ticked or unticked in settings too.
+Then deploy and start it:
 
-![Authoring in Live view](screenshots/builder-live-view.png)
+```bash
+cd gateway
+databricks bundle deploy -t myworkspace --profile <profile>
+databricks bundle run gateway -t myworkspace --profile <profile>
+```
 
-Each layer shows its progress (Adding, Drawing, On map, Failed) and how long it took. Clicking a table that's
-already on the map zooms to it.
+The app is created as `arcgateway`, open to account users (`CAN_USE`), with user authorization for SQL, and
+the warehouse bound as an app resource. Its URL is printed at the end
+(`https://arcgateway-<workspace-id>.<region>.databricksapps.com`). Open it in a browser to check it: the
+console shows who you are, the workspace, warehouse and allowed origins, and lets you browse tables and
+preview them on a map.
 
-### 3. Save, publish, and share
+![ArcGateway console](screenshots/arcgateway-overview.png)
 
-Save and publish as usual. A viewer opening the app sees a sign-in button; one click opens a Databricks sign-in
-popup, and the saved layers load once it closes.
+![Exploring a catalog in the console](screenshots/arcgateway-explore.png)
 
-![Published experience before sign-in](screenshots/published-app-sign-in.png)
+What users need in Databricks: `CAN_USE` on the app (the bundle grants it to account users), `CAN_USE` on the
+warehouse, and `USE CATALOG` / `USE SCHEMA` / `SELECT` on the tables. Queries run as the user, so the app's
+service principal needs no data grants.
 
-## How sign-in and permissions work
+To add a workspace later: add a target, deploy it, and add the new gateway to `directory` in every target so
+authors can pick it from a list.
 
-- The widget opens the gateway's sign-in page in a popup. The user signs in with Databricks SSO there, and the page
-  hands their token back to the Experience Builder page. It only does this for origins on the gateway's allow-list.
-- The widget attaches that token to every map request it sends to the gateway.
-- The gateway runs each query as that user, so Unity Catalog grants decide which tables appear in the list and
-  which rows come back. Someone without access to a table sees that layer fail, not someone else's data.
-- The token lives in memory only. Reloading the page asks the user to sign in again.
+### 2. Set up Experience Builder Developer Edition
 
-ArcGIS sign-in is separate and unchanged: Experience Builder still signs users in to Portal with its own
-developer credentials.
+Custom widgets are built with Developer Edition. Pick the version that matches your Portal: Enterprise 12.1
+pairs with Developer Edition **1.20** (ArcGIS Maps SDK 5.0). Download it from Esri's Developer Edition
+downloads page (needs an ArcGIS account), unzip it, and install its two parts:
 
-## One-time setup
+```bash
+cd ArcGISExperienceBuilder/server && npm ci && npm start          # https://localhost:3001
+cd ArcGISExperienceBuilder/client && npm ci && npm start          # widget compiler (watch mode)
+```
 
-### Portal: developer credentials for Experience Builder
+Copy the widget into the client and restart the compiler once (it picks up new widgets at start):
 
-Experience Builder Developer Edition signs in to Portal through an OAuth app. In Portal, create
-**New item → Developer credentials → OAuth 2.0 credentials for user authentication**:
+```bash
+cp -R widget/databricks-data ArcGISExperienceBuilder/client/your-extensions/widgets/
+```
+
+Developer Edition signs in to Portal with an OAuth app. In Portal, create **New item → Developer credentials →
+OAuth 2.0 credentials for user authentication**:
 
 ![Choosing user authentication](screenshots/portal-developer-credentials.png)
 
-Add the Experience Builder address as a redirect URL (for Developer Edition, `https://localhost:3001/`), then give
-the new client ID to Developer Edition when it asks for your Portal.
+Add `https://localhost:3001/` as a redirect URL, then give Developer Edition your Portal URL and the new client
+ID the first time you open https://localhost:3001.
 
 ![Redirect URLs on the credentials item](screenshots/portal-redirect-urls.png)
 
-### Databricks: ArcGateway
+Add `https://localhost:3001` to the gateway's `allowed_origins` and redeploy it if you haven't.
 
-ArcGateway is the Databricks App behind the widget, one per workspace. Opening its URL shows a console:
-which workspace and warehouse it serves, which Portal addresses may call it, an architecture overview,
-a catalog explorer with each table's layer URL and a live map, and the directory of other workspaces.
+### 3. Use it in Portal's own Experience Builder (optional)
 
-![ArcGateway overview with the architecture diagram](screenshots/arcgateway-overview.png)
+To make the widget available to everyone in Portal's built-in Experience Builder, host the compiled widget
+(`client/dist/widgets/databricks-data`) on a web server that is anonymous, HTTPS with a publicly trusted
+certificate, and sends CORS headers for your Portal. Then, as a Portal administrator, add **New item →
+Application → Experience Builder widget** with the URL of its `manifest.json`. Add the Portal's address to
+each gateway's `allowed_origins`.
 
-![Exploring a catalog: Maritime loitering contacts as a FeatureServer layer](screenshots/arcgateway-explore.png)
+## Building an app
 
-### Databricks: the feature gateway (details)
+1. Add a **Map**, and the **Databricks Data** widget, ideally inside a **Widget Controller** on the map so it
+   opens as a panel. Add **Map Layers** and **Legend** (a sidebar works well).
+2. In the Databricks Data settings, sign in to a workspace. Its card holds the gateway URL, the SQL warehouse
+   and the catalogs viewers can browse. **Add workspace** lists the other gateways from the directory.
+3. Under **Layers to load when the app opens**, tick tables in the workspace ▸ catalog ▸ schema ▸ table tree.
+   **Show selected only** reviews the picks.
+4. Save and publish. Viewers click **Sign in** once per workspace; the start-up layers load, and if browsing
+   is on they can add more from the chosen catalogs.
 
-The gateway is deployed as the Databricks App `databricks-exb-gateway` on the your-workspace workspace and is open to
-all account users. Opening its URL in a browser shows who you're signed in as and every table it can serve for
-you, with links to each layer:
+![Workspace card in the widget settings](screenshots/settings-workspace-card.png)
 
-![Gateway landing page](screenshots/gateway-landing.png)
+![Two workspaces (prod and gov) in one app, with Map Layers](screenshots/builder-two-workspaces.png)
 
-A table shows up if it has an integer id column (`objectid`, `oid`, `fid`, `bigid` or `id`) and geometry in one of
-these forms: a GEOMETRY or GEOGRAPHY column, a WKT or WKB column, or longitude/latitude columns. The gateway is a
-Databricks Asset Bundle (`gateway/databricks.yml`): each workspace is a target with its SQL warehouse, the
-Portal/Experience Builder addresses allowed to call it, and optionally which catalogs to list. Nothing about a
-workspace is hardcoded, so the same code deploys anywhere (steps in `CLAUDE.md`).
+To see a layer's rows, add a **Table** widget, pick the map, and turn on **Display layers generated at
+runtime**. Clicking a feature shows its fields when the Map widget's pop-ups are enabled.
 
-### The widget in Developer Edition
+## Configuration reference
 
-Copy `widget/databricks-data` into `client/your-extensions/widgets/` of an Experience Builder Developer Edition
-1.20 install, then start Developer Edition as Esri documents. The widget appears under *Custom* in the widget panel.
+Gateway (bundle variables → app environment; list settings use `-` for "none" because Databricks Apps
+rejects empty values):
 
-## Status
+| Setting | Default | What it does |
+|---|---|---|
+| `warehouse_id` | required | Bound warehouse; the default for every query |
+| `allowed_warehouses` | `-` | Extra warehouses authors may pick; anything else is refused (403) |
+| `allowed_origins` | `-` | Browser origins allowed by CORS and by the sign-in handoff |
+| `catalogs` | `-` | Optional cap on which catalogs can be listed |
+| `exclude_catalogs` | `system,samples,hive_metastore,__databricks_internal` | Never listed |
+| `directory` | `-` | Other gateways, `name=url;name=url`, shown in the console and the widget |
+| `MAX_ROWS` | `4000` | Features per page |
+| `BIG_TABLE_FEATURES` | `250000` | Above this, layers draw only when zoomed in (about zoom 9) |
 
-Working end to end in Experience Builder Developer Edition 1.20 against ArcGIS Enterprise 12.1: Databricks sign-in,
-per-user table list, point, line and polygon layers, saved start-up layers in published apps.
+Widget (set in the builder): workspaces (name, gateway URL, warehouse, catalogs viewers can browse), whether
+viewers can browse and add tables, start-up layers.
 
-Not done yet:
+## Security model
 
-- Registering the widget on Portal so it shows up in Portal's own Experience Builder. That needs the built widget
-  hosted on HTTPS with a publicly trusted certificate.
-- Large tables are slow to draw. National tables like Overture buildings take about a minute; tables with tens of
-  thousands of features take a few seconds.
-- Layers come from whole tables. Filters and views per layer are the next step.
+- Every request passes the Databricks Apps front door; queries run with the caller's own token, so Unity
+  Catalog grants (including row filters and column masks) apply per person.
+- The sign-in popup hands the token only to allow-listed origins. Tokens live in memory, never in storage;
+  in the builder they are shared between its windows, never in published apps.
+- The browser never sends SQL. Table, column and catalog names are checked as plain identifiers; `where`
+  clauses are validated; bounding boxes are built from numbers.
+- Caches are per user. "Optimize for maps" only replaces tables ArcGateway wrote itself.
+
+## Performance
+
+- Layers above 250,000 features draw only when zoomed in; the widget says so on the layer's row.
+- Repeated map requests are cached per user for 5 minutes; warehouse sessions are reused.
+- For big tables, use **Optimize for maps** in the console (Explore data → a table). It writes a copy with
+  native GEOMETRY and per-row bounding boxes, clustered on them, so map views read only nearby files. The
+  original table is not changed.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| Sign-in popup says "This site can't be reached" | The workspace card points at an old or wrong gateway URL. Fix the URL in its card. |
+| "Could not read the workspace" / "gateway did not answer" | The sign-in expired (about an hour) or the gateway was restarting. Use **Retry** or sign in again. |
+| Layer doesn't appear in Map Layers | Its row says "not shown in Map Layers": the data source couldn't be created and a plain layer was added. Check the browser console. |
+| Layer disappears when zooming out | It has more than 250,000 features; zoom in, or optimize the table. |
+| Requests fail with CORS errors | The page's origin isn't in the gateway's `allowed_origins`. |
+| A catalog shows "No map-ready tables" | Its tables lack an id column or a geometry the gateway recognizes. |
+
+## Development
+
+- `gateway/console/`: the console (React + TypeScript, Vite). `npm run console:build` writes `gateway/public/`,
+  which is deployed as static files.
+- `gateway/provider/`: adapted from `koop-provider-databricks`; `spec.js` works out each table's geometry and id.
+- `test/index.html` and `test/browser-test.mjs`: the widget's request path on plain ArcGIS Maps SDK, run
+  headless against a deployed gateway. `test/console-shots.mjs` screenshots the console.
+- `CLAUDE.md` has the design notes and known gotchas.
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
-| `widget/databricks-data/` | The Experience Builder widget (runtime, settings panel, shared sign-in) |
-| `gateway/` | The Databricks App. `provider/` is adapted from `koop-provider-databricks` to work per table and per user |
-| `test/` | A plain ArcGIS Maps SDK page and a headless browser test for the widget's request path |
-| `screenshots/` | Images used in this README |
+| `widget/databricks-data/` | Experience Builder widget (runtime, settings, shared sign-in, tree) |
+| `gateway/` | ArcGateway Databricks App and its bundle (`databricks.yml`) |
+| `gateway/console/` | Console source; built into `gateway/public/` |
+| `test/` | Browser tests and screenshot scripts |
+| `screenshots/` | Images in this README |
