@@ -86,3 +86,10 @@ export function removeGatewayLayer (widgetId: string, jmv: JimuMapView | null, g
     DataSourceManager.getInstance().destroyDataSource(gl.dataSource.id)
   }
 }
+
+/** The layer is already off the map (removed by another widget): just drop its data source. */
+export function forgetGatewayLayer (widgetId: string, gl: GatewayLayer | null): void {
+  if (!gl?.dataSource) return
+  publish(widgetId, DataSourcesChangeType.Remove, gl.dataSource)
+  DataSourceManager.getInstance().destroyDataSource(gl.dataSource.id)
+}

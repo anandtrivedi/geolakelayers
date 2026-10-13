@@ -19,7 +19,7 @@ import * as reactiveUtils from 'esri/core/reactiveUtils'
 import type { IMConfig, CatalogTable } from '../config'
 import { getToken, signIn as openSignIn, listenForToken, fetchCatalog, tableRef } from '../auth'
 import { announceLayer } from '../sync'
-import { addGatewayLayer, removeGatewayLayer } from './layers'
+import { addGatewayLayer, removeGatewayLayer, forgetGatewayLayer } from './layers'
 import type { GatewayLayer } from './layers'
 import { versionManager } from '../version-manager'
 import defaultMessages from './translations/default'
@@ -128,6 +128,22 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     if (inBuilder && !fromConfig) announceLayer(props.id, 'remove', entry.table)
   }
 
+  // A Databricks layer removed elsewhere (e.g. from Map Layers) drops out of the widget too
+  React.useEffect(() => {
+    if (!jmv) return
+    const handle = jmv.view.map.layers.on('change', (e: any) => {
+      for (const layer of e.removed || []) {
+        const entry = addedRef.current.find(a => a.gl?.layer === layer)
+        if (!entry) continue
+        addedRef.current = addedRef.current.filter(x => x !== entry)
+        setAdded(addedRef.current)
+        forgetGatewayLayer(props.id, entry.gl)
+        if (inBuilder) announceLayer(props.id, 'remove', entry.table)
+      }
+    })
+    return () => handle.remove()
+  }, [jmv])
+
   const addTable = async (t: CatalogTable, fromConfig = false) => {
     const token = getToken(gateway)
     if (!jmv || !token) return
@@ -189,7 +205,11 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
 
   const mapId = props.useMapWidgetIds?.[0]
   const shown = tables.filter(t => t.table.toLowerCase().includes(filter.toLowerCase())).slice(0, 200)
-  const stateOf = (table: string) => added.find(a => a.table === table)?.state
+  const entryOf = (table: string) => added.find(a => a.table === table)
+  const stateOf = (table: string) => entryOf(table)?.state
+  // Failures the viewer can't see on a catalog row (browsing off, filtered out, or not in the list)
+  const shownTables = new Set(allowBrowse ? shown.map(t => t.table) : [])
+  const hiddenFailures = added.filter(a => a.state === 'failed' && !shownTables.has(a.table))
 
   return (
     <div className='widget-databricks-data jimu-widget' css={style}>
@@ -218,20 +238,9 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
         )}
       </div>
 
-      {added.length > 0 && (
-        <section className='dbx-onmap' aria-label={nls('onTheMap')}>
-          <h6>{nls('onTheMap')}</h6>
-          {added.map(a => (
-            <div key={a.table} className='dbx-onmap-row'>
-              <span className='dbx-onmap-text'>
-                <b>{a.table.split('.').pop()}</b>{' '}
-                <small className={`dbx-state dbx-state-${a.state}`}>{nls(STATE_MESSAGE[a.state])}</small>{' '}
-                <small className='dbx-hint'>{a.info}</small>
-              </span>
-              <Button size='sm' type='tertiary' aria-label={nls('removeLayer', { table: a.table })} onClick={() => remove(a)}>{nls('remove')}</Button>
-            </div>
-          ))}
-        </section>
+      {hiddenFailures.length > 0 && (
+        <Alert className='dbx-alert' type='error' withIcon closable={false}
+          text={nls('layersFailed', { tables: hiddenFailures.map(a => a.table.split('.').pop()).join(', ') })} />
       )}
 
       {allowBrowse && tables.length > 0 && (
@@ -250,9 +259,17 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
                   onClick={() => addTable(t)} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && addTable(t)}>
                   <div className='dbx-table-name'>
                     <span>{t.schema}.<b>{t.name}</b></span>
-                    {st && <small className={`dbx-state dbx-state-${st}`}>{nls(STATE_MESSAGE[st])}</small>}
+                    {st && (
+                      <span className='dbx-table-status'>
+                        {(st === 'adding' || st === 'drawing') && <Loading type={LoadingType.Donut} width={12} height={12} />}
+                        <small className={`dbx-state dbx-state-${st}`}>{nls(STATE_MESSAGE[st])}</small>
+                        <Button size='sm' type='tertiary' icon className='dbx-remove' title={nls('remove')}
+                          aria-label={nls('removeLayer', { table: t.table })}
+                          onClick={e => { e.stopPropagation(); const a = entryOf(t.table); if (a) remove(a) }}>×</Button>
+                      </span>
+                    )}
                   </div>
-                  <small className='dbx-hint'>{nls('tableDetail', { id: t.idField, geometry: t.geometry })}</small>
+                  <small className='dbx-hint'>{entryOf(t.table)?.info || nls('tableDetail', { id: t.idField, geometry: t.geometry })}</small>
                 </div>
               </div>
             )
@@ -283,16 +300,6 @@ const style = css`
   .dbx-signin { margin-bottom: 8px; }
   .dbx-filter { margin: 6px 0; }
 
-  .dbx-onmap {
-    margin: 4px 0 10px;
-    padding: 6px 8px;
-    border-radius: 4px;
-    background-color: var(--sys-color-surface-background);
-    h6 { margin: 0 0 4px; font-size: 0.8125rem; font-weight: 600; }
-  }
-  .dbx-onmap-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 0; }
-  .dbx-onmap-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-
   .dbx-table {
     padding: 4px 6px;
     cursor: pointer;
@@ -302,7 +309,9 @@ const style = css`
   }
   .dbx-table-added { background-color: var(--sys-color-action-selected); }
   .dbx-table-busy { cursor: progress; }
-  .dbx-table-name { display: flex; justify-content: space-between; gap: 6px; }
+  .dbx-table-name { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .dbx-table-status { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+  .dbx-remove { padding: 0 4px; min-width: 0; line-height: 1; }
 
   .dbx-state { white-space: nowrap; }
   .dbx-state-adding, .dbx-state-drawing { color: var(--sys-color-warning-dark); }

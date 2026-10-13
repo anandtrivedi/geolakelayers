@@ -21,5 +21,6 @@ export default {
   stateAdding: 'Adding…',
   stateDrawing: 'Drawing…',
   stateReady: 'On map',
-  stateFailed: 'Failed'
+  stateFailed: 'Failed',
+  layersFailed: 'Could not load: {tables}'
 }
