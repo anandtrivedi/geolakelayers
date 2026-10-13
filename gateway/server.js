@@ -8,6 +8,7 @@
     /api/spec/<table>   geometry/id the gateway resolved for a table
     /api/catalogs       catalogs the caller can see (widget settings)
     /api/warehouses     allow-listed warehouses the caller can use (widget settings)
+    /api/optimize       write a map-optimized copy of a table (console), job status at /api/optimize/<id>
     /auth/handoff       popup page that hands the signed-in user's token to an allowed origin
     /                   ArcGateway console (public/, built from console/)
     /api/info           gateway status and the workspace directory (console)
@@ -39,6 +40,10 @@ const catalogScope = catalogs.length ? catalogs.join(', ') : 'all catalogs you c
 const koop = new Koop({ logLevel: process.env.LOG_LEVEL || 'info', disableCors: true })
 const app = koop.server
 
+app.use('/api/optimize', (req, res, next) => {
+  if (req.method === 'OPTIONS') return res.status(403).end()
+  next()
+})
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
   methods: ['GET', 'POST'],
@@ -200,6 +205,60 @@ app.get('/api/spec/:table', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
+})
+
+// "Optimize for maps": write a copy of a table with native GEOMETRY, per-row bounding-box columns and
+// liquid clustering on them, so tile queries skip files instead of parsing every row. Runs as the caller
+// (needs CREATE TABLE on the target schema) as a background job the console polls.
+const optimizeJobs = new Map() // id -> { state, source, target, startedAt, finishedAt, rows, error }
+app.post('/api/optimize', express.json(), async (req, res) => {
+  // Writes a table as the caller, so only the console may ask: same-origin JSON (a cross-site form post
+  // can't send application/json without a CORS preflight, which this route never approves)
+  const self = `https://${req.headers['x-forwarded-host'] || req.headers.host}`
+  if (!String(req.headers['content-type'] || '').startsWith('application/json') || (req.headers.origin && req.headers.origin !== self)) {
+    return res.status(403).json({ error: 'Optimize can only be started from the ArcGateway console' })
+  }
+  const { table, target } = req.body || {}
+  const name = String((req.body || {}).name || '')
+  const three = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
+  if (!three.test(table || '')) return res.status(400).json({ error: 'table must be catalog.schema.table' })
+  if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(target || '')) return res.status(400).json({ error: 'target must be catalog.schema' })
+  if (!PLAIN.test(name)) return res.status(400).json({ error: 'name must be a plain identifier' })
+  let spec
+  try {
+    spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+  if (!spec) return res.status(400).json({ error: `${table} has no usable geometry or id` })
+  const geomExpr = { wkt: `ST_GeomFromText(${spec.geometryColumn}, 4326)`, wkb: `ST_GeomFromWKB(${spec.geometryColumn}, 4326)` }[spec.geometryFormat] ||
+    (spec.geometryFormat === 'geometry' ? spec.geometryColumn : spec.geometryExpr)
+  const out = `${target}.${name}`
+  const except = spec.geometryColumn ? ` EXCEPT (${spec.geometryColumn})` : ''
+  const sql = `
+    CREATE OR REPLACE TABLE ${out}
+    CLUSTER BY (_xmin, _ymin)
+    COMMENT 'Map-optimized copy of ${table}, written by ArcGateway'
+    AS SELECT *, ST_XMin(geom) AS _xmin, ST_YMin(geom) AS _ymin, ST_XMax(geom) AS _xmax, ST_YMax(geom) AS _ymax
+    FROM (SELECT *${except}, ${geomExpr} AS geom FROM ${spec.source || table}) AS src
+    WHERE geom IS NOT NULL`
+  const id = crypto.randomBytes(6).toString('hex')
+  const job = { id, state: 'running', source: table, target: out, startedAt: Date.now() }
+  optimizeJobs.set(id, job)
+  res.status(202).json(job)
+  try {
+    await runSql(req, sql, 3600)
+    const n = await runSql(req, `SELECT COUNT(*) AS n FROM ${out}`, 120)
+    Object.assign(job, { state: 'done', finishedAt: Date.now(), rows: Number(n[0]?.n || 0) })
+  } catch (err) {
+    Object.assign(job, { state: 'failed', finishedAt: Date.now(), error: err.message })
+  }
+})
+
+app.get('/api/optimize/:id', (req, res) => {
+  const job = optimizeJobs.get(req.params.id)
+  if (!job) return res.status(404).json({ error: 'No such job' })
+  res.json(job)
 })
 
 // Catalogs the caller can see (for the widget's settings), minus the excluded ones

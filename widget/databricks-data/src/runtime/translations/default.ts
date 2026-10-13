@@ -24,6 +24,7 @@ export default {
   zoomToLayer: 'On the map: click to zoom to it',
   retryLayer: 'Failed: click to try again',
   layerSummary: '{type}, {n} fields',
+  zoomInToSee: 'large table: zoom in to see it',
   stateAdding: 'Adding…',
   stateDrawing: 'Drawing…',
   stateReady: 'On map',

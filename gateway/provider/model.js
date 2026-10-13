@@ -22,6 +22,12 @@ const maxRows = parseInt(process.env.MAX_ROWS) || parseInt(config.maxRows) || 10
 const queryTimeoutSeconds = parseInt(process.env.QUERY_TIMEOUT_SECONDS) || 30
 const cacheTTLMs = parseInt(process.env.CACHE_TTL_MS) || 300000
 const CACHE_MAX_ENTRIES = 100
+// Big tables draw only when zoomed in (advertised as the layer's minScale, which every ArcGIS client honors)
+const BIG_TABLE_FEATURES = parseInt(process.env.BIG_TABLE_FEATURES) || 250000
+const BIG_TABLE_MIN_SCALE = parseInt(process.env.BIG_TABLE_MIN_SCALE) || 1155582 // about zoom level 9
+// Repeated tile/page requests: per-user cache of the SQL rows (re-translated on each hit)
+const QUERY_CACHE_TTL_MS = parseInt(process.env.QUERY_CACHE_TTL_MS) || 300000
+const QUERY_CACHE_MAX_ROWS = parseInt(process.env.QUERY_CACHE_MAX_ROWS) || 400000
 const rateLimitMax = parseInt(process.env.RATE_LIMIT_MAX) || 100
 const rateLimitWindowMs = parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000
 
@@ -206,7 +212,14 @@ Model.prototype.getData = function (req, callback) {
         logger.info(`${thisTask}> Executing query: ${queryString}`)
 
         // Don't use maxRows option - it conflicts with SQL LIMIT
-        result = await executeAndRecord(session, queryString, 'features', thisTask)
+        const cacheKey = queryCacheKey(userToken, req.warehouseId, queryString)
+        result = queryCacheGet(cacheKey)
+        if (result) {
+          logger.info(`${thisTask}> Cache hit (${result.length} rows)`)
+        } else {
+          result = await executeAndRecord(session, queryString, 'features', thisTask)
+          queryCachePut(cacheKey, result)
+        }
 
         logger.info(`${thisTask}> Received ${result.length} rows`)
 
@@ -264,6 +277,11 @@ Model.prototype.getData = function (req, callback) {
         if (isLayerInfo) {
           const extent = await tableExtent(table, session, thisTask)
           if (extent) geojson.metadata.extent = extent
+          const total = await tableCount(table, session, thisTask)
+          if (total > BIG_TABLE_FEATURES) {
+            geojson.metadata.minScale = BIG_TABLE_MIN_SCALE
+            geojson.metadata.description = `${total.toLocaleString('en-US')} features; drawn when zoomed in`
+          }
         } else if (geojson.features && geojson.features.length > 0) {
           // Add extent if we have features
           const extent = calculateExtent(geojson.features)
@@ -438,6 +456,46 @@ function buildExtentQuery (table, query) {
   `.trim()
 }
 
+// Per-user query cache: key includes the user (UC permissions differ), warehouse and the exact SQL
+const queryCache = new Map() // key -> { rows, at }
+let queryCacheRows = 0
+function queryCacheKey (userToken, warehouseId, sql) {
+  const crypto = require('crypto')
+  return crypto.createHash('sha256').update(`${userToken || 'app'}|${warehouseId || ''}|${sql}`).digest('hex')
+}
+function queryCacheGet (key) {
+  const hit = queryCache.get(key)
+  if (!hit) return null
+  if (Date.now() - hit.at > QUERY_CACHE_TTL_MS) { queryCache.delete(key); queryCacheRows -= hit.rows.length; return null }
+  queryCache.delete(key); queryCache.set(key, hit) // most recently used last
+  return hit.rows
+}
+function queryCachePut (key, rows) {
+  if (rows.length > QUERY_CACHE_MAX_ROWS / 4) return
+  queryCache.set(key, { rows, at: Date.now() })
+  queryCacheRows += rows.length
+  for (const [k, v] of queryCache) {
+    if (queryCacheRows <= QUERY_CACHE_MAX_ROWS) break
+    queryCache.delete(k); queryCacheRows -= v.rows.length
+  }
+}
+
+// Row count for layer info (TTL cache)
+const countCache = new Map()
+async function tableCount (table, session, taskId) {
+  const hit = countCache.get(table)
+  if (hit && Date.now() - hit.at < cacheTTLMs * 6) return hit.count
+  try {
+    const rows = await executeAndRecord(session, `SELECT COUNT(*) AS cnt FROM ${table}`, 'count', taskId)
+    const count = Number(rows[0]?.cnt || 0)
+    countCache.set(table, { count, at: Date.now() })
+    return count
+  } catch (error) {
+    logger.warn(`${taskId}> Count failed for ${table}: ${error.message}`)
+    return 0
+  }
+}
+
 // Whole-table extent for layer info, computed once per table in SQL (TTL cache)
 const extentCache = new Map()
 async function tableExtent (table, session, taskId) {
@@ -597,7 +655,9 @@ function buildBboxFilter (geometryString, geometryType, inSR) {
     // Use ST_Intersects for bbox filtering
     // Supports WKT, WKB, and native GEOMETRY types
     const geomExpr = buildGeometryExpression()
-    return `ST_Intersects(${geomExpr}, ST_GeomFromText('${wkt}', ${S().spatialReference}))`
+    const intersects = `ST_Intersects(${geomExpr}, ST_GeomFromText('${wkt}', ${S().spatialReference}))`
+    if (!S().bboxColumns) return intersects
+    return `(_xmax >= ${xmin} AND _xmin <= ${xmax} AND _ymax >= ${ymin} AND _ymin <= ${ymax} AND ${intersects})`
   } catch (error) {
     logger.error('Error building bbox filter:', error)
     return null
@@ -722,6 +782,7 @@ function translateWithSTFunctions (rows, query) {
       const properties = { ...row }
       delete properties.__geojson__
       if (S().geometryColumn) delete properties[S().geometryColumn]
+      if (S().bboxColumns) { delete properties._xmin; delete properties._ymin; delete properties._xmax; delete properties._ymax }
       // ArcGIS attributes are scalars: STRUCT/ARRAY/MAP values (e.g. Overture's names, bbox) become JSON text,
       // binary values are dropped
       for (const k of Object.keys(properties)) {
@@ -857,7 +918,7 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId) {
       ? [{ name: S().objectId, type: 'esriFieldTypeBigInteger', alias: S().objectId, sqlType: 'bigint', nullable: false, editable: false, domain: null, defaultValue: null }]
       : []
     const fields = derived.concat(columnRows
-      .filter(row => row.col_name !== S().geometryColumn)
+      .filter(row => row.col_name !== S().geometryColumn && !(S().bboxColumns && /^_[xy](min|max)$/.test(row.col_name)))
       .map(row => ({
         name: row.col_name,
         type: mapDatabricksToEsriFieldType(row.data_type),

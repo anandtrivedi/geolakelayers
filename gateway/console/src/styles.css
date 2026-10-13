@@ -96,3 +96,13 @@ h3 { font-size: 1.1rem; margin: 2px 0 0; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .two-col, .explorer { grid-template-columns: 1fr; }
 }
+
+.optimize { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.optimize h4 { margin: 0 0 6px; font-size: 0.95rem; }
+.optimize p { line-height: 1.5; margin: 0 0 10px; }
+.optimize-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.optimize-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
+.optimize-form input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text); min-width: 220px; }
+.button:disabled { opacity: 0.6; cursor: progress; }
+.optimized-note { margin: 12px 0 0; display: flex; align-items: center; gap: 8px; }
+.optimized-note .chip.small { margin-left: 0; }

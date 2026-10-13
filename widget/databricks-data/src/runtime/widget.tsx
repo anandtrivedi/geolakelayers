@@ -179,10 +179,13 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       layer.renderer = rendererFor(layer.geometryType, colorIndex.current++) as any
       layer.outFields = ['*']
       layer.popupTemplate = { title, content: [{ type: 'fields' }] } as any
-      const summary = nls('layerSummary', { type: layer.geometryType, n: String(layer.fields.length) })
+      // Big tables come with a minScale from the gateway: say so instead of looking empty when zoomed out
+      const zoomHint = layer.minScale > 0 ? ` · ${nls('zoomInToSee')}` : ''
+      const summary = nls('layerSummary', { type: layer.geometryType, n: String(layer.fields.length) }) + zoomHint
       update(entry, { state: 'drawing', info: summary })
       const lv = await jmv.view.whenLayerView(layer)
-      if (isCurrent(entry) && layer.fullExtent) await jmv.view.goTo(layer.fullExtent.expand(1.2)).catch(() => {})
+      // Zooming to the whole extent of a zoom-limited layer would hide it; leave the view where it is
+      if (isCurrent(entry) && layer.fullExtent && !(layer.minScale > 0)) await jmv.view.goTo(layer.fullExtent.expand(1.2)).catch(() => {})
       await reactiveUtils.whenOnce(() => !lv.updating)
       update(entry, { state: 'ready', info: `${summary}, ${((performance.now() - t0) / 1000).toFixed(1)} s` })
     } catch (err) {

@@ -92,6 +92,10 @@ function detect (allCols) {
   const stringId = id ? null : byName(STRING_ID_NAMES, c => c.type === 'string')
   if (!geom || (!id && !stringId)) return null
   const spec = { objectId: id ? id.name : null, geometryColumn: geom.column, geometryFormat: geom.format, geometryExpr: geom.expr, geometrySource: geom.source, spatialReference: 4326 }
+  // Map-optimized tables (written by the console's "Optimize for maps") carry per-row bounding boxes;
+  // filtering on them first lets Databricks skip files that can't intersect a tile
+  const num = c => cols.some(x => x.lname === c && /^(double|float)/.test(x.type))
+  if (['_xmin', '_ymin', '_xmax', '_ymax'].every(num)) spec.bboxColumns = true
   if (stringId) {
     // Expose the derived id under `objectid` (or `__objectid` if that name is taken) through a wrapped source
     const name = cols.some(c => c.lname === 'objectid') ? '__objectid' : 'objectid'
