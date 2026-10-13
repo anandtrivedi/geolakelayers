@@ -7,7 +7,7 @@
   3. Picking a table adds FeatureLayer(<gateway>/databricks/rest/services/<table>/FeatureServer/0)
      to the selected map, so paging, extent and filtering are the SDK's normal FeatureServer path.
 */
-import { React } from 'jimu-core'
+import { React, getAppStore } from 'jimu-core'
 import type { AllWidgetProps } from 'jimu-core'
 import { JimuMapViewComponent } from 'jimu-arcgis'
 import type { JimuMapView } from 'jimu-arcgis'
@@ -17,6 +17,7 @@ import FeatureLayer from 'esri/layers/FeatureLayer'
 import * as reactiveUtils from 'esri/core/reactiveUtils'
 import type { IMConfig, CatalogTable } from '../config'
 import { getToken, signIn as openSignIn, listenForToken, fetchCatalog, tableRef } from '../auth'
+import { announceLayer } from '../sync'
 import defaultMessages from './translations/default'
 
 // Shared by every instance of the widget in the app
@@ -87,7 +88,9 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
 
   const allowBrowse = props.config.allowBrowse !== false
   const savedLayers: string[] = props.config.layers ? props.config.layers.asMutable() : []
-  const autoLoaded = React.useRef(false)
+  const prevSaved = React.useRef<string[]>([])
+  // In the builder, layers the author adds or removes here are saved to the widget's settings
+  const inBuilder = !!getAppStore().getState()?.appContext?.isInBuilder
 
   const loadCatalog = React.useCallback(async () => {
     if (!getToken(gateway) || !allowBrowse) return
@@ -110,7 +113,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
 
   const signIn = () => openSignIn(gateway)
 
-  const addTable = async (t: CatalogTable) => {
+  const addTable = async (t: CatalogTable, fromConfig = false) => {
     if (!jmv) return
     // Already on the map: zoom to it instead of adding a duplicate; still loading: ignore the click
     const existing = addedRef.current.find(a => a.table === t.table)
@@ -127,6 +130,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     const entry: Added = { table: t.table, layer, state: 'adding', info: '' }
     addedRef.current = [entry, ...addedRef.current]
     setAdded(addedRef.current)
+    if (inBuilder && !fromConfig) announceLayer(props.id, 'add', t.table)
     jmv.view.map.add(layer)
     const t0 = performance.now()
     try {
@@ -142,19 +146,30 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     }
   }
 
-  // Layers saved in the widget's settings load once the viewer is signed in and the map is ready
+  // Keep the map in step with the layers saved in settings: saved layers load once the viewer is
+  // signed in; in the builder, unticking a layer in settings also takes it off the map
   React.useEffect(() => {
-    if (autoLoaded.current || !jmv || !user || savedLayers.length === 0) return
-    autoLoaded.current = true
+    if (!jmv || !user) return
+    const prev = prevSaved.current
+    prevSaved.current = savedLayers
+    if (inBuilder) {
+      for (const t of prev) {
+        const entry = savedLayers.includes(t) ? null : addedRef.current.find(a => a.table === t)
+        if (entry) remove(entry, true)
+      }
+    }
     ;(async () => {
-      for (const t of savedLayers) await addTable(tableRef(t))
+      for (const t of savedLayers) {
+        if (!addedRef.current.some(a => a.table === t)) await addTable(tableRef(t), true)
+      }
     })()
   }, [jmv, user, savedLayers.join('|')])
 
-  const remove = (entry: Added) => {
+  const remove = (entry: Added, fromConfig = false) => {
     jmv?.view.map.remove(entry.layer)
     addedRef.current = addedRef.current.filter(x => x !== entry)
     setAdded(addedRef.current)
+    if (inBuilder && !fromConfig) announceLayer(props.id, 'remove', entry.table)
   }
 
   const mapId = props.useMapWidgetIds?.[0]

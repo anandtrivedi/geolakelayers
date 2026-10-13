@@ -4,6 +4,7 @@ import { MapWidgetSelector, SettingSection, SettingRow } from 'jimu-ui/advanced/
 import { Button, Checkbox, Switch, TextInput } from 'jimu-ui'
 import type { IMConfig, CatalogTable } from '../config'
 import { getToken, signIn, listenForToken, fetchCatalog } from '../auth'
+import { onLayerAnnounced } from '../sync'
 import defaultMessages from './translations/default'
 
 export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
@@ -24,6 +25,15 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   const setLayers = (layers: string[]) => {
     props.onSettingChange({ id: props.id, config: props.config.set('layers', Immutable(layers)) })
   }
+
+  // Tables the author adds or removes on the live-view canvas are saved here too
+  const configRef = React.useRef(props.config)
+  configRef.current = props.config
+  React.useEffect(() => onLayerAnnounced(props.id, (action, table) => {
+    const cur: string[] = configRef.current.layers ? configRef.current.layers.asMutable() : []
+    const next = action === 'add' ? (cur.includes(table) ? cur : [...cur, table]) : cur.filter(t => t !== table)
+    if (next.length !== cur.length) props.onSettingChange({ id: props.id, config: configRef.current.set('layers', Immutable(next)) })
+  }), [props.id])
 
   const toggle = (table: string) => {
     setLayers(selected.includes(table) ? selected.filter(t => t !== table) : [...selected, table])
