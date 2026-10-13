@@ -24,6 +24,12 @@ import type { GatewayLayer } from './layers'
 import { versionManager } from '../version-manager'
 import defaultMessages from './translations/default'
 
+function soleMapWidgetId (): string | undefined {
+  const widgets = getAppStore().getState()?.appConfig?.widgets || {}
+  const maps = Object.keys(widgets).filter(id => widgets[id].uri === 'widgets/arcgis/arcgis-map/')
+  return maps.length === 1 ? maps[0] : undefined
+}
+
 // Shared by every instance of the widget in the app
 const interceptorFor = new Set<string>()
 
@@ -83,6 +89,10 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   const addedRef = React.useRef<Added[]>([])
   const colorIndex = React.useRef(0)
 
+  // The configured map, or the app's only Map widget when none is picked (e.g. right after the widget is
+  // moved into a Widget Controller, which creates a fresh instance with empty settings)
+  const mapId = props.useMapWidgetIds?.[0] || soleMapWidgetId()
+  const [notice, setNotice] = React.useState('')
   const allowBrowse = props.config.allowBrowse !== false
   const savedLayers: string[] = props.config.layers ? props.config.layers.asMutable() : []
   const prevSaved = React.useRef<string[]>([])
@@ -146,7 +156,12 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
 
   const addTable = async (t: CatalogTable, fromConfig = false) => {
     const token = getToken(gateway)
-    if (!jmv || !token) return
+    if (!token) return
+    if (!jmv) {
+      if (!fromConfig) setNotice(mapId ? nls('mapLoading') : nls('chooseMap'))
+      return
+    }
+    setNotice('')
     // Already on the map: zoom to it; still loading: ignore the click; failed: try again
     const existing = addedRef.current.find(a => a.table === t.table)
     if (existing) {
@@ -203,7 +218,6 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     })()
   }, [jmv, user, savedLayers.join('|')])
 
-  const mapId = props.useMapWidgetIds?.[0]
   const shown = tables.filter(t => t.table.toLowerCase().includes(filter.toLowerCase())).slice(0, 200)
   const entryOf = (table: string) => added.find(a => a.table === table)
   const stateOf = (table: string) => entryOf(table)?.state
@@ -220,7 +234,8 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       </div>
 
       {!gateway && <Alert className='dbx-alert' type='warning' withIcon text={nls('noGateway')} />}
-      {!mapId && <Alert className='dbx-alert' type='info' withIcon text={nls('chooseMap')} />}
+      {!mapId && <Alert className='dbx-alert' type='warning' withIcon text={nls('chooseMap')} />}
+      {notice && mapId && <Alert className='dbx-alert' type='info' withIcon text={notice} />}
 
       {gateway && !user && (
         <div className='dbx-signin'>
