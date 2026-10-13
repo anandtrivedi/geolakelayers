@@ -42,6 +42,32 @@ app.use(express.static(path.join(__dirname, 'public')))
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }))
 
+// Landing page: who the front door says you are, and what the gateway can serve for you
+app.get('/', async (req, res) => {
+  const user = req.headers['x-forwarded-email'] || 'unknown'
+  let tables = []
+  let error = null
+  try {
+    tables = await listTables(req)
+  } catch (err) {
+    error = err.message
+  }
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+  const rows = tables.slice(0, 500).map(t => {
+    const url = `/databricks/rest/services/${t.table}/FeatureServer/0`
+    return `<tr><td>${esc(t.table)}</td><td>${esc(t.idField)}</td><td>${esc(t.geometry)}</td><td><a href="${esc(url)}?f=json">layer</a> · <a href="${esc(url)}/query?where=1%3D1&outFields=*&resultRecordCount=5&f=json">5 rows</a></td></tr>`
+  }).join('')
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Databricks feature gateway</title>
+<style>body{font:14px system-ui,sans-serif;margin:24px;color:#1b3139}table{border-collapse:collapse}td,th{padding:4px 10px;border-bottom:1px solid #e5e5e5;text-align:left}th{background:#f5f5f5}code{background:#f5f5f5;padding:1px 4px}</style>
+<h2>Databricks feature gateway</h2>
+<p>Signed in as <b>${esc(user)}</b>. Queries run with your Unity Catalog permissions.</p>
+<p>Serves Unity Catalog tables as ArcGIS FeatureServer layers for the Experience Builder <i>Databricks Data</i> widget:
+<code>/databricks/rest/services/&lt;catalog.schema.table&gt;/FeatureServer/0</code></p>
+<p>Browser origins allowed to call it: ${allowedOrigins.map(o => `<code>${esc(o)}</code>`).join(' ') || 'none'}</p>
+${error ? `<p style="color:#b00">Catalog failed: ${esc(error)}</p>` : `<h3>${tables.length} tables in ${esc(catalogs.join(', '))}</h3>
+<table><tr><th>Table</th><th>Object id</th><th>Geometry</th><th></th></tr>${rows}</table>`}`)
+})
+
 app.get('/api/whoami', (req, res) => {
   res.json({ user: req.headers['x-forwarded-email'] || null, origin: req.headers.origin || null })
 })
