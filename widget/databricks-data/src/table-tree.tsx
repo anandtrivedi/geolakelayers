@@ -26,6 +26,10 @@ export interface TableTreeProps {
   showWorkspaces?: boolean
   /** Expand everything that has one child (e.g. a single catalog) */
   autoExpandSingle?: boolean
+  /** Open (and load) every listed workspace and catalog */
+  expandAll?: boolean
+  /** Only show tables passing this test (e.g. "selected only") */
+  tableFilter?: (ws: Workspace, t: CatalogTable) => boolean
   messages: { loading: string, failed: (error: string) => string, empty: string, tablesIn: (n: number) => string }
 }
 
@@ -55,6 +59,19 @@ export function TableTree (props: TableTreeProps) {
       return next
     })
   }
+
+  React.useEffect(() => {
+    if (!props.expandAll) return
+    const next = new Set(expanded)
+    for (const ws of workspaces) {
+      next.add(`w|${ws.id}`)
+      for (const c of catalogsFor(ws)) {
+        next.add(`c|${ws.id}|${c}`)
+        if (!catalogState[`${ws.id}|${c}`]) load(ws, c)
+      }
+    }
+    setExpanded(next)
+  }, [props.expandAll, workspaces.map(w => w.id + ':' + catalogsFor(w).join(',')).join('|')])
 
   // Catalogs open by default when there's just one under a workspace
   React.useEffect(() => {
@@ -90,9 +107,9 @@ export function TableTree (props: TableTreeProps) {
   const renderCatalog = (ws: Workspace, catalog: string, depth: number) => {
     const key = `${ws.id}|${catalog}`
     const nodeKey = `c|${key}`
-    const open = expanded.has(nodeKey) || (q && catalogState[key]?.state === 'ready')
+    const open = expanded.has(nodeKey) || (q && catalogState[key]?.state === 'ready') || props.expandAll
     const st = catalogState[key]
-    const tables = (st?.tables || []).filter(t => !q || t.table.toLowerCase().includes(q))
+    const tables = (st?.tables || []).filter(t => (!q || t.table.toLowerCase().includes(q)) && (!props.tableFilter || props.tableFilter(ws, t)))
     const schemas = Array.from(new Set(tables.map(t => t.schema))).sort()
     if (q && st?.state === 'ready' && !tables.length) return null
     return (
@@ -110,7 +127,7 @@ export function TableTree (props: TableTreeProps) {
             {st?.state === 'ready' && !st.tables.length && <div className='tt-row tt-hint' style={{ paddingLeft: (depth + 1) * 14 }}>{messages.empty}</div>}
             {schemas.map(schema => {
               const sKey = `s|${key}|${schema}`
-              const sOpen = expanded.has(sKey) || !!q || schemas.length === 1
+              const sOpen = expanded.has(sKey) || !!q || schemas.length === 1 || !!props.expandAll
               const inSchema = tables.filter(t => t.schema === schema)
               return (
                 <div key={sKey} role='treeitem' aria-expanded={sOpen}>
@@ -146,7 +163,7 @@ export function TableTree (props: TableTreeProps) {
         const cats = catalogsFor(ws)
         if (!showWorkspaces) return cats.map(c => renderCatalog(ws, c, 0))
         const wKey = `w|${ws.id}`
-        const open = expanded.has(wKey) || !!q
+        const open = expanded.has(wKey) || !!q || !!props.expandAll
         return (
           <div key={wKey} role='treeitem' aria-expanded={open}>
             <div className='tt-row tt-branch tt-workspace' role='button' tabIndex={0}
