@@ -8,7 +8,7 @@
 */
 import {
   Immutable, DataSourceManager, MessageManager, DataSourcesChangeMessage, DataSourcesChangeType,
-  dataSourceUtils
+  ServiceManager, dataSourceUtils
 } from 'jimu-core'
 import type { DataSource } from 'jimu-core'
 import type { JimuMapView, JimuLayerView } from 'jimu-arcgis'
@@ -19,6 +19,8 @@ export interface GatewayLayer {
   layer: __esri.FeatureLayer
   dataSource: DataSource | null
   jimuLayerView: JimuLayerView | null
+  /** Set when the data source couldn't be created and a plain layer was added instead */
+  fallbackReason?: string
 }
 
 export function layerUrl (gateway: string, table: string): string {
@@ -55,6 +57,11 @@ export async function addGatewayLayer (opts: {
     const definition = await r.json()
     if (!r.ok || definition.error) throw new Error(definition.error?.message || `HTTP ${r.status}`)
 
+    // Hand Experience Builder the definition we fetched with the token. Some of its data-source code
+    // fetches service info itself without going through the SDK interceptors, so that request would go
+    // out unauthenticated and the data source would fail (the layer then only works as a plain layer).
+    ServiceManager.getInstance().setServiceInfo(url, { definition, isHostedInSamePortal: false })
+
     const created = dataSourceUtils.dataSourceJsonCreator.createDataSourceJsonByLayerDefinition(id, definition, url)
     if (!created) throw new Error('Could not build a data source for this layer')
     const dsJson = created.asMutable({ deep: true })
@@ -73,7 +80,7 @@ export async function addGatewayLayer (opts: {
     console.warn(`Databricks Data: ${table} added without a data source (${err.message})`)
     const layer = new FeatureLayer({ url, title, outFields: ['*'] })
     jmv.view.map.add(layer)
-    return { layer, dataSource: null, jimuLayerView: null }
+    return { layer, dataSource: null, jimuLayerView: null, fallbackReason: err.message }
   }
 }
 

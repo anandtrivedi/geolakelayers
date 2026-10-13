@@ -81,6 +81,8 @@ targets:
       host: https://your-workspace.cloud.databricks.com
     variables:
       warehouse_id: abcdef0123456789
+      # Large serverless warehouse authors may pick for heavier layers (2X-Large deliberately not allowed)
+      allowed_warehouses: abcdef1234567890
       directory: prod=https://arcgateway-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
 

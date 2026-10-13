@@ -34,6 +34,8 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   const [activeId, setActiveId] = React.useState<string>(rows[0]?.id)
   const [filter, setFilter] = React.useState('')
   const [directory, setDirectory] = React.useState<Array<{ name: string, url: string }>>([])
+  // The start-up layer tree shows the catalogs picked for viewers; this widens it to every catalog
+  const [allCatalogs, setAllCatalogs] = React.useState(false)
   const active = workspaces.find(w => w.id === activeId) || workspaces[0]
 
   const setConfig = (key: string, value: any) => {
@@ -210,10 +212,16 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
               <React.Fragment>
                 <TextInput size='sm' className='w-100' placeholder={nls('filterTables')} aria-label={nls('filterTables')}
                   value={filter} onChange={e => setFilter(e.target.value)} style={{ marginBottom: 6 }} />
+                {signedIn.some(ws => ws.catalogs.length) && (
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, margin: '0 0 6px', fontSize: 12 }}>
+                    {nls('showAllCatalogs')}
+                    <Switch checked={allCatalogs} aria-label={nls('showAllCatalogs')} onChange={e => setAllCatalogs(e.target.checked)} />
+                  </label>
+                )}
                 <div style={{ maxHeight: 360, overflow: 'auto' }}>
                   <TableTree
                     workspaces={signedIn}
-                    catalogsFor={ws => info[ws.id]?.catalogs || []}
+                    catalogsFor={ws => (allCatalogs || !ws.catalogs.length) ? (info[ws.id]?.catalogs || []) : ws.catalogs}
                     loadTables={loadTables}
                     filter={filter}
                     renderTable={(ws, t: CatalogTable) => {

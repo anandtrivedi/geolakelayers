@@ -180,7 +180,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       layer.outFields = ['*']
       layer.popupTemplate = { title, content: [{ type: 'fields' }] } as any
       // Big tables come with a minScale from the gateway: say so instead of looking empty when zoomed out
-      const zoomHint = layer.minScale > 0 ? ` · ${nls('zoomInToSee')}` : ''
+      const zoomHint = (layer.minScale > 0 ? ` · ${nls('zoomInToSee')}` : '') + (gl.fallbackReason ? ` · ${nls('notInLayerList')}` : '')
       const summary = nls('layerSummary', { type: layer.geometryType, n: String(layer.fields.length) }) + zoomHint
       update(entry, { state: 'drawing', info: summary })
       const lv = await jmv.view.whenLayerView(layer)

@@ -26,6 +26,7 @@ export default {
   startLayers: 'Layers to load when the app opens',
   startLayersHint: 'Sign in to a workspace to pick tables. Viewers sign in once per workspace and these load automatically.',
   filterTables: 'Filter tables',
+  showAllCatalogs: 'Show all catalogs, not just the ones viewers browse',
   selected: '{n} selected',
   loadingCatalog: 'Loading tables…',
   catalogFailed: 'Could not load tables: {error}',
