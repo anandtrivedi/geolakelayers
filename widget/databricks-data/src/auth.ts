@@ -3,8 +3,9 @@
 
   Sign-in opens <gateway>/auth/handoff in a popup. The Databricks login happens there
   (first-party), and the page posts the user's token back to this window's origin.
-  Tokens are kept in memory only. Same-origin windows (the builder's settings panel and its
-  live-view canvas, or several app tabs) share them over a BroadcastChannel, so one sign-in covers all.
+  Tokens are kept in memory only. In the builder, its settings panel and live-view canvas are separate
+  windows; they share the token over a BroadcastChannel so one sign-in covers both. Published apps don't
+  use the channel: every app on a Portal shares one origin, and any of them could listen to it.
 */
 import type { CatalogTable } from './config'
 
@@ -12,7 +13,9 @@ export interface GatewayToken { token: string, user: string }
 
 const tokens: { [gateway: string]: GatewayToken } = {}
 const listeners: { [gateway: string]: Set<(t: GatewayToken) => void> } = {}
-const channel: BroadcastChannel | null = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('databricks-gateway-token') : null
+const jimuConfig = (window as any).jimuConfig || {}
+const inBuilder = !!(jimuConfig.isBuilder || jimuConfig.isInBuilder)
+const channel: BroadcastChannel | null = inBuilder && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('databricks-gateway-token') : null
 
 function setToken (gateway: string, t: GatewayToken, share: boolean): void {
   tokens[gateway] = t

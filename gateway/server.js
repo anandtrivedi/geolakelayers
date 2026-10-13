@@ -5,6 +5,7 @@
     /databricks/rest/services/<catalog.schema.table>/FeatureServer/0   any UC table as an ArcGIS layer (Koop)
     /api/catalog        tables the caller can see that the gateway can serve (geometry + integer id)
     /api/whoami         who the Databricks front door says is calling
+    /api/spec/<table>   geometry/id the gateway resolved for a table
     /auth/handoff       popup page that hands the signed-in user's token to an allowed origin
     /                   static test page
 
@@ -19,7 +20,6 @@ const cors = require('cors')
 const Koop = require('@koopjs/koop-core')
 
 const provider = require('./provider')
-const Model = require('./provider/model')
 const connectionManager = require('./provider/connection')
 const layerSpec = require('./provider/spec')
 
@@ -98,7 +98,7 @@ async function listTables (req) {
         AND table_name NOT LIKE '\\_\\_%'
     )
     SELECT cat, sch, tbl,
-      max(CASE WHEN dt LIKE 'geometry%' OR dt LIKE 'geography%' THEN col END) AS native_col,
+      max(CASE WHEN (dt LIKE 'geometry%' OR dt LIKE 'geography%') AND col RLIKE '^[a-z_][a-z0-9_]*$' THEN col END) AS native_col,
       max(CASE WHEN col IN (${WKT_NAMES}) AND dt = 'string' THEN col END) AS wkt_col,
       max(CASE WHEN col IN (${LAT_NAMES}) AND dt IN ('double','float') THEN 1 ELSE 0 END) AS has_lat,
       max(CASE WHEN col IN (${LON_NAMES}) AND dt IN ('double','float') THEN 1 ELSE 0 END) AS has_lon,
@@ -156,10 +156,6 @@ app.get('/api/spec/:table', async (req, res) => {
   }
 })
 
-app.get('/api/querylog', (req, res) => {
-  res.json({ queries: Model.recentQueries.slice().reverse() })
-})
-
 // Popup handoff: the user signs in to the gateway in a popup (first-party, so the
 // Databricks login works), and this page posts their token back to the opener.
 // It only ever posts to an origin on the allow-list.
@@ -174,7 +170,9 @@ app.get('/auth/handoff', (req, res) => {
   if (!token) {
     return res.status(500).send('No user token forwarded. Enable user authorization (user_api_scopes) on this app.')
   }
+  // Escaped for an inline <script>: no '</script>' or line-separator breakouts from any field
   const payload = JSON.stringify({ type: 'databricks-gateway-token', token, user: req.headers['x-forwarded-email'] || null })
+    .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
   res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Signed in</title>
 <p style="font:14px system-ui">Signed in to Databricks. You can close this window.</p>
 <script>

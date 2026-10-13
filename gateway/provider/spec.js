@@ -41,7 +41,13 @@ function describeColumns (rows) {
 
 // Pick geometry source and object id from the column list. Returns null when the
 // table has no usable geometry or no integer id (ArcGIS needs a stable OBJECTID).
-function detect (cols) {
+// Column names end up in SQL unquoted, so only plain identifiers may be used as geometry or id columns.
+// Unity Catalog allows almost anything in a backtick-quoted name; a crafted name would be SQL injection
+// running with the caller's permissions.
+const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function detect (allCols) {
+  const cols = allCols.filter(c => PLAIN_IDENTIFIER.test(c.name))
   const byName = (names, pred) => {
     for (const n of names) {
       const c = cols.find(c => c.lname === n && pred(c))
