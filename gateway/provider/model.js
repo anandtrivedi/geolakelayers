@@ -130,7 +130,7 @@ Model.prototype.getData = function (req, callback) {
 
   // Run as the calling user when the front door forwards their token (USE_OBO=false to run as the app)
   const userToken = process.env.USE_OBO !== 'false' ? req.headers && req.headers['x-forwarded-access-token'] : null
-  connectionManager.getSession(userToken)
+  connectionManager.getSession(userToken, req.warehouseId)
     .then(async session => {
       try {
         // Inspect the table once (cached) and scope its spec to this request

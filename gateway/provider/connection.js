@@ -18,11 +18,13 @@ const USER_CLIENT_MAX = 200
 
 // Workspace host and warehouse: explicit settings win; inside Databricks Apps the runtime injects
 // DATABRICKS_HOST (no scheme) and the bundle maps the sql-warehouse resource to DATABRICKS_WAREHOUSE_ID.
-function connectionTarget () {
+// A specific warehouse id (already checked against the gateway's allow-list) overrides the default.
+function connectionTarget (warehouseId) {
   const host = process.env.DATABRICKS_SERVER_HOSTNAME ||
     (process.env.DATABRICKS_HOST || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
-  const path = process.env.DATABRICKS_HTTP_PATH ||
-    (process.env.DATABRICKS_WAREHOUSE_ID ? `/sql/1.0/warehouses/${process.env.DATABRICKS_WAREHOUSE_ID}` : '')
+  const id = warehouseId || process.env.DATABRICKS_WAREHOUSE_ID
+  const path = warehouseId ? `/sql/1.0/warehouses/${warehouseId}`
+    : process.env.DATABRICKS_HTTP_PATH || (id ? `/sql/1.0/warehouses/${id}` : '')
   return { host, path }
 }
 
@@ -113,8 +115,8 @@ class ConnectionManager {
    * reset it and retry once with a fresh connection.
    * @returns {Promise<IDBSQLSession>}
    */
-  async getSession (userToken) {
-    if (userToken) return this.getUserSession(userToken)
+  async getSession (userToken, warehouseId) {
+    if (userToken) return this.getUserSession(userToken, warehouseId)
     const client = await this.connect()
     try {
       return await client.openSession()
@@ -129,19 +131,20 @@ class ConnectionManager {
   /**
    * Session that runs as the calling user (their Unity Catalog permissions apply).
    * @param {string} userToken - x-forwarded-access-token from the Databricks Apps front door
+   * @param {string} [warehouseId] - allow-listed warehouse for this request (default: the bound one)
    */
-  async getUserSession (userToken) {
+  async getUserSession (userToken, warehouseId) {
     if (!this.userClients) {
       this.userClients = new Map()
       setInterval(() => this.sweepUserClients(), 60000).unref()
     }
-    const key = crypto.createHash('sha256').update(userToken).digest('hex')
+    const key = crypto.createHash('sha256').update(userToken).digest('hex') + '|' + (warehouseId || '')
     let entry = this.userClients.get(key)
     if (!entry) {
       if (this.userClients.size >= USER_CLIENT_MAX) this.sweepUserClients(true)
       const client = new DBSQLClient()
       const connected = client.connect({
-        ...connectionTarget(),
+        ...connectionTarget(warehouseId),
         token: userToken,
         userAgentEntry: `esri_databricks-koop-provider/${version}`
       })

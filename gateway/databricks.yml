@@ -16,14 +16,17 @@ variables:
   warehouse_id:
     description: SQL warehouse the gateway queries (serverless recommended)
   allowed_origins:
-    description: Comma-separated browser origins allowed to call the gateway (Portal / Experience Builder URLs)
-    default: ""
+    description: Comma-separated browser origins allowed to call the gateway (Portal / Experience Builder URLs). "-" = none
+    default: "-"
+  allowed_warehouses:
+    description: Extra comma-separated warehouse ids app authors may pick in the widget (the bound warehouse is always allowed). "-" = none
+    default: "-"
   catalogs:
-    description: Comma-separated catalogs to list. Empty lists every catalog the user can see (slower on large metastores)
-    default: ""
+    description: Optional cap on the catalogs the widget may list. "-" = no cap (authors choose any catalog the user can see)
+    default: "-"
   exclude_catalogs:
     description: Catalogs never listed
-    default: system,samples,__databricks_internal
+    default: system,samples,hive_metastore,__databricks_internal
 
 resources:
   apps:
@@ -46,6 +49,8 @@ resources:
             value_from: sql-warehouse
           - name: ALLOWED_ORIGINS
             value: ${var.allowed_origins}
+          - name: ALLOWED_WAREHOUSES
+            value: ${var.allowed_warehouses}
           - name: CATALOGS
             value: ${var.catalogs}
           - name: EXCLUDE_CATALOGS
@@ -66,5 +71,4 @@ targets:
       host: https://your-workspace.cloud.databricks.com
     variables:
       warehouse_id: abcdef0123456789
-      catalogs: main
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
