@@ -50,6 +50,19 @@ export function gatewayHeaders (gateway: string): { [k: string]: string } {
   return h
 }
 
+// Lookups shared by the settings panel and the runtime in this window (and repeated tree expands):
+// the same request within CACHE_MS returns the same promise
+const CACHE_MS = 5 * 60 * 1000
+const lookups = new Map<string, { at: number, promise: Promise<any> }>()
+function memo<T> (key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = lookups.get(key)
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.promise
+  const promise = fn().catch(err => { lookups.delete(key); throw err })
+  lookups.set(key, { at: Date.now(), promise })
+  return promise
+}
+const memoKey = (gateway: string, path: string) => `${gateway}|${warehouses[gateway] || ''}|${tokens[gateway]?.user || ''}|${path}`
+
 async function getJson (gateway: string, path: string): Promise<any> {
   if (!tokens[gateway]) throw new Error('Not signed in')
   const r = await fetch(`${gateway}${path}`, { headers: gatewayHeaders(gateway) })
@@ -62,17 +75,17 @@ export interface WarehouseInfo { id: string, name: string, state: string, size: 
 
 /** Allow-listed warehouses the signed-in user can use, and the gateway's default. */
 export async function fetchWarehouses (gateway: string): Promise<{ default: string | null, warehouses: WarehouseInfo[] }> {
-  return getJson(gateway, '/api/warehouses')
+  return memo(memoKey(gateway, '/api/warehouses'), () => getJson(gateway, '/api/warehouses'))
 }
 
 /** Other ArcGateways this gateway knows about (its workspace directory). */
 export async function fetchDirectory (gateway: string): Promise<Array<{ name: string, url: string }>> {
-  return (await getJson(gateway, '/api/info')).directory || []
+  return (await memo(memoKey(gateway, '/api/info'), () => getJson(gateway, '/api/info'))).directory || []
 }
 
 /** Catalogs the signed-in user can see. */
 export async function fetchCatalogNames (gateway: string): Promise<string[]> {
-  return (await getJson(gateway, '/api/catalogs')).catalogs
+  return (await memo(memoKey(gateway, '/api/catalogs'), () => getJson(gateway, '/api/catalogs'))).catalogs
 }
 
 export function signIn (gateway: string): void {
@@ -103,7 +116,7 @@ export function listenForToken (gateway: string, onToken: (t: GatewayToken) => v
 /** Map-ready tables in the given catalogs (empty = the gateway's default scope). */
 export async function fetchCatalog (gateway: string, catalogs: string[]): Promise<CatalogTable[]> {
   const q = catalogs.length ? `?catalogs=${encodeURIComponent(catalogs.join(','))}` : ''
-  return (await getJson(gateway, `/api/catalog${q}`)).tables
+  return (await memo(memoKey(gateway, `/api/catalog${q}`), () => getJson(gateway, `/api/catalog${q}`))).tables
 }
 
 /** catalog.schema.table -> a minimal CatalogTable for layers saved in config */

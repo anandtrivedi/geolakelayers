@@ -261,10 +261,22 @@ app.get('/api/optimize/:id', (req, res) => {
   res.json(job)
 })
 
+// Short per-user cache for the settings panel's lookups (catalog list, warehouses)
+const lookupCache = new Map()
+async function cached (req, name, ttlMs, fn) {
+  const key = `${name}|${crypto.createHash('sha256').update(obo(req) || 'app').digest('hex')}|${req.warehouseId || ''}`
+  const hit = lookupCache.get(key)
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value
+  const value = await fn()
+  lookupCache.set(key, { value, at: Date.now() })
+  if (lookupCache.size > 2000) lookupCache.delete(lookupCache.keys().next().value)
+  return value
+}
+
 // Catalogs the caller can see (for the widget's settings), minus the excluded ones
 app.get('/api/catalogs', async (req, res) => {
   try {
-    const rows = await runSql(req, 'SHOW CATALOGS', 30)
+    const rows = await cached(req, 'catalogs', 5 * 60 * 1000, () => runSql(req, 'SHOW CATALOGS', 30))
     const names = rows.map(r => r.catalog || Object.values(r)[0]).filter(c => c && !excludeCatalogs.includes(c))
     res.json({ catalogs: catalogs.length ? names.filter(c => catalogs.includes(c)) : names })
   } catch (err) {
@@ -279,9 +291,12 @@ app.get('/api/warehouses', async (req, res) => {
   const host = (process.env.DATABRICKS_HOST || process.env.DATABRICKS_SERVER_HOSTNAME || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
   if (!token || !host) return res.status(400).json({ error: 'No user token or workspace host' })
   try {
-    const r = await fetch(`https://${host}/api/2.0/sql/warehouses`, { headers: { Authorization: `Bearer ${token}` } })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.message || `HTTP ${r.status}`)
+    const d = await cached(req, 'warehouses', 60 * 1000, async () => {
+      const r = await fetch(`https://${host}/api/2.0/sql/warehouses`, { headers: { Authorization: `Bearer ${token}` } })
+      const body = await r.json()
+      if (!r.ok) throw new Error(body.message || `HTTP ${r.status}`)
+      return body
+    })
     const warehouses = (d.warehouses || [])
       .filter(w => allowedWarehouses.includes(w.id))
       .map(w => ({ id: w.id, name: w.name, state: w.state, size: w.cluster_size, serverless: !!w.enable_serverless_compute }))
@@ -305,6 +320,8 @@ app.get('/auth/handoff', (req, res) => {
   if (!token) {
     return res.status(500).send('No user token forwarded. Enable user authorization (user_api_scopes) on this app.')
   }
+  // The settings panel asks for the catalog list right after sign-in; start it now (SHOW CATALOGS is slow cold)
+  cached(req, 'catalogs', 5 * 60 * 1000, () => runSql(req, 'SHOW CATALOGS', 30)).catch(() => {})
   // Escaped for an inline <script>: no '</script>' or line-separator breakouts from any field
   const payload = JSON.stringify({ type: 'databricks-gateway-token', token, user: req.headers['x-forwarded-email'] || null })
     .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
@@ -316,6 +333,13 @@ app.get('/auth/handoff', (req, res) => {
 })
 
 const port = process.env.DATABRICKS_APP_PORT || process.env.PORT || 8080
-app.listen(port, '0.0.0.0', () => {
+const server = app.listen(port, '0.0.0.0', () => {
   console.log(`Databricks feature gateway listening on :${port}; origins=${allowedOrigins.join(' ') || '(none)'}; catalogs=${catalogScope}; warehouses=${allowedWarehouses.join(',') || '(none)'}`)
 })
+
+// The Databricks Apps proxy keeps connections to the app open and reuses them. Node's default 5 s
+// keep-alive closes idle sockets first, so a request racing that close comes back as a 502 (seen as
+// bursts of failed map tiles). Keep sockets open longer than the proxy does.
+server.keepAliveTimeout = 65000
+server.headersTimeout = 66000
+

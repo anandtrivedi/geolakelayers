@@ -15,6 +15,9 @@ const { version } = require('../package.json')
 // the Apps front door last about an hour; idle clients are closed after USER_CLIENT_TTL_MS.
 const USER_CLIENT_TTL_MS = parseInt(process.env.USER_CLIENT_TTL_MS) || 15 * 60 * 1000
 const USER_CLIENT_MAX = 200
+// Idle sessions kept per user + warehouse, and how long one may sit idle before it's retired
+const SESSION_POOL_SIZE = parseInt(process.env.SESSION_POOL_SIZE) || 6
+const SESSION_IDLE_MS = parseInt(process.env.SESSION_IDLE_MS) || 10 * 60 * 1000
 
 // Workspace host and warehouse: explicit settings win; inside Databricks Apps the runtime injects
 // DATABRICKS_HOST (no scheme) and the bundle maps the sql-warehouse resource to DATABRICKS_WAREHOUSE_ID.
@@ -148,17 +151,45 @@ class ConnectionManager {
         token: userToken,
         userAgentEntry: `esri_databricks-koop-provider/${version}`
       })
-      entry = { client, connected, at: Date.now() }
+      entry = { client, connected, at: Date.now(), idle: [] }
       this.userClients.set(key, entry)
     }
     entry.at = Date.now()
     try {
       await entry.connected
-      return await entry.client.openSession()
+      // Reuse an idle session: opening one costs a round trip to the warehouse on every request
+      while (entry.idle.length) {
+        const pooled = entry.idle.pop()
+        if (Date.now() - pooled.at < SESSION_IDLE_MS) return this.pooledSession(entry, pooled.session)
+        pooled.session.close().catch(() => {})
+      }
+      return this.pooledSession(entry, await entry.client.openSession())
     } catch (err) {
       this.userClients.delete(key)
       entry.client.close().catch(() => {})
       throw err
+    }
+  }
+
+  /** A session whose close() hands it back to the pool; one that failed a statement is discarded. */
+  pooledSession (entry, session) {
+    let broken = false
+    return {
+      executeStatement: async (...args) => {
+        try {
+          return await session.executeStatement(...args)
+        } catch (err) {
+          broken = true
+          throw err
+        }
+      },
+      close: async () => {
+        if (!broken && entry.idle.length < SESSION_POOL_SIZE && this.userClients && [...this.userClients.values()].includes(entry)) {
+          entry.idle.push({ session, at: Date.now() })
+        } else {
+          await session.close().catch(() => {})
+        }
+      }
     }
   }
 
@@ -168,6 +199,7 @@ class ConnectionManager {
     for (const [key, entry] of this.userClients) {
       if (now - entry.at > USER_CLIENT_TTL_MS) {
         this.userClients.delete(key)
+        for (const p of entry.idle || []) p.session.close().catch(() => {})
         entry.client.close().catch(() => {})
       } else if (!oldest || entry.at < oldest[1].at) {
         oldest = [key, entry]

@@ -28,6 +28,8 @@ export interface TableTreeProps {
   autoExpandSingle?: boolean
   /** Open (and load) every listed workspace and catalog */
   expandAll?: boolean
+  /** Extra marker after a catalog's name */
+  catalogBadge?: (ws: Workspace, catalog: string) => React.ReactNode
   /** Only show tables passing this test (e.g. "selected only") */
   tableFilter?: (ws: Workspace, t: CatalogTable) => boolean
   messages: { loading: string, failed: (error: string) => string, empty: string, tablesIn: (n: number) => string }
@@ -117,7 +119,7 @@ export function TableTree (props: TableTreeProps) {
         <div className='tt-row tt-branch' style={{ paddingLeft: depth * 14 }} role='button' tabIndex={0}
           onClick={() => toggle(nodeKey, () => { if (!st || st.state === 'failed') load(ws, catalog) })}
           onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && toggle(nodeKey, () => { if (!st) load(ws, catalog) })}>
-          {caret(!!open)}<span className='tt-name'>{catalog}</span>
+          {caret(!!open)}<span className='tt-name'>{catalog}</span>{props.catalogBadge?.(ws, catalog)}
           {st?.state === 'ready' && <small className='tt-hint'>{messages.tablesIn(st.tables.length)}</small>}
         </div>
         {open && (

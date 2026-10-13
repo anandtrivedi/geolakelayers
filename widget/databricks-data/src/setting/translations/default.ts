@@ -31,6 +31,8 @@ export default {
   startLayersCount: 'Layers to load when the app opens ({n})',
   startLayersHint: 'Sign in to a workspace to pick tables.',
   filterTables: 'Filter tables',
+  startLayersFrom: 'Pick from any catalog you can read. Catalogs marked "viewers" are also browsable by viewers.',
+  viewersBadge: 'viewers',
   showSelectedOnly: 'Show selected only',
   loadingCatalog: 'Loading tables…',
   catalogFailed: 'Could not load tables: {error}',

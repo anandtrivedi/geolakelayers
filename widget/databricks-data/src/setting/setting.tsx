@@ -79,6 +79,9 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
     try {
       const [w, c] = await Promise.all([fetchWarehouses(ws.gatewayUrl), fetchCatalogNames(ws.gatewayUrl)])
       setInfo(i => ({ ...i, [ws.id]: { warehouses: w.warehouses, defaultWarehouse: w.default, catalogs: c } }))
+      // Warm the tables of the catalogs viewers browse, so opening them in the tree is instant
+      setWarehouse(ws.gatewayUrl, ws.warehouseId)
+      for (const cat of ws.catalogs) fetchCatalog(ws.gatewayUrl, [cat]).catch(() => {})
       fetchDirectory(ws.gatewayUrl).then(d => setDirectory(prev => {
         const merged = [...prev]
         for (const e of d) if (!merged.some(m => normalizeUrl(m.url) === normalizeUrl(e.url))) merged.push(e)
@@ -234,6 +237,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
             {!signedIn.length && <small className='hint'>{nls('startLayersHint')}</small>}
             {signedIn.length > 0 && (
               <React.Fragment>
+                <small className='hint' style={{ marginBottom: 6 }}>{nls('startLayersFrom')}</small>
                 <TextInput size='sm' className='w-100' placeholder={nls('filterTables')} aria-label={nls('filterTables')}
                   value={filter} onChange={e => setFilter(e.target.value)} style={{ marginBottom: 6 }} />
                 <label className='toggle-row'>
@@ -246,6 +250,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
                     catalogsFor={ws => selectedOnly ? catalogsWithSelection(ws) : (info[ws.id]?.catalogs || [])}
                     loadTables={loadTables}
                     filter={filter}
+                    catalogBadge={(ws, c) => allowBrowse && ws.catalogs.includes(c) ? <span className='badge-viewers'>{nls('viewersBadge')}</span> : null}
                     expandAll={selectedOnly}
                     tableFilter={selectedOnly ? (ws, t) => selectedTables.has(layerKey(ws.id, t.table)) : undefined}
                     renderTable={(ws, t: CatalogTable) => {
@@ -296,4 +301,5 @@ const style = css`
   .add-actions { display: flex; gap: 6px; }
   .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 0 0 6px; font-size: 0.75rem; }
   .tree-box { max-height: 380px; overflow: auto; }
+  .badge-viewers { font-size: 0.6875rem; color: var(--sys-color-success-main); border: 1px solid var(--sys-color-success-main); border-radius: 8px; padding: 0 6px; margin-left: 4px; white-space: nowrap; }
 `
