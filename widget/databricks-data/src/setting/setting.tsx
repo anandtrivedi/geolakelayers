@@ -44,34 +44,50 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   const [selectedOnly, setSelectedOnly] = React.useState(false)
   const [catalogFilter, setCatalogFilter] = React.useState<{ [id: string]: string }>({})
 
-  const setConfig = (key: string, value: any) => props.onSettingChange({ id: props.id, config: props.config.set(key, value) })
-  const setRows = (next: Workspace[], layers?: string[]) => {
-    let config = props.config.set('workspaces', Immutable(next))
-    if (layers) config = config.set('layers', Immutable(layers))
+  // Every change builds on the latest config, not this render's props: two quick edits (ticking two
+  // catalogs, say) would otherwise both start from the same old config and the first would be lost
+  const configRef = React.useRef(props.config)
+  configRef.current = props.config
+  const commit = (config: IMConfig) => {
+    configRef.current = config
     props.onSettingChange({ id: props.id, config })
   }
-  const updateRow = (id: string, patch: Partial<Workspace>) => setRows(rows.map(w => w.id === id ? { ...w, ...patch } : w))
+  const currentRows = (): Workspace[] => configRef.current.workspaces ? configRef.current.workspaces.asMutable({ deep: true }) as Workspace[] : []
+  const currentLayers = (): string[] => configRef.current.layers ? configRef.current.layers.asMutable() : []
+  const setConfig = (key: string, value: any) => commit(configRef.current.set(key, value))
+  const setRows = (next: Workspace[], layers?: string[]) => {
+    let config = configRef.current.set('workspaces', Immutable(next))
+    if (layers) config = config.set('layers', Immutable(layers))
+    commit(config)
+  }
+  const updateRow = (id: string, patch: Partial<Workspace>) => setRows(currentRows().map(w => w.id === id ? { ...w, ...patch } : w))
   const addWorkspace = (label: string, url: string) => {
     const gatewayUrl = normalizeUrl(url)
-    if (!/^https:\/\//.test(gatewayUrl) || rows.some(r => normalizeUrl(r.gatewayUrl) === gatewayUrl)) return
-    const id = newWorkspaceId(rows)
-    setRows([...rows, { id, label: label || labelFromUrl(gatewayUrl), gatewayUrl, warehouseId: '', catalogs: [] }])
+    const now = currentRows()
+    if (!/^https:\/\//.test(gatewayUrl) || now.some(r => normalizeUrl(r.gatewayUrl) === gatewayUrl)) return
+    const id = newWorkspaceId(now)
+    setRows([...now, { id, label: label || labelFromUrl(gatewayUrl), gatewayUrl, warehouseId: '', catalogs: [] }])
     setOpen(o => ({ ...o, [id]: true }))
     setAdding(false)
     setNewUrl('')
   }
-  const removeRow = (id: string) => setRows(rows.filter(w => w.id !== id), selected.filter(k => parseLayerKey(k).workspaceId !== id))
-  const toggleLayer = (key: string) => setConfig('layers', Immutable(selected.includes(key) ? selected.filter(k => k !== key) : [...selected, key]))
-  const toggleCatalog = (ws: Workspace, c: string) =>
-    updateRow(ws.id, { catalogs: ws.catalogs.includes(c) ? ws.catalogs.filter(x => x !== c) : [...ws.catalogs, c] })
+  const removeRow = (id: string) => setRows(currentRows().filter(w => w.id !== id), currentLayers().filter(k => parseLayerKey(k).workspaceId !== id))
+  const toggleLayer = (key: string) => {
+    const cur = currentLayers()
+    setConfig('layers', Immutable(cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key]))
+  }
+  const toggleCatalog = (wsId: string, c: string) => {
+    const ws = currentRows().find(w => w.id === wsId)
+    if (!ws) return
+    const cats = ws.catalogs || []
+    updateRow(wsId, { catalogs: cats.includes(c) ? cats.filter(x => x !== c) : [...cats, c] })
+  }
 
   // Tables the author adds or removes on the live-view canvas are saved here too
-  const configRef = React.useRef(props.config)
-  configRef.current = props.config
   React.useEffect(() => onLayerAnnounced(props.id, (action, key) => {
-    const cur: string[] = configRef.current.layers ? configRef.current.layers.asMutable() : []
+    const cur = currentLayers()
     const next = action === 'add' ? (cur.includes(key) ? cur : [...cur, key]) : cur.filter(k => k !== key)
-    if (next.length !== cur.length) props.onSettingChange({ id: props.id, config: configRef.current.set('layers', Immutable(next)) })
+    if (next.length !== cur.length) setConfig('layers', Immutable(next))
   }), [props.id])
 
   // After a workspace is signed in: its allowed warehouses, the catalogs the author can see, the directory
@@ -95,9 +111,12 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   const wsKey = workspaces.map(w => w.id + '=' + w.gatewayUrl).join('|')
   React.useEffect(() => {
     const offs = workspaces.map(ws => {
-      const onSignedIn = (user: string) => { setUsers(u => ({ ...u, [ws.id]: user })); loadWorkspace(ws) }
+      const onSignedIn = (user: string) => { setUsers(u => ({ ...u, [ws.gatewayUrl]: user })); loadWorkspace(ws) }
       if (getToken(ws.gatewayUrl)) onSignedIn(getToken(ws.gatewayUrl).user)
-      return listenForToken(ws.gatewayUrl, t => onSignedIn(t.user))
+      return listenForToken(ws.gatewayUrl, t => {
+        if (t) onSignedIn(t.user)
+        else setUsers(u => { const next = { ...u }; delete next[ws.gatewayUrl]; return next })
+      })
     })
     return () => offs.forEach(off => off())
   }, [wsKey])
@@ -107,7 +126,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
     return fetchCatalog(ws.gatewayUrl, [catalog])
   }, [])
 
-  const signedIn = workspaces.filter(ws => users[ws.id])
+  const signedIn = workspaces.filter(ws => users[ws.gatewayUrl])
   const directoryLeft = directory.filter(d => !rows.some(r => normalizeUrl(r.gatewayUrl) === normalizeUrl(d.url)))
   const warehouseLabel = (w: WarehouseInfo) => `${w.name} (${w.serverless ? 'serverless, ' : ''}${w.size})`
   // "Show selected only": catalogs that hold a selected table, tables filtered in the tree
@@ -138,7 +157,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
           const url = normalizeUrl(ws.gatewayUrl)
           const isOpen = !!open[ws.id]
           const wi = info[ws.id]
-          const user = users[ws.id]
+          const user = users[url]
           const cf = (catalogFilter[ws.id] || '').toLowerCase()
           return (
             <div key={ws.id} className='ws-card'>
@@ -164,7 +183,12 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
                       onAcceptValue={v => updateRow(ws.id, { gatewayUrl: normalizeUrl(v) })} />
                   </label>
                   {user && <small className='hint'>{nls('signedInAs', { user })}</small>}
-                  {wi?.error && <small className='error'>{nls('workspaceFailed', { error: wi.error })}</small>}
+                  {wi?.error && (
+                    <div className='retry-row'>
+                      <small className='error'>{nls('workspaceFailed', { error: wi.error })}</small>
+                      <Button size='sm' type='default' onClick={() => { setInfo(i => { const n = { ...i }; delete n[ws.id]; return n }); loadWorkspace(ws) }}>{nls('retry')}</Button>
+                    </div>
+                  )}
 
                   {user && (
                     <label className='field'>{nls('warehouse')}
@@ -186,7 +210,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
                       <div className='catalog-list' role='group' aria-label={nls('catalogs')}>
                         {(wi?.catalogs || []).filter(c => !cf || c.toLowerCase().includes(cf) || ws.catalogs.includes(c)).map(c => (
                           <label key={c} className='check'>
-                            <Checkbox checked={ws.catalogs.includes(c)} onChange={() => toggleCatalog(ws, c)} />
+                            <Checkbox checked={ws.catalogs.includes(c)} onChange={() => toggleCatalog(ws.id, c)} />
                             <span>{c}</span>
                           </label>
                         ))}
@@ -301,5 +325,6 @@ const style = css`
   .add-actions { display: flex; gap: 6px; }
   .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 0 0 6px; font-size: 0.75rem; }
   .tree-box { max-height: 380px; overflow: auto; }
+  .retry-row { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
   .badge-viewers { font-size: 0.6875rem; color: var(--sys-color-success-main); border: 1px solid var(--sys-color-success-main); border-radius: 8px; padding: 0 6px; margin-left: 4px; white-space: nowrap; }
 `

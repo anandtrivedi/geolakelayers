@@ -13,6 +13,7 @@ export default {
   workspaceName: 'Name',
   gatewayUrl: 'Gateway URL',
   workspaceFailed: 'Could not read the workspace: {error}',
+  retry: 'Retry',
   warehouse: 'SQL warehouse',
   warehouseDefault: 'Gateway default: {name}',
   gatewayDefault: 'bound warehouse',

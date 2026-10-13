@@ -121,8 +121,19 @@ function sourceFor (table, spec) {
   return `(SELECT *, ${spec.objectIdExpr} AS ${spec.objectId} FROM ${table}) AS __src`
 }
 
-async function resolveSpec (table, exec) {
-  const hit = cache.get(table)
+/** Cache scope for a caller: specs reveal column names, so they're cached per user, never shared. */
+function whoOf (userToken) {
+  return userToken ? require('crypto').createHash('sha256').update(userToken).digest('hex').slice(0, 32) : 'app'
+}
+
+/** Drop everything cached for a table (after it's replaced, e.g. by "Optimize for maps"). */
+function forgetTable (table) {
+  for (const k of cache.keys()) if (k.endsWith(`|${table}`)) cache.delete(k)
+}
+
+async function resolveSpec (table, exec, who = 'app') {
+  const key = `${who}|${table}`
+  const hit = cache.get(key)
   if (hit && Date.now() - hit.at < TTL_MS) return hit.spec
 
   const cols = describeColumns(await exec(`DESCRIBE ${table}`, 'describe'))
@@ -135,7 +146,8 @@ async function resolveSpec (table, exec) {
     const t = rows[0] && String(rows[0].t || '').replace(/^st_/, '')
     spec.geometryType = ESRI_TYPE[t] || 'esriGeometryPoint'
   }
-  cache.set(table, { spec, at: Date.now() })
+  cache.set(key, { spec, at: Date.now() })
+  if (cache.size > 5000) cache.delete(cache.keys().next().value)
   return spec
 }
 
@@ -144,4 +156,4 @@ function current (defaults) {
   return store.getStore() || defaults
 }
 
-module.exports = { store, resolveSpec, current, detect, describeColumns, sourceFor }
+module.exports = { store, resolveSpec, current, detect, describeColumns, sourceFor, whoOf, forgetTable }

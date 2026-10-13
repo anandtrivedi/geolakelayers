@@ -90,9 +90,11 @@ setInterval(() => {
   }
 }, 300000).unref()
 
+// Cache for field metadata: { ['<who>|<table>']: { data, timestamp } }, shared so forgetTable can reach it
+const fieldsCache = {}
+
 function Model (koop) {
-  // Cache for field metadata: { [table]: { data, timestamp } }
-  this.fieldsCache = {}
+  this.fieldsCache = fieldsCache
 }
 
 // Public function to return data from a Databricks SQL Endpoint
@@ -140,7 +142,8 @@ Model.prototype.getData = function (req, callback) {
     .then(async session => {
       try {
         // Inspect the table once (cached) and scope its spec to this request
-        const spec = await layerSpec.resolveSpec(table, (sql, kind) => executeAndRecord(session, sql, kind, thisTask))
+        const who = layerSpec.whoOf(userToken)
+        const spec = await layerSpec.resolveSpec(table, (sql, kind) => executeAndRecord(session, sql, kind, thisTask), who)
         if (!spec) {
           const err = new Error(`${table} has no usable geometry (GEOMETRY/GEOGRAPHY, WKT, WKB or lon/lat columns) or no integer object id`)
           err.code = 400
@@ -260,7 +263,7 @@ Model.prototype.getData = function (req, callback) {
         if (!geojson.metadata.geometryType) geojson.metadata.geometryType = spec.geometryType
 
         // Add field metadata from DESCRIBE TABLE
-        geojson.metadata.fields = await this.getFieldMetadata(table, session, thisTask)
+        geojson.metadata.fields = await this.getFieldMetadata(table, session, thisTask, who)
 
         // Tell Koop that we've already applied these filters server-side
         // This prevents Koop from re-applying pagination on already-paginated results.
@@ -275,9 +278,9 @@ Model.prototype.getData = function (req, callback) {
         }
 
         if (isLayerInfo) {
-          const extent = await tableExtent(table, session, thisTask)
+          const extent = await tableExtent(table, session, thisTask, who)
           if (extent) geojson.metadata.extent = extent
-          const total = await tableCount(table, session, thisTask)
+          const total = await tableCount(table, session, thisTask, who)
           if (total > BIG_TABLE_FEATURES) {
             geojson.metadata.minScale = BIG_TABLE_MIN_SCALE
             geojson.metadata.description = `${total.toLocaleString('en-US')} features; drawn when zoomed in`
@@ -472,6 +475,8 @@ function queryCacheGet (key) {
 }
 function queryCachePut (key, rows) {
   if (rows.length > QUERY_CACHE_MAX_ROWS / 4) return
+  const prev = queryCache.get(key)
+  if (prev) { queryCache.delete(key); queryCacheRows -= prev.rows.length }
   queryCache.set(key, { rows, at: Date.now() })
   queryCacheRows += rows.length
   for (const [k, v] of queryCache) {
@@ -480,17 +485,28 @@ function queryCachePut (key, rows) {
   }
 }
 
+/** Drop cached rows, counts, extents and fields for a table that was replaced. */
+function forgetTable (table) {
+  layerSpec.forgetTable(table)
+  for (const m of [countCache, extentCache]) for (const k of m.keys()) if (k.endsWith(`|${table}`)) m.delete(k)
+  for (const k of Object.keys(fieldsCache)) if (k.endsWith(`|${table}`)) delete fieldsCache[k]
+  // Query-cache keys are hashes of the SQL; replacing a table is rare, so clear them all
+  queryCache.clear(); queryCacheRows = 0
+}
+
 // Row count for layer info (TTL cache)
 const countCache = new Map()
-async function tableCount (table, session, taskId) {
-  const hit = countCache.get(table)
+async function tableCount (table, session, taskId, who = 'app') {
+  const key = `${who}|${table}`
+  const hit = countCache.get(key)
   if (hit && Date.now() - hit.at < cacheTTLMs * 6) return hit.count
   try {
     const rows = await executeAndRecord(session, `SELECT COUNT(*) AS cnt FROM ${table}`, 'count', taskId)
     const count = Number(rows[0]?.cnt || 0)
-    countCache.set(table, { count, at: Date.now() })
+    countCache.set(key, { count, at: Date.now() })
     return count
   } catch (error) {
+    // Not cached: a transient failure shouldn't stick (and 0 would drop a big table's minScale)
     logger.warn(`${taskId}> Count failed for ${table}: ${error.message}`)
     return 0
   }
@@ -498,8 +514,9 @@ async function tableCount (table, session, taskId) {
 
 // Whole-table extent for layer info, computed once per table in SQL (TTL cache)
 const extentCache = new Map()
-async function tableExtent (table, session, taskId) {
-  const hit = extentCache.get(table)
+async function tableExtent (table, session, taskId, who = 'app') {
+  const key = `${who}|${table}`
+  const hit = extentCache.get(key)
   if (hit && Date.now() - hit.at < cacheTTLMs * 6) return hit.extent
   try {
     const rows = await executeAndRecord(session, buildExtentQuery(table, {}), 'extent', taskId)
@@ -507,7 +524,7 @@ async function tableExtent (table, session, taskId) {
     const extent = r && r.xmin !== null && r.xmin !== undefined
       ? { xmin: r.xmin, ymin: r.ymin, xmax: r.xmax, ymax: r.ymax, spatialReference: { wkid: S().spatialReference } }
       : null
-    extentCache.set(table, { extent, at: Date.now() })
+    extentCache.set(key, { extent, at: Date.now() })
     return extent
   } catch (error) {
     logger.warn(`${taskId}> Extent query failed for ${table}: ${error.message}`)
@@ -893,9 +910,10 @@ function mapDatabricksToEsriFieldType (databricksType) {
 }
 
 // Helper: Get field metadata from DESCRIBE TABLE with TTL-based caching
-Model.prototype.getFieldMetadata = async function (table, session, taskId) {
+Model.prototype.getFieldMetadata = async function (table, session, taskId, who = 'app') {
+  const cacheKey = `${who}|${table}`
   // Check cache first (with TTL)
-  const cached = this.fieldsCache[table]
+  const cached = this.fieldsCache[cacheKey]
   if (cached && (Date.now() - cached.timestamp < cacheTTLMs)) {
     logger.info(`${taskId}> Using cached field metadata for ${table}`)
     return cached.data
@@ -945,7 +963,7 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId) {
     }
 
     // Cache the result with timestamp
-    this.fieldsCache[table] = { data: fields, timestamp: Date.now() }
+    this.fieldsCache[cacheKey] = { data: fields, timestamp: Date.now() }
     logger.info(`${taskId}> Cached ${fields.length} field definitions for ${table}`)
 
     return fields
@@ -959,6 +977,7 @@ module.exports = Model
 
 // Recently executed queries (ring buffer) for diagnostics and demo UIs
 Model.recentQueries = recentQueries
+Model.forgetTable = forgetTable
 
 // Export internal functions for unit testing only
 Model._internals = {

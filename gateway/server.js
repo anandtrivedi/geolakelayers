@@ -26,6 +26,7 @@ const cors = require('cors')
 const Koop = require('@koopjs/koop-core')
 
 const provider = require('./provider')
+const Model = require('./provider/model')
 const connectionManager = require('./provider/connection')
 const layerSpec = require('./provider/spec')
 
@@ -200,7 +201,7 @@ app.get('/api/spec/:table', async (req, res) => {
   const table = req.params.table
   if (!/^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+){2}$/.test(table)) return res.status(400).json({ error: 'catalog.schema.table expected' })
   try {
-    const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql))
+    const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), layerSpec.whoOf(obo(req)))
     res.json({ table, spec, url: `/databricks/rest/services/${table}/FeatureServer/0` })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -226,7 +227,16 @@ app.post('/api/optimize', express.json(), async (req, res) => {
   if (!PLAIN.test(name)) return res.status(400).json({ error: 'name must be a plain identifier' })
   let spec
   try {
-    spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql))
+    spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), layerSpec.whoOf(obo(req)))
+    // Never replace a table ArcGateway didn't write: CREATE OR REPLACE on a name the author typed
+    // could otherwise wipe an unrelated table
+    const [cat, sch] = target.split('.')
+    const existing = await runSql(req, `SHOW TABLES IN ${cat}.${sch} LIKE '${name}'`, 60)
+    if (existing.length) {
+      const props = await runSql(req, `SHOW TBLPROPERTIES ${target}.${name}`, 60)
+      const ours = props.some(p => (p.key || Object.values(p)[0]) === 'arcgateway.optimized')
+      if (!ours) return res.status(409).json({ error: `${target}.${name} already exists and was not written by ArcGateway; pick another name` })
+    }
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -239,15 +249,18 @@ app.post('/api/optimize', express.json(), async (req, res) => {
     CREATE OR REPLACE TABLE ${out}
     CLUSTER BY (_xmin, _ymin)
     COMMENT 'Map-optimized copy of ${table}, written by ArcGateway'
+    TBLPROPERTIES ('arcgateway.optimized' = 'true', 'arcgateway.source' = '${table}')
     AS SELECT *, ST_XMin(geom) AS _xmin, ST_YMin(geom) AS _ymin, ST_XMax(geom) AS _xmax, ST_YMax(geom) AS _ymax
     FROM (SELECT *${except}, ${geomExpr} AS geom FROM ${spec.source || table}) AS src
     WHERE geom IS NOT NULL`
   const id = crypto.randomBytes(6).toString('hex')
   const job = { id, state: 'running', source: table, target: out, startedAt: Date.now() }
-  optimizeJobs.set(id, job)
+  optimizeJobs.set(id, { ...job, owner: layerSpec.whoOf(obo(req)), live: job })
+  for (const [k, j] of optimizeJobs) if (Date.now() - j.live.startedAt > 24 * 3600 * 1000) optimizeJobs.delete(k)
   res.status(202).json(job)
   try {
     await runSql(req, sql, 3600)
+    Model.forgetTable(out)
     const n = await runSql(req, `SELECT COUNT(*) AS n FROM ${out}`, 120)
     Object.assign(job, { state: 'done', finishedAt: Date.now(), rows: Number(n[0]?.n || 0) })
   } catch (err) {
@@ -257,8 +270,9 @@ app.post('/api/optimize', express.json(), async (req, res) => {
 
 app.get('/api/optimize/:id', (req, res) => {
   const job = optimizeJobs.get(req.params.id)
-  if (!job) return res.status(404).json({ error: 'No such job' })
-  res.json(job)
+  // Only the user who started a job can see it
+  if (!job || job.owner !== layerSpec.whoOf(obo(req))) return res.status(404).json({ error: 'No such job' })
+  res.json(job.live)
 })
 
 // Short per-user cache for the settings panel's lookups (catalog list, warehouses)

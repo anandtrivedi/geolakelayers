@@ -174,17 +174,25 @@ class ConnectionManager {
   /** A session whose close() hands it back to the pool; one that failed a statement is discarded. */
   pooledSession (entry, session) {
     let broken = false
+    let open = 0 // operations not yet closed; a session with one still open is never reused
     return {
       executeStatement: async (...args) => {
+        let op
         try {
-          return await session.executeStatement(...args)
+          op = await session.executeStatement(...args)
         } catch (err) {
           broken = true
           throw err
         }
+        open++
+        const close = op.close.bind(op)
+        const fetchAll = op.fetchAll.bind(op)
+        op.fetchAll = async (...a) => { try { return await fetchAll(...a) } catch (err) { broken = true; throw err } }
+        op.close = async (...a) => { try { return await close(...a) } finally { open-- } }
+        return op
       },
       close: async () => {
-        if (!broken && entry.idle.length < SESSION_POOL_SIZE && this.userClients && [...this.userClients.values()].includes(entry)) {
+        if (!broken && open === 0 && entry.idle.length < SESSION_POOL_SIZE && this.userClients && [...this.userClients.values()].includes(entry)) {
           entry.idle.push({ session, at: Date.now() })
         } else {
           await session.close().catch(() => {})

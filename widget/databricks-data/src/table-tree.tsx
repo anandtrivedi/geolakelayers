@@ -42,24 +42,30 @@ export function TableTree (props: TableTreeProps) {
   const showWorkspaces = props.showWorkspaces || workspaces.length > 1
   const q = filter.trim().toLowerCase()
 
+  // Latest request per catalog wins: a slow, older response can't overwrite a newer one
+  const seq = React.useRef<{ [key: string]: number }>({})
   const load = React.useCallback(async (ws: Workspace, catalog: string) => {
     const key = `${ws.id}|${catalog}`
+    const n = (seq.current[key] = (seq.current[key] || 0) + 1)
     setCatalogState(s => ({ ...s, [key]: { state: 'loading', tables: [] } }))
     try {
       const tables = await loadTables(ws, catalog)
-      setCatalogState(s => ({ ...s, [key]: { state: 'ready', tables } }))
+      if (seq.current[key] === n) setCatalogState(s => ({ ...s, [key]: { state: 'ready', tables } }))
     } catch (err) {
-      setCatalogState(s => ({ ...s, [key]: { state: 'failed', tables: [], error: err.message } }))
+      if (seq.current[key] === n) setCatalogState(s => ({ ...s, [key]: { state: 'failed', tables: [], error: err.message } }))
     }
   }, [loadTables])
 
+  // Side effects (loading) stay outside the state updater, which React may run twice
   const toggle = (key: string, onOpen?: () => void) => {
+    const opening = !expanded.has(key)
     setExpanded(prev => {
       const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else { next.add(key); onOpen?.() }
+      if (opening) next.add(key)
+      else next.delete(key)
       return next
     })
+    if (opening) onOpen?.()
   }
 
   React.useEffect(() => {
@@ -118,7 +124,7 @@ export function TableTree (props: TableTreeProps) {
       <div key={nodeKey} role='treeitem' aria-expanded={!!open}>
         <div className='tt-row tt-branch' style={{ paddingLeft: depth * 14 }} role='button' tabIndex={0}
           onClick={() => toggle(nodeKey, () => { if (!st || st.state === 'failed') load(ws, catalog) })}
-          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && toggle(nodeKey, () => { if (!st) load(ws, catalog) })}>
+          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && toggle(nodeKey, () => { if (!st || st.state === 'failed') load(ws, catalog) })}>
           {caret(!!open)}<span className='tt-name'>{catalog}</span>{props.catalogBadge?.(ws, catalog)}
           {st?.state === 'ready' && <small className='tt-hint'>{messages.tablesIn(st.tables.length)}</small>}
         </div>

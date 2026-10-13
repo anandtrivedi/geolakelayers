@@ -34,6 +34,9 @@ function soleMapWidgetId (): string | undefined {
 
 // Shared by every instance of the widget in the app
 const interceptorFor = new Set<string>()
+// Layers each widget added, kept across remounts (e.g. a Widget Controller panel closed and reopened),
+// so saved layers aren't added a second time to the same map
+const addedByWidget = new Map<string, Added[]>()
 
 function ensureInterceptor (gateway: string): void {
   if (interceptorFor.has(gateway)) return
@@ -96,15 +99,20 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   }
 
   const [jmv, setJmv] = React.useState<JimuMapView>(null)
-  const [users, setUsers] = React.useState<{ [workspaceId: string]: string }>(() => {
+  // Signed-in user per gateway URL (keyed by URL so editing a workspace's URL can't show a stale sign-in)
+  const [users, setUsers] = React.useState<{ [gatewayUrl: string]: string }>(() => {
     const u = {}
-    for (const ws of workspaces) if (getToken(ws.gatewayUrl)) u[ws.id] = getToken(ws.gatewayUrl).user
+    for (const ws of workspaces) if (getToken(ws.gatewayUrl)) u[ws.gatewayUrl] = getToken(ws.gatewayUrl).user
     return u
   })
+  const userOf = (ws: Workspace) => users[ws.gatewayUrl]
   const [filter, setFilter] = React.useState('')
   const [notice, setNotice] = React.useState('')
-  const [added, setAdded] = React.useState<Added[]>([])
-  const addedRef = React.useRef<Added[]>([])
+  const [added, setAddedState] = React.useState<Added[]>(() => addedByWidget.get(props.id) || [])
+  const addedRef = React.useRef<Added[]>(addedByWidget.get(props.id) || [])
+  const setAdded = (list: Added[]) => { addedByWidget.set(props.id, list); setAddedState(list) }
+  const savedRef = React.useRef<string[]>([])
+  const loadGeneration = React.useRef(0)
   const colorIndex = React.useRef(0)
   const prevSaved = React.useRef<string[]>([])
 
@@ -117,7 +125,12 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
 
   const wsKey = workspaces.map(w => w.id + '=' + w.gatewayUrl).join('|')
   React.useEffect(() => {
-    const offs = workspaces.map(ws => listenForToken(ws.gatewayUrl, t => setUsers(u => ({ ...u, [ws.id]: t.user }))))
+    const offs = workspaces.map(ws => listenForToken(ws.gatewayUrl, t => setUsers(u => {
+      const next = { ...u }
+      if (t) next[ws.gatewayUrl] = t.user
+      else delete next[ws.gatewayUrl]
+      return next
+    })))
     return () => offs.forEach(off => off())
   }, [wsKey])
 
@@ -195,7 +208,8 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
 
   // Keep the map in step with the layers saved in settings: each loads once its workspace is signed in;
   // in the builder, unticking a layer in settings also takes it off the map
-  const signedIn = workspaces.filter(ws => users[ws.id])
+  const signedIn = workspaces.filter(ws => userOf(ws))
+  savedRef.current = savedLayers
   React.useEffect(() => {
     if (!jmv) return
     const prev = prevSaved.current
@@ -206,15 +220,18 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
         if (entry) remove(entry, true)
       }
     }
+    // A newer run (config changed, someone signed in) supersedes this one
+    const generation = ++loadGeneration.current
     ;(async () => {
       for (const k of savedLayers) {
+        if (generation !== loadGeneration.current || !savedRef.current.includes(k)) return
         const { workspaceId, table } = parseLayerKey(k)
         const ws = workspaces.find(w => w.id === workspaceId)
-        if (!ws || !users[ws.id] || addedRef.current.some(a => a.key === k)) continue
+        if (!ws || !getToken(ws.gatewayUrl) || addedRef.current.some(a => a.key === k)) continue
         await addTable(ws, tableRef(table), true)
       }
     })()
-  }, [jmv, signedIn.map(w => w.id).join(','), savedLayers.join('|')])
+  }, [jmv, signedIn.map(w => w.gatewayUrl).join(','), savedLayers.join('|')])
 
   const entryOf = (ws: Workspace, table: string) => added.find(a => a.key === layerKey(ws.id, table))
   const savedFor = (ws: Workspace) => savedLayers.filter(k => parseLayerKey(k).workspaceId === ws.id).length
@@ -261,8 +278,8 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       {notice && mapId && <Alert className='dbx-alert' type='info' withIcon text={notice} />}
 
       <div className='dbx-workspaces'>
-        {workspaces.map(ws => users[ws.id]
-          ? <p key={ws.id} className='dbx-hint'>{multi ? nls('signedInTo', { workspace: ws.label, user: users[ws.id] }) : nls('signedInAs', { user: users[ws.id] })}</p>
+        {workspaces.map(ws => userOf(ws)
+          ? <p key={ws.id} className='dbx-hint'>{multi ? nls('signedInTo', { workspace: ws.label, user: userOf(ws) }) : nls('signedInAs', { user: userOf(ws) })}</p>
           : (
             <div key={ws.id} className='dbx-signin'>
               {savedFor(ws) > 0 && <p className='dbx-hint'>{nls('savedLayersWaitingIn', { n: String(savedFor(ws)), workspace: ws.label })}</p>}
