@@ -2,9 +2,9 @@
 /*
   Databricks Data — runtime
 
-  1. Sign in: opens <gateway>/auth/handoff in a popup. The Databricks login happens there
+  1. Sign in: one popup per workspace opens <gateway>/auth/handoff. The Databricks login happens there
      (first-party), and the page posts the user's token back to this origin.
-  2. A request interceptor adds that token to every SDK request to the gateway.
+  2. A request interceptor per gateway adds that token (and the chosen warehouse) to every SDK request.
   3. Picking a table creates a FEATURE_LAYER data source for
      <gateway>/databricks/rest/services/<table>/FeatureServer/0 and adds its layer to the selected map
      (see layers.ts), so other widgets (Legend, Layer List, Table, Filter) can use it.
@@ -16,8 +16,10 @@ import type { JimuMapView } from 'jimu-arcgis'
 import { Alert, Button, Loading, LoadingType, TextInput } from 'jimu-ui'
 import esriConfig from 'esri/config'
 import * as reactiveUtils from 'esri/core/reactiveUtils'
-import type { IMConfig, CatalogTable } from '../config'
+import type { IMConfig, CatalogTable, Workspace } from '../config'
 import { getToken, signIn as openSignIn, listenForToken, fetchCatalog, tableRef, setWarehouse, gatewayHeaders } from '../auth'
+import { workspacesOf, layerKey, parseLayerKey } from '../workspaces'
+import { TableTree } from '../table-tree'
 import { announceLayer } from '../sync'
 import { addGatewayLayer, removeGatewayLayer, forgetGatewayLayer } from './layers'
 import type { GatewayLayer } from './layers'
@@ -60,7 +62,7 @@ function rendererFor (geometryType: string, n: number) {
 }
 
 type AddState = 'adding' | 'drawing' | 'ready' | 'failed'
-interface Added { table: string, gl: GatewayLayer | null, state: AddState, info: string }
+interface Added { key: string, workspaceId: string, table: string, gl: GatewayLayer | null, state: AddState, info: string }
 
 const STATE_MESSAGE: { [k in AddState]: keyof typeof defaultMessages } = {
   adding: 'stateAdding', drawing: 'stateDrawing', ready: 'stateReady', failed: 'stateFailed'
@@ -74,29 +76,37 @@ const DatabricksMark = ({ size = 18 }: { size?: number }) => (
 )
 
 const Widget = (props: AllWidgetProps<IMConfig>) => {
-  const gateway = (props.config.gatewayUrl || '').replace(/\/$/, '')
   const nls = (id: keyof typeof defaultMessages, values?: { [k: string]: string }) =>
     props.intl.formatMessage({ id, defaultMessage: defaultMessages[id] }, values)
 
-  const [jmv, setJmv] = React.useState<JimuMapView>(null)
-  const [user, setUser] = React.useState<string>(getToken(gateway)?.user || null)
-  const [tables, setTables] = React.useState<CatalogTable[]>([])
-  const [filter, setFilter] = React.useState('')
-  const [catalogState, setCatalogState] = React.useState<'idle' | 'loading' | 'ready' | 'failed' | 'noCatalogs'>('idle')
-  const [catalogError, setCatalogError] = React.useState('')
-  const [added, setAdded] = React.useState<Added[]>([])
-  const addedRef = React.useRef<Added[]>([])
-  const colorIndex = React.useRef(0)
-
+  const workspaces = workspacesOf(props.config)
+  const multi = workspaces.length > 1
+  const allowBrowse = props.config.allowBrowse !== false
+  const savedLayers: string[] = props.config.layers ? props.config.layers.asMutable() : []
   // The configured map, or the app's only Map widget when none is picked (e.g. right after the widget is
   // moved into a Widget Controller, which creates a fresh instance with empty settings)
   const mapId = props.useMapWidgetIds?.[0] || soleMapWidgetId()
-  const [notice, setNotice] = React.useState('')
-  const allowBrowse = props.config.allowBrowse !== false
-  const savedLayers: string[] = props.config.layers ? props.config.layers.asMutable() : []
-  const prevSaved = React.useRef<string[]>([])
   // In the builder, layers the author adds or removes here are saved to the widget's settings
   const inBuilder = !!getAppStore().getState()?.appContext?.isInBuilder
+
+  // Before any request goes out: one interceptor per gateway and the warehouse the author picked
+  for (const ws of workspaces) {
+    setWarehouse(ws.gatewayUrl, ws.warehouseId)
+    ensureInterceptor(ws.gatewayUrl)
+  }
+
+  const [jmv, setJmv] = React.useState<JimuMapView>(null)
+  const [users, setUsers] = React.useState<{ [workspaceId: string]: string }>(() => {
+    const u = {}
+    for (const ws of workspaces) if (getToken(ws.gatewayUrl)) u[ws.id] = getToken(ws.gatewayUrl).user
+    return u
+  })
+  const [filter, setFilter] = React.useState('')
+  const [notice, setNotice] = React.useState('')
+  const [added, setAdded] = React.useState<Added[]>([])
+  const addedRef = React.useRef<Added[]>([])
+  const colorIndex = React.useRef(0)
+  const prevSaved = React.useRef<string[]>([])
 
   const isCurrent = (entry: Added) => addedRef.current.includes(entry)
   const update = (entry: Added, patch: Partial<Added>) => {
@@ -105,41 +115,17 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     setAdded([...addedRef.current])
   }
 
-  // Before any request goes out: the interceptor and the warehouse the author picked
-  if (gateway) setWarehouse(gateway, props.config.warehouseId || '')
+  const wsKey = workspaces.map(w => w.id + '=' + w.gatewayUrl).join('|')
   React.useEffect(() => {
-    if (gateway) ensureInterceptor(gateway)
-  }, [gateway])
-  const catalogs: string[] = props.config.catalogs ? props.config.catalogs.asMutable() : []
-
-  const loadCatalog = React.useCallback(async () => {
-    if (!getToken(gateway) || !allowBrowse) return
-    // No catalogs picked: don't scan the whole metastore, ask the author to choose instead
-    if (!catalogs.length) { setTables([]); setCatalogState('noCatalogs'); return }
-    setCatalogState('loading')
-    try {
-      setTables(await fetchCatalog(gateway, catalogs))
-      setCatalogState('ready')
-    } catch (err) {
-      setCatalogError(err.message)
-      setCatalogState('failed')
-    }
-  }, [gateway, catalogs.join(','), props.config.warehouseId, allowBrowse])
-
-  React.useEffect(() => {
-    if (!gateway) return
-    const off = listenForToken(gateway, t => { setUser(t.user); loadCatalog() })
-    if (getToken(gateway)) loadCatalog()
-    return off
-  }, [gateway, loadCatalog])
-
-  const signIn = () => openSignIn(gateway)
+    const offs = workspaces.map(ws => listenForToken(ws.gatewayUrl, t => setUsers(u => ({ ...u, [ws.id]: t.user }))))
+    return () => offs.forEach(off => off())
+  }, [wsKey])
 
   const remove = (entry: Added, fromConfig = false) => {
     addedRef.current = addedRef.current.filter(x => x !== entry)
     setAdded(addedRef.current)
     if (entry.gl) removeGatewayLayer(props.id, jmv, entry.gl)
-    if (inBuilder && !fromConfig) announceLayer(props.id, 'remove', entry.table)
+    if (inBuilder && !fromConfig) announceLayer(props.id, 'remove', entry.key)
   }
 
   // A Databricks layer removed elsewhere (e.g. from Map Layers) drops out of the widget too
@@ -152,22 +138,22 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
         addedRef.current = addedRef.current.filter(x => x !== entry)
         setAdded(addedRef.current)
         forgetGatewayLayer(props.id, entry.gl)
-        if (inBuilder) announceLayer(props.id, 'remove', entry.table)
+        if (inBuilder) announceLayer(props.id, 'remove', entry.key)
       }
     })
     return () => handle.remove()
   }, [jmv])
 
-  const addTable = async (t: CatalogTable, fromConfig = false) => {
-    const token = getToken(gateway)
-    if (!token) return
+  const addTable = async (ws: Workspace, t: CatalogTable, fromConfig = false) => {
+    if (!getToken(ws.gatewayUrl)) return
     if (!jmv) {
       if (!fromConfig) setNotice(mapId ? nls('mapLoading') : nls('chooseMap'))
       return
     }
     setNotice('')
+    const key = layerKey(ws.id, t.table)
     // Already on the map: zoom to it; still loading: ignore the click; failed: try again
-    const existing = addedRef.current.find(a => a.table === t.table)
+    const existing = addedRef.current.find(a => a.key === key)
     if (existing) {
       if (existing.state === 'ready' && existing.gl?.layer.fullExtent) {
         jmv.view.goTo(existing.gl.layer.fullExtent.expand(1.2)).catch(() => {})
@@ -176,14 +162,15 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       if (existing.state !== 'failed') return
       remove(existing, true)
     }
-    const title = t.name || t.table.split('.').pop()
-    const entry: Added = { table: t.table, gl: null, state: 'adding', info: '' }
+    const name = t.name || t.table.split('.').pop()
+    const title = multi ? `${name} · ${ws.label}` : name
+    const entry: Added = { key, workspaceId: ws.id, table: t.table, gl: null, state: 'adding', info: '' }
     addedRef.current = [entry, ...addedRef.current]
     setAdded(addedRef.current)
-    if (inBuilder && !fromConfig) announceLayer(props.id, 'add', t.table)
+    if (inBuilder && !fromConfig) announceLayer(props.id, 'add', key)
     const t0 = performance.now()
     try {
-      const gl = await addGatewayLayer({ widgetId: props.id, jmv, gateway, table: t.table, title })
+      const gl = await addGatewayLayer({ widgetId: props.id, jmv, gateway: ws.gatewayUrl, key, table: t.table, title })
       // Removed while it was being created: undo the add
       if (!isCurrent(entry)) { removeGatewayLayer(props.id, jmv, gl); return }
       entry.gl = gl
@@ -203,31 +190,60 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     }
   }
 
-  // Keep the map in step with the layers saved in settings: saved layers load once the viewer is
-  // signed in; in the builder, unticking a layer in settings also takes it off the map
+  // Keep the map in step with the layers saved in settings: each loads once its workspace is signed in;
+  // in the builder, unticking a layer in settings also takes it off the map
+  const signedIn = workspaces.filter(ws => users[ws.id])
   React.useEffect(() => {
-    if (!jmv || !user) return
+    if (!jmv) return
     const prev = prevSaved.current
     prevSaved.current = savedLayers
     if (inBuilder) {
-      for (const t of prev) {
-        const entry = savedLayers.includes(t) ? null : addedRef.current.find(a => a.table === t)
+      for (const k of prev) {
+        const entry = savedLayers.includes(k) ? null : addedRef.current.find(a => a.key === k)
         if (entry) remove(entry, true)
       }
     }
     ;(async () => {
-      for (const t of savedLayers) {
-        if (!addedRef.current.some(a => a.table === t)) await addTable(tableRef(t), true)
+      for (const k of savedLayers) {
+        const { workspaceId, table } = parseLayerKey(k)
+        const ws = workspaces.find(w => w.id === workspaceId)
+        if (!ws || !users[ws.id] || addedRef.current.some(a => a.key === k)) continue
+        await addTable(ws, tableRef(table), true)
       }
     })()
-  }, [jmv, user, savedLayers.join('|')])
+  }, [jmv, signedIn.map(w => w.id).join(','), savedLayers.join('|')])
 
-  const shown = tables.filter(t => t.table.toLowerCase().includes(filter.toLowerCase())).slice(0, 200)
-  const entryOf = (table: string) => added.find(a => a.table === table)
-  const stateOf = (table: string) => entryOf(table)?.state
-  // Failures the viewer can't see on a catalog row (browsing off, filtered out, or not in the list)
-  const shownTables = new Set(allowBrowse ? shown.map(t => t.table) : [])
-  const hiddenFailures = added.filter(a => a.state === 'failed' && !shownTables.has(a.table))
+  const entryOf = (ws: Workspace, table: string) => added.find(a => a.key === layerKey(ws.id, table))
+  const savedFor = (ws: Workspace) => savedLayers.filter(k => parseLayerKey(k).workspaceId === ws.id).length
+  const browsable = signedIn.filter(ws => ws.catalogs.length)
+  const failures = added.filter(a => a.state === 'failed')
+  // Failures of saved layers whose workspace offers no browse tree to show them in
+  const hiddenFailures = failures.filter(a => !allowBrowse || !browsable.some(w => w.id === a.workspaceId))
+
+  const renderTable = (ws: Workspace, t: CatalogTable) => {
+    const entry = entryOf(ws, t.table)
+    const st = entry?.state
+    const label = st === 'ready' ? nls('zoomToLayer') : st === 'failed' ? nls('retryLayer') : st ? nls(STATE_MESSAGE[st]) : nls('addToMap')
+    return (
+      <div className={`dbx-table${st ? ' dbx-table-added' : ''}`} title={label} aria-label={`${t.table}: ${label}`}>
+        <div className='dbx-table-name'>
+          <span className='dbx-table-label'><b>{t.name}</b></span>
+          {st && (
+            <span className='dbx-table-status'>
+              {(st === 'adding' || st === 'drawing') && <Loading type={LoadingType.Donut} width={12} height={12} />}
+              <small className={`dbx-state dbx-state-${st}`}>{nls(STATE_MESSAGE[st])}</small>
+              <Button size='sm' type='tertiary' icon className='dbx-remove' title={nls('remove')}
+                aria-label={nls('removeLayer', { table: t.table })}
+                onClick={e => { e.stopPropagation(); if (entry) remove(entry) }}>×</Button>
+            </span>
+          )}
+        </div>
+        <small className='dbx-hint'>{entry?.info || nls('tableDetail', { id: t.idField, geometry: t.geometry })}</small>
+      </div>
+    )
+  }
+
+  const loadTables = React.useCallback((ws: Workspace, catalog: string) => fetchCatalog(ws.gatewayUrl, [catalog]), [])
 
   return (
     <div className='widget-databricks-data jimu-widget' css={style}>
@@ -237,25 +253,21 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
         <span className='dbx-title'>{nls('_widgetLabel')}</span>
       </div>
 
-      {!gateway && <Alert className='dbx-alert' type='warning' withIcon text={nls('noGateway')} />}
+      {!workspaces.length && <Alert className='dbx-alert' type='warning' withIcon text={nls('noGateway')} />}
       {!mapId && <Alert className='dbx-alert' type='warning' withIcon text={nls('chooseMap')} />}
       {notice && mapId && <Alert className='dbx-alert' type='info' withIcon text={notice} />}
 
-      {gateway && !user && (
-        <div className='dbx-signin'>
-          {savedLayers.length > 0 && <p className='dbx-hint'>{nls('savedLayersWaiting', { n: String(savedLayers.length) })}</p>}
-          <Button type='primary' onClick={signIn}>{nls('signInDatabricks')}</Button>
-        </div>
-      )}
-      {user && <p className='dbx-hint'>{nls('signedInAs', { user })}</p>}
-
-      <div aria-live='polite'>
-        {catalogState === 'loading' && <Loading type={LoadingType.Donut} width={18} height={18} text={nls('loadingCatalog')} />}
-        {catalogState === 'ready' && allowBrowse && <p className='dbx-hint'>{nls('tableCount', { n: String(tables.length) })}</p>}
-        {catalogState === 'noCatalogs' && <p className='dbx-hint'>{nls('noCatalogs')}</p>}
-        {catalogState === 'failed' && (
-          <Alert className='dbx-alert' type='error' withIcon closable={false} text={nls('catalogFailed', { error: catalogError })} />
-        )}
+      <div className='dbx-workspaces'>
+        {workspaces.map(ws => users[ws.id]
+          ? <p key={ws.id} className='dbx-hint'>{multi ? nls('signedInTo', { workspace: ws.label, user: users[ws.id] }) : nls('signedInAs', { user: users[ws.id] })}</p>
+          : (
+            <div key={ws.id} className='dbx-signin'>
+              {savedFor(ws) > 0 && <p className='dbx-hint'>{nls('savedLayersWaitingIn', { n: String(savedFor(ws)), workspace: ws.label })}</p>}
+              <Button type='primary' size='sm' onClick={() => openSignIn(ws.gatewayUrl)}>
+                {multi ? nls('signInTo', { workspace: ws.label }) : nls('signInDatabricks')}
+              </Button>
+            </div>
+            ))}
       </div>
 
       {hiddenFailures.length > 0 && (
@@ -263,38 +275,27 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
           text={nls('layersFailed', { tables: hiddenFailures.map(a => a.table.split('.').pop()).join(', ') })} />
       )}
 
-      {allowBrowse && tables.length > 0 && (
-        <TextInput size='sm' className='dbx-filter' placeholder={nls('filterTables')} aria-label={nls('filterTables')}
-          value={filter} onChange={e => setFilter(e.target.value)} />
-      )}
-      {allowBrowse && (
-        <div role='list' aria-label={nls('tableListLabel')}>
-          {shown.map(t => {
-            const st = stateOf(t.table)
-            const label = st === 'ready' ? nls('zoomToLayer') : st === 'failed' ? nls('retryLayer') : st ? nls(STATE_MESSAGE[st]) : nls('addToMap')
-            return (
-              <div key={t.table} role='listitem'>
-                <div role='button' tabIndex={0} title={label} aria-label={`${t.table}: ${label}`}
-                  className={`dbx-table${st ? ' dbx-table-added' : ''}${st && st !== 'ready' && st !== 'failed' ? ' dbx-table-busy' : ''}`}
-                  onClick={() => addTable(t)} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && addTable(t)}>
-                  <div className='dbx-table-name'>
-                    <span>{t.schema}.<b>{t.name}</b></span>
-                    {st && (
-                      <span className='dbx-table-status'>
-                        {(st === 'adding' || st === 'drawing') && <Loading type={LoadingType.Donut} width={12} height={12} />}
-                        <small className={`dbx-state dbx-state-${st}`}>{nls(STATE_MESSAGE[st])}</small>
-                        <Button size='sm' type='tertiary' icon className='dbx-remove' title={nls('remove')}
-                          aria-label={nls('removeLayer', { table: t.table })}
-                          onClick={e => { e.stopPropagation(); const a = entryOf(t.table); if (a) remove(a) }}>×</Button>
-                      </span>
-                    )}
-                  </div>
-                  <small className='dbx-hint'>{entryOf(t.table)?.info || nls('tableDetail', { id: t.idField, geometry: t.geometry })}</small>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+      {allowBrowse && signedIn.length > 0 && !browsable.length && <p className='dbx-hint'>{nls('noCatalogs')}</p>}
+      {allowBrowse && browsable.length > 0 && (
+        <React.Fragment>
+          <TextInput size='sm' className='dbx-filter' placeholder={nls('filterTables')} aria-label={nls('filterTables')}
+            value={filter} onChange={e => setFilter(e.target.value)} />
+          <TableTree
+            workspaces={browsable}
+            catalogsFor={ws => ws.catalogs}
+            loadTables={loadTables}
+            renderTable={renderTable}
+            onTableClick={(ws, t) => addTable(ws, t)}
+            filter={filter}
+            autoExpandSingle
+            messages={{
+              loading: nls('loadingCatalog'),
+              failed: error => nls('catalogFailed', { error }),
+              empty: nls('noTablesInCatalog'),
+              tablesIn: n => nls('tableCount', { n: String(n) })
+            }}
+          />
+        </React.Fragment>
       )}
     </div>
   )
@@ -317,19 +318,14 @@ const style = css`
   .dbx-title { font-size: 0.9375rem; font-weight: 600; }
   .dbx-hint { color: var(--sys-color-surface-paper-hint); }
   .dbx-alert { margin-bottom: 8px; width: 100%; }
+  .dbx-workspaces { margin-bottom: 6px; }
   .dbx-signin { margin-bottom: 8px; }
   .dbx-filter { margin: 6px 0; }
 
-  .dbx-table {
-    padding: 4px 6px;
-    cursor: pointer;
-    border-bottom: 1px solid var(--sys-color-divider-secondary);
-    &:hover { background-color: var(--sys-color-action-hover); }
-    &:focus-visible { outline: 2px solid var(--sys-color-primary-main); outline-offset: -2px; }
-  }
+  .dbx-table { flex: 1; min-width: 0; padding: 2px 0; }
   .dbx-table-added { background-color: var(--sys-color-action-selected); }
-  .dbx-table-busy { cursor: progress; }
   .dbx-table-name { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .dbx-table-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dbx-table-status { display: inline-flex; align-items: center; gap: 4px; flex: none; }
   .dbx-remove { padding: 0 4px; min-width: 0; line-height: 1; }
 

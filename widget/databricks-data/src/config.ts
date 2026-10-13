@@ -1,18 +1,34 @@
 import type { ImmutableObject } from 'jimu-core'
 
-export interface Config {
-  /** Databricks feature gateway app URL, no trailing slash */
+/** One Databricks workspace, reached through its feature gateway (a sign-in is per workspace). */
+export interface Workspace {
+  /** Stable id used in saved layer keys */
+  id: string
+  /** Name shown to authors and viewers, e.g. "prod" */
+  label: string
+  /** Feature gateway app URL, no trailing slash */
   gatewayUrl: string
   /** SQL warehouse to query with (one of the gateway's allowed warehouses); empty = gateway default */
   warehouseId: string
-  /** Catalogs whose tables are offered */
+  /** Catalogs whose tables viewers can browse */
   catalogs: string[]
-  /** @deprecated replaced by `catalogs` in 1.20.2; kept so old configs can be migrated */
-  catalogFilter?: string
-  /** Tables (catalog.schema.table) added to the map when the app opens, in order */
+}
+
+export interface Config {
+  workspaces: Workspace[]
+  /** Layers added when the app opens, in order, as "<workspaceId>::<catalog.schema.table>" */
   layers: string[]
   /** Let viewers browse the catalog and add more tables (default true) */
   allowBrowse: boolean
+
+  /** @deprecated single-workspace settings before 1.20.3; migrated into `workspaces` */
+  gatewayUrl?: string
+  /** @deprecated see gatewayUrl */
+  warehouseId?: string
+  /** @deprecated see gatewayUrl */
+  catalogs?: string[]
+  /** @deprecated replaced by `catalogs` in 1.20.2 */
+  catalogFilter?: string
 }
 
 export type IMConfig = ImmutableObject<Config>

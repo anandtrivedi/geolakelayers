@@ -72,3 +72,11 @@ targets:
     variables:
       warehouse_id: abcdef0123456789
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
+
+  # gov (GovCloud, separate metastore): second workspace for multi-workspace testing
+  gov:
+    workspace:
+      host: https://your-gov-workspace.cloud.databricks.us
+    variables:
+      warehouse_id: fedcba9876543210
+      allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199

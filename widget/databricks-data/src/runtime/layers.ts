@@ -25,8 +25,8 @@ export function layerUrl (gateway: string, table: string): string {
   return `${gateway}/databricks/rest/services/${table}/FeatureServer/0`
 }
 
-export function dataSourceId (widgetId: string, table: string): string {
-  return `${widgetId}_dbx_${table.replace(/[^A-Za-z0-9_]/g, '_')}`
+export function dataSourceId (widgetId: string, key: string): string {
+  return `${widgetId}_dbx_${key.replace(/[^A-Za-z0-9_]/g, '_')}`
 }
 
 function publish (widgetId: string, type: DataSourcesChangeType, ds: DataSource): void {
@@ -41,12 +41,14 @@ export async function addGatewayLayer (opts: {
   widgetId: string
   jmv: JimuMapView
   gateway: string
+  /** Layer key (workspace + table), unique per widget */
+  key: string
   table: string
   title: string
 }): Promise<GatewayLayer> {
-  const { widgetId, jmv, gateway, table, title } = opts
+  const { widgetId, jmv, gateway, key, table, title } = opts
   const url = layerUrl(gateway, table)
-  const id = dataSourceId(widgetId, table)
+  const id = dataSourceId(widgetId, key)
   try {
     // Layer definition via our own request, so the token doesn't depend on which code path ExB uses
     const r = await fetch(`${url}?f=json`, { headers: gatewayHeaders(gateway) })

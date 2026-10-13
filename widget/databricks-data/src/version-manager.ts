@@ -1,5 +1,6 @@
 import { BaseVersionManager, Immutable } from 'jimu-core'
 import type { IMConfig } from './config'
+import { labelFromUrl, normalizeUrl, layerKey } from './workspaces'
 
 class VersionManager extends BaseVersionManager {
   versions = [
@@ -24,6 +25,23 @@ class VersionManager extends BaseVersionManager {
         }
         if (config.warehouseId === undefined) config = config.set('warehouseId', '')
         return config.without('catalogFilter' as any)
+      }
+    },
+    {
+      version: '1.20.3',
+      description: 'Multiple Databricks workspaces: settings move into a workspaces list; layer keys carry the workspace',
+      upgrader: (oldConfig: IMConfig) => {
+        if (oldConfig.workspaces) return oldConfig
+        const url = normalizeUrl(oldConfig.gatewayUrl)
+        const id = 'ws1'
+        const workspaces = url
+          ? [{ id, label: labelFromUrl(url), gatewayUrl: url, warehouseId: oldConfig.warehouseId || '', catalogs: oldConfig.catalogs ? oldConfig.catalogs.asMutable() : [] }]
+          : []
+        const layers = (oldConfig.layers ? oldConfig.layers.asMutable() : []).map(t => t.includes('::') ? t : layerKey(id, t))
+        return oldConfig
+          .set('workspaces', Immutable(workspaces))
+          .set('layers', Immutable(layers))
+          .without('gatewayUrl' as any).without('warehouseId' as any).without('catalogs' as any)
       }
     }
   ]
