@@ -6,5 +6,6 @@ export default {
   noGateway: 'Set the gateway URL in this widget\'s settings.',
   filterTables: 'Filter tables',
   onTheMap: 'On the map',
-  remove: 'Remove'
+  remove: 'Remove',
+  savedLayersWaiting: 'Sign in to load {n} saved layers.'
 }

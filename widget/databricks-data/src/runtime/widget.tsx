@@ -16,10 +16,10 @@ import esriConfig from 'esri/config'
 import FeatureLayer from 'esri/layers/FeatureLayer'
 import * as reactiveUtils from 'esri/core/reactiveUtils'
 import type { IMConfig, CatalogTable } from '../config'
+import { getToken, signIn as openSignIn, listenForToken, fetchCatalog, tableRef } from '../auth'
 import defaultMessages from './translations/default'
 
 // Shared by every instance of the widget in the app
-const tokens: { [gateway: string]: { token: string, user: string } } = {}
 const interceptorFor = new Set<string>()
 
 function ensureInterceptor (gateway: string): void {
@@ -30,7 +30,7 @@ function ensureInterceptor (gateway: string): void {
   esriConfig.request.interceptors.unshift({
     urls: gateway,
     before: (params: any) => {
-      const t = tokens[gateway]
+      const t = getToken(gateway)
       if (!t) return
       params.requestOptions.headers = { ...(params.requestOptions.headers || {}), Authorization: `Bearer ${t.token}` }
     }
@@ -68,7 +68,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     props.intl.formatMessage({ id, defaultMessage: defaultMessages[id] }, values)
 
   const [jmv, setJmv] = React.useState<JimuMapView>(null)
-  const [user, setUser] = React.useState<string>(tokens[gateway]?.user || null)
+  const [user, setUser] = React.useState<string>(getToken(gateway)?.user || null)
   const [tables, setTables] = React.useState<CatalogTable[]>([])
   const [filter, setFilter] = React.useState('')
   const [status, setStatus] = React.useState('')
@@ -85,42 +85,30 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     if (gateway) ensureInterceptor(gateway)
   }, [gateway])
 
+  const allowBrowse = props.config.allowBrowse !== false
+  const savedLayers: string[] = props.config.layers ? props.config.layers.asMutable() : []
+  const autoLoaded = React.useRef(false)
+
   const loadCatalog = React.useCallback(async () => {
-    const t = tokens[gateway]
-    if (!t) return
+    if (!getToken(gateway) || !allowBrowse) return
     setStatus('Loading catalog…')
     try {
-      const r = await fetch(`${gateway}/api/catalog`, { headers: { Authorization: `Bearer ${t.token}` } })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error || String(r.status))
-      const prefix = (props.config.catalogFilter || '').toLowerCase()
-      const list: CatalogTable[] = d.tables.filter((x: CatalogTable) => !prefix || x.table.startsWith(prefix))
+      const list = await fetchCatalog(gateway, props.config.catalogFilter)
       setTables(list)
       setStatus(`${list.length} tables`)
     } catch (err) {
       setStatus(`Catalog failed: ${err.message}`)
     }
-  }, [gateway, props.config.catalogFilter])
+  }, [gateway, props.config.catalogFilter, allowBrowse])
 
   React.useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      if (!gateway || e.origin !== new URL(gateway).origin) return
-      if (!e.data || e.data.type !== 'databricks-gateway-token') return
-      tokens[gateway] = { token: e.data.token, user: e.data.user }
-      setUser(e.data.user)
-      loadCatalog()
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
+    if (!gateway) return
+    const off = listenForToken(gateway, t => { setUser(t.user); loadCatalog() })
+    if (getToken(gateway)) loadCatalog()
+    return off
   }, [gateway, loadCatalog])
 
-  React.useEffect(() => {
-    if (tokens[gateway]) loadCatalog()
-  }, [gateway, loadCatalog])
-
-  const signIn = () => {
-    window.open(`${gateway}/auth/handoff?origin=${encodeURIComponent(window.location.origin)}`, 'dbx-signin', 'width=520,height=640')
-  }
+  const signIn = () => openSignIn(gateway)
 
   const addTable = async (t: CatalogTable) => {
     if (!jmv) return
@@ -132,7 +120,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     }
     const layer = new FeatureLayer({
       url: `${gateway}/databricks/rest/services/${t.table}/FeatureServer/0`,
-      title: t.name,
+      title: t.name || t.table.split('.').pop(),
       outFields: ['*'],
       popupTemplate: { title: t.name, content: [{ type: 'fields' }] } as any
     })
@@ -154,6 +142,15 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     }
   }
 
+  // Layers saved in the widget's settings load once the viewer is signed in and the map is ready
+  React.useEffect(() => {
+    if (autoLoaded.current || !jmv || !user || savedLayers.length === 0) return
+    autoLoaded.current = true
+    ;(async () => {
+      for (const t of savedLayers) await addTable(tableRef(t))
+    })()
+  }, [jmv, user, savedLayers.join('|')])
+
   const remove = (entry: Added) => {
     jmv?.view.map.remove(entry.layer)
     addedRef.current = addedRef.current.filter(x => x !== entry)
@@ -174,6 +171,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
       </div>
       {!gateway && <p>{nls('noGateway')}</p>}
       {!mapId && <p>{nls('chooseMap')}</p>}
+      {gateway && !user && savedLayers.length > 0 && <div style={{ marginBottom: 6 }}>{nls('savedLayersWaiting', { n: String(savedLayers.length) })}</div>}
       {gateway && !user && <Button type='primary' onClick={signIn}>{nls('signInDatabricks')}</Button>}
       {user && <div style={{ marginBottom: 6 }}>{nls('signedInAs', { user })}</div>}
       {status && <div style={{ color: '#556', marginBottom: 6 }}>{status}</div>}
@@ -192,10 +190,10 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
           ))}
         </div>
       )}
-      {tables.length > 0 && (
+      {allowBrowse && tables.length > 0 && (
         <TextInput size='sm' placeholder={nls('filterTables')} value={filter} onChange={e => setFilter(e.target.value)} style={{ marginBottom: 6 }} />
       )}
-      {shown.map(t => {
+      {allowBrowse && shown.map(t => {
         const st = stateOf(t.table)
         return (
           <div key={t.table} role='button' tabIndex={0} onClick={() => addTable(t)} onKeyDown={e => e.key === 'Enter' && addTable(t)}
