@@ -9,5 +9,8 @@ export default {
   signedInAs: 'Signed in as {user}',
   filterTables: 'Filter tables',
   selected: '{n} selected',
-  allowBrowse: 'Let viewers browse and add tables'
+  allowBrowse: 'Let viewers browse and add tables',
+  loadingCatalog: 'Loading tables…',
+  catalogFailed: 'Could not load tables: {error}',
+  removeStartLayer: 'Stop loading {table} when the app opens'
 }

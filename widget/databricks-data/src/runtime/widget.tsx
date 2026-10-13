@@ -1,23 +1,27 @@
+/** @jsx jsx */
 /*
   Databricks Data — runtime
 
   1. Sign in: opens <gateway>/auth/handoff in a popup. The Databricks login happens there
      (first-party), and the page posts the user's token back to this origin.
   2. A request interceptor adds that token to every SDK request to the gateway.
-  3. Picking a table adds FeatureLayer(<gateway>/databricks/rest/services/<table>/FeatureServer/0)
-     to the selected map, so paging, extent and filtering are the SDK's normal FeatureServer path.
+  3. Picking a table creates a FEATURE_LAYER data source for
+     <gateway>/databricks/rest/services/<table>/FeatureServer/0 and adds its layer to the selected map
+     (see layers.ts), so other widgets (Legend, Layer List, Table, Filter) can use it.
 */
-import { React, getAppStore } from 'jimu-core'
+import { React, jsx, css, getAppStore } from 'jimu-core'
 import type { AllWidgetProps } from 'jimu-core'
 import { JimuMapViewComponent } from 'jimu-arcgis'
 import type { JimuMapView } from 'jimu-arcgis'
-import { Button, TextInput } from 'jimu-ui'
+import { Alert, Button, Loading, LoadingType, TextInput } from 'jimu-ui'
 import esriConfig from 'esri/config'
-import FeatureLayer from 'esri/layers/FeatureLayer'
 import * as reactiveUtils from 'esri/core/reactiveUtils'
 import type { IMConfig, CatalogTable } from '../config'
 import { getToken, signIn as openSignIn, listenForToken, fetchCatalog, tableRef } from '../auth'
 import { announceLayer } from '../sync'
+import { addGatewayLayer, removeGatewayLayer } from './layers'
+import type { GatewayLayer } from './layers'
+import { versionManager } from '../version-manager'
 import defaultMessages from './translations/default'
 
 // Shared by every instance of the widget in the app
@@ -40,7 +44,7 @@ function ensureInterceptor (gateway: string): void {
 
 // Distinct color per added layer, symbol by geometry type
 const PALETTE = ['#e4572e', '#2e86ab', '#3bb273', '#7768ae', '#f3a712', '#d1495b', '#00798c', '#8d6a9f']
-function rendererFor (geometryType, n) {
+function rendererFor (geometryType: string, n: number) {
   const c = PALETTE[n % PALETTE.length]
   const symbol = geometryType === 'polygon'
     ? { type: 'simple-fill', color: c + '55', outline: { color: c, width: 1 } }
@@ -51,10 +55,11 @@ function rendererFor (geometryType, n) {
 }
 
 type AddState = 'adding' | 'drawing' | 'ready' | 'failed'
-interface Added { table: string, layer: __esri.FeatureLayer, state: AddState, info: string }
+interface Added { table: string, gl: GatewayLayer | null, state: AddState, info: string }
 
-const STATE_LABEL: { [k in AddState]: string } = { adding: 'Adding…', drawing: 'Drawing…', ready: 'On map', failed: 'Failed' }
-const STATE_COLOR: { [k in AddState]: string } = { adding: '#8a6d00', drawing: '#8a6d00', ready: '#00796b', failed: '#b00020' }
+const STATE_MESSAGE: { [k in AddState]: keyof typeof defaultMessages } = {
+  adding: 'stateAdding', drawing: 'stateDrawing', ready: 'stateReady', failed: 'stateFailed'
+}
 
 // Official Databricks symbol (Brandfolder "Databricks Symbol", databricks-symbol-color.svg)
 const DatabricksMark = ({ size = 18 }: { size?: number }) => (
@@ -63,7 +68,7 @@ const DatabricksMark = ({ size = 18 }: { size?: number }) => (
   </svg>
 )
 
-export default function Widget (props: AllWidgetProps<IMConfig>) {
+const Widget = (props: AllWidgetProps<IMConfig>) => {
   const gateway = (props.config.gatewayUrl || '').replace(/\/$/, '')
   const nls = (id: keyof typeof defaultMessages, values?: { [k: string]: string }) =>
     props.intl.formatMessage({ id, defaultMessage: defaultMessages[id] }, values)
@@ -72,12 +77,21 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
   const [user, setUser] = React.useState<string>(getToken(gateway)?.user || null)
   const [tables, setTables] = React.useState<CatalogTable[]>([])
   const [filter, setFilter] = React.useState('')
-  const [status, setStatus] = React.useState('')
+  const [catalogState, setCatalogState] = React.useState<'idle' | 'loading' | 'ready' | 'failed'>('idle')
+  const [catalogError, setCatalogError] = React.useState('')
   const [added, setAdded] = React.useState<Added[]>([])
   const addedRef = React.useRef<Added[]>([])
   const colorIndex = React.useRef(0)
 
+  const allowBrowse = props.config.allowBrowse !== false
+  const savedLayers: string[] = props.config.layers ? props.config.layers.asMutable() : []
+  const prevSaved = React.useRef<string[]>([])
+  // In the builder, layers the author adds or removes here are saved to the widget's settings
+  const inBuilder = !!getAppStore().getState()?.appContext?.isInBuilder
+
+  const isCurrent = (entry: Added) => addedRef.current.includes(entry)
   const update = (entry: Added, patch: Partial<Added>) => {
+    if (!isCurrent(entry)) return
     Object.assign(entry, patch)
     setAdded([...addedRef.current])
   }
@@ -86,21 +100,15 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     if (gateway) ensureInterceptor(gateway)
   }, [gateway])
 
-  const allowBrowse = props.config.allowBrowse !== false
-  const savedLayers: string[] = props.config.layers ? props.config.layers.asMutable() : []
-  const prevSaved = React.useRef<string[]>([])
-  // In the builder, layers the author adds or removes here are saved to the widget's settings
-  const inBuilder = !!getAppStore().getState()?.appContext?.isInBuilder
-
   const loadCatalog = React.useCallback(async () => {
     if (!getToken(gateway) || !allowBrowse) return
-    setStatus('Loading catalog…')
+    setCatalogState('loading')
     try {
-      const list = await fetchCatalog(gateway, props.config.catalogFilter)
-      setTables(list)
-      setStatus(`${list.length} tables`)
+      setTables(await fetchCatalog(gateway, props.config.catalogFilter))
+      setCatalogState('ready')
     } catch (err) {
-      setStatus(`Catalog failed: ${err.message}`)
+      setCatalogError(err.message)
+      setCatalogState('failed')
     }
   }, [gateway, props.config.catalogFilter, allowBrowse])
 
@@ -113,34 +121,48 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
 
   const signIn = () => openSignIn(gateway)
 
+  const remove = (entry: Added, fromConfig = false) => {
+    addedRef.current = addedRef.current.filter(x => x !== entry)
+    setAdded(addedRef.current)
+    if (entry.gl) removeGatewayLayer(props.id, jmv, entry.gl)
+    if (inBuilder && !fromConfig) announceLayer(props.id, 'remove', entry.table)
+  }
+
   const addTable = async (t: CatalogTable, fromConfig = false) => {
-    if (!jmv) return
-    // Already on the map: zoom to it instead of adding a duplicate; still loading: ignore the click
+    const token = getToken(gateway)
+    if (!jmv || !token) return
+    // Already on the map: zoom to it; still loading: ignore the click; failed: try again
     const existing = addedRef.current.find(a => a.table === t.table)
     if (existing) {
-      if (existing.state === 'ready' && existing.layer.fullExtent) jmv.view.goTo(existing.layer.fullExtent.expand(1.2)).catch(() => {})
-      return
+      if (existing.state === 'ready' && existing.gl?.layer.fullExtent) {
+        jmv.view.goTo(existing.gl.layer.fullExtent.expand(1.2)).catch(() => {})
+        return
+      }
+      if (existing.state !== 'failed') return
+      remove(existing, true)
     }
-    const layer = new FeatureLayer({
-      url: `${gateway}/databricks/rest/services/${t.table}/FeatureServer/0`,
-      title: t.name || t.table.split('.').pop(),
-      outFields: ['*'],
-      popupTemplate: { title: t.name, content: [{ type: 'fields' }] } as any
-    })
-    const entry: Added = { table: t.table, layer, state: 'adding', info: '' }
+    const title = t.name || t.table.split('.').pop()
+    const entry: Added = { table: t.table, gl: null, state: 'adding', info: '' }
     addedRef.current = [entry, ...addedRef.current]
     setAdded(addedRef.current)
     if (inBuilder && !fromConfig) announceLayer(props.id, 'add', t.table)
-    jmv.view.map.add(layer)
     const t0 = performance.now()
     try {
+      const gl = await addGatewayLayer({ widgetId: props.id, jmv, gateway, token: token.token, table: t.table, title })
+      // Removed while it was being created: undo the add
+      if (!isCurrent(entry)) { removeGatewayLayer(props.id, jmv, gl); return }
+      entry.gl = gl
+      const layer = gl.layer
       await layer.load()
       layer.renderer = rendererFor(layer.geometryType, colorIndex.current++) as any
-      update(entry, { state: 'drawing', info: `${layer.geometryType}, ${layer.fields.length} fields` })
+      layer.outFields = ['*']
+      layer.popupTemplate = { title, content: [{ type: 'fields' }] } as any
+      const summary = nls('layerSummary', { type: layer.geometryType, n: String(layer.fields.length) })
+      update(entry, { state: 'drawing', info: summary })
       const lv = await jmv.view.whenLayerView(layer)
-      if (layer.fullExtent) await jmv.view.goTo(layer.fullExtent.expand(1.2)).catch(() => {})
+      if (isCurrent(entry) && layer.fullExtent) await jmv.view.goTo(layer.fullExtent.expand(1.2)).catch(() => {})
       await reactiveUtils.whenOnce(() => !lv.updating)
-      update(entry, { state: 'ready', info: `${layer.geometryType}, ${layer.fields.length} fields, ${((performance.now() - t0) / 1000).toFixed(1)} s` })
+      update(entry, { state: 'ready', info: `${summary}, ${((performance.now() - t0) / 1000).toFixed(1)} s` })
     } catch (err) {
       update(entry, { state: 'failed', info: err.message })
     }
@@ -165,63 +187,125 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     })()
   }, [jmv, user, savedLayers.join('|')])
 
-  const remove = (entry: Added, fromConfig = false) => {
-    jmv?.view.map.remove(entry.layer)
-    addedRef.current = addedRef.current.filter(x => x !== entry)
-    setAdded(addedRef.current)
-    if (inBuilder && !fromConfig) announceLayer(props.id, 'remove', entry.table)
-  }
-
   const mapId = props.useMapWidgetIds?.[0]
   const shown = tables.filter(t => t.table.toLowerCase().includes(filter.toLowerCase())).slice(0, 200)
-
   const stateOf = (table: string) => added.find(a => a.table === table)?.state
 
   return (
-    <div className='widget-databricks-data jimu-widget' style={{ padding: 10, overflow: 'auto', height: '100%', boxSizing: 'border-box' }}>
+    <div className='widget-databricks-data jimu-widget' css={style}>
       {mapId && <JimuMapViewComponent useMapWidgetId={mapId} onActiveViewChange={setJmv} />}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <div className='dbx-header'>
         <DatabricksMark />
-        <b style={{ fontSize: 15 }}>{nls('_widgetLabel')}</b>
+        <span className='dbx-title'>{nls('_widgetLabel')}</span>
       </div>
-      {!gateway && <p>{nls('noGateway')}</p>}
-      {!mapId && <p>{nls('chooseMap')}</p>}
-      {gateway && !user && savedLayers.length > 0 && <div style={{ marginBottom: 6 }}>{nls('savedLayersWaiting', { n: String(savedLayers.length) })}</div>}
-      {gateway && !user && <Button type='primary' onClick={signIn}>{nls('signInDatabricks')}</Button>}
-      {user && <div style={{ marginBottom: 6 }}>{nls('signedInAs', { user })}</div>}
-      {status && <div style={{ color: '#556', marginBottom: 6 }}>{status}</div>}
-      {added.length > 0 && (
-        <div style={{ marginBottom: 10, padding: 6, background: '#f6f7f8', borderRadius: 4 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{nls('onTheMap')}</div>
-          {added.map(a => (
-            <div key={a.table} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '2px 0' }}>
-              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                <b>{a.table.split('.').pop()}</b>{' '}
-                <small style={{ color: STATE_COLOR[a.state] }}>{STATE_LABEL[a.state]}</small>{' '}
-                <small style={{ color: '#667' }}>{a.info}</small>
-              </span>
-              <Button size='sm' type='tertiary' onClick={() => remove(a)}>{nls('remove')}</Button>
-            </div>
-          ))}
+
+      {!gateway && <Alert className='dbx-alert' type='warning' withIcon text={nls('noGateway')} />}
+      {!mapId && <Alert className='dbx-alert' type='info' withIcon text={nls('chooseMap')} />}
+
+      {gateway && !user && (
+        <div className='dbx-signin'>
+          {savedLayers.length > 0 && <p className='dbx-hint'>{nls('savedLayersWaiting', { n: String(savedLayers.length) })}</p>}
+          <Button type='primary' onClick={signIn}>{nls('signInDatabricks')}</Button>
         </div>
       )}
-      {allowBrowse && tables.length > 0 && (
-        <TextInput size='sm' placeholder={nls('filterTables')} value={filter} onChange={e => setFilter(e.target.value)} style={{ marginBottom: 6 }} />
-      )}
-      {allowBrowse && shown.map(t => {
-        const st = stateOf(t.table)
-        return (
-          <div key={t.table} role='button' tabIndex={0} onClick={() => addTable(t)} onKeyDown={e => e.key === 'Enter' && addTable(t)}
-            title={st === 'ready' ? 'On the map: click to zoom to it' : st ? STATE_LABEL[st] : 'Add to map'}
-            style={{ padding: '4px 6px', cursor: st && st !== 'ready' ? 'progress' : 'pointer', borderBottom: '1px solid #eee', background: st ? '#f1f8f7' : undefined }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-              <span>{t.schema}.<b>{t.name}</b></span>
-              {st && <small style={{ color: STATE_COLOR[st], whiteSpace: 'nowrap' }}>{STATE_LABEL[st]}</small>}
+      {user && <p className='dbx-hint'>{nls('signedInAs', { user })}</p>}
+
+      <div aria-live='polite'>
+        {catalogState === 'loading' && <Loading type={LoadingType.Donut} width={18} height={18} text={nls('loadingCatalog')} />}
+        {catalogState === 'ready' && allowBrowse && <p className='dbx-hint'>{nls('tableCount', { n: String(tables.length) })}</p>}
+        {catalogState === 'failed' && (
+          <Alert className='dbx-alert' type='error' withIcon closable={false} text={nls('catalogFailed', { error: catalogError })} />
+        )}
+      </div>
+
+      {added.length > 0 && (
+        <section className='dbx-onmap' aria-label={nls('onTheMap')}>
+          <h6>{nls('onTheMap')}</h6>
+          {added.map(a => (
+            <div key={a.table} className='dbx-onmap-row'>
+              <span className='dbx-onmap-text'>
+                <b>{a.table.split('.').pop()}</b>{' '}
+                <small className={`dbx-state dbx-state-${a.state}`}>{nls(STATE_MESSAGE[a.state])}</small>{' '}
+                <small className='dbx-hint'>{a.info}</small>
+              </span>
+              <Button size='sm' type='tertiary' aria-label={nls('removeLayer', { table: a.table })} onClick={() => remove(a)}>{nls('remove')}</Button>
             </div>
-            <small style={{ color: '#667' }}>id {t.idField} · {t.geometry}</small>
-          </div>
-        )
-      })}
+          ))}
+        </section>
+      )}
+
+      {allowBrowse && tables.length > 0 && (
+        <TextInput size='sm' className='dbx-filter' placeholder={nls('filterTables')} aria-label={nls('filterTables')}
+          value={filter} onChange={e => setFilter(e.target.value)} />
+      )}
+      {allowBrowse && (
+        <div role='list' aria-label={nls('tableListLabel')}>
+          {shown.map(t => {
+            const st = stateOf(t.table)
+            const label = st === 'ready' ? nls('zoomToLayer') : st === 'failed' ? nls('retryLayer') : st ? nls(STATE_MESSAGE[st]) : nls('addToMap')
+            return (
+              <div key={t.table} role='listitem'>
+                <div role='button' tabIndex={0} title={label} aria-label={`${t.table}: ${label}`}
+                  className={`dbx-table${st ? ' dbx-table-added' : ''}${st && st !== 'ready' && st !== 'failed' ? ' dbx-table-busy' : ''}`}
+                  onClick={() => addTable(t)} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && addTable(t)}>
+                  <div className='dbx-table-name'>
+                    <span>{t.schema}.<b>{t.name}</b></span>
+                    {st && <small className={`dbx-state dbx-state-${st}`}>{nls(STATE_MESSAGE[st])}</small>}
+                  </div>
+                  <small className='dbx-hint'>{nls('tableDetail', { id: t.idField, geometry: t.geometry })}</small>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
+
+Widget.versionManager = versionManager
+
+export default Widget
+
+const style = css`
+  padding: 10px;
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  background-color: var(--sys-color-surface-paper);
+  color: var(--sys-color-surface-paper-text);
+
+  p { margin: 0 0 6px; }
+  .dbx-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .dbx-title { font-size: 0.9375rem; font-weight: 600; }
+  .dbx-hint { color: var(--sys-color-surface-paper-hint); }
+  .dbx-alert { margin-bottom: 8px; width: 100%; }
+  .dbx-signin { margin-bottom: 8px; }
+  .dbx-filter { margin: 6px 0; }
+
+  .dbx-onmap {
+    margin: 4px 0 10px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background-color: var(--sys-color-surface-background);
+    h6 { margin: 0 0 4px; font-size: 0.8125rem; font-weight: 600; }
+  }
+  .dbx-onmap-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 0; }
+  .dbx-onmap-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+  .dbx-table {
+    padding: 4px 6px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--sys-color-divider-secondary);
+    &:hover { background-color: var(--sys-color-action-hover); }
+    &:focus-visible { outline: 2px solid var(--sys-color-primary-main); outline-offset: -2px; }
+  }
+  .dbx-table-added { background-color: var(--sys-color-action-selected); }
+  .dbx-table-busy { cursor: progress; }
+  .dbx-table-name { display: flex; justify-content: space-between; gap: 6px; }
+
+  .dbx-state { white-space: nowrap; }
+  .dbx-state-adding, .dbx-state-drawing { color: var(--sys-color-warning-dark); }
+  .dbx-state-ready { color: var(--sys-color-success-main); }
+  .dbx-state-failed { color: var(--sys-color-error-main); }
+`

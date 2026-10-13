@@ -4,8 +4,22 @@ export default {
   signedInAs: 'Signed in as {user}',
   chooseMap: 'Select a Map widget in this widget\'s settings.',
   noGateway: 'Set the gateway URL in this widget\'s settings.',
+  savedLayersWaiting: 'Sign in to load {n} saved layers.',
+  loadingCatalog: 'Loading tables…',
+  tableCount: '{n} tables',
+  catalogFailed: 'Could not load tables: {error}',
   filterTables: 'Filter tables',
+  tableListLabel: 'Unity Catalog tables',
+  tableDetail: 'id {id} · {geometry}',
   onTheMap: 'On the map',
   remove: 'Remove',
-  savedLayersWaiting: 'Sign in to load {n} saved layers.'
+  removeLayer: 'Remove {table} from the map',
+  addToMap: 'Add to map',
+  zoomToLayer: 'On the map: click to zoom to it',
+  retryLayer: 'Failed: click to try again',
+  layerSummary: '{type}, {n} fields',
+  stateAdding: 'Adding…',
+  stateDrawing: 'Drawing…',
+  stateReady: 'On map',
+  stateFailed: 'Failed'
 }

@@ -40,13 +40,13 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   }
 
   const load = React.useCallback(async () => {
-    setStatus('Loading catalog…')
+    setStatus(nls('loadingCatalog'))
     try {
       const list = await fetchCatalog(gateway, props.config.catalogFilter)
       setTables(list)
       setStatus('')
     } catch (err) {
-      setStatus(`Catalog failed: ${err.message}`)
+      setStatus(nls('catalogFailed', { error: err.message }))
     }
   }, [gateway, props.config.catalogFilter])
 
@@ -90,7 +90,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
                 {selected.map(t => (
                   <div key={t} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                     <small style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{t}</small>
-                    <Button size='sm' type='tertiary' onClick={() => toggle(t)}>×</Button>
+                    <Button size='sm' type='tertiary' aria-label={nls('removeStartLayer', { table: t })} onClick={() => toggle(t)}>×</Button>
                   </div>
                 ))}
               </div>
