@@ -129,6 +129,7 @@ function requestedCatalogs (req) {
 }
 
 const ID_NAMES = "'objectid','oid','fid','bigid','id','object_id'"
+const STRING_ID_NAMES = "'id','gers_id','uuid','guid','globalid','feature_id','fid','objectid'"
 const WKT_NAMES = "'geometry_wkt','geom_wkt','wkt','shape_wkt','geometry','geom','shape'"
 const LAT_NAMES = "'latitude','lat','y'"
 const LON_NAMES = "'longitude','lon','lng','long','x'"
@@ -160,25 +161,26 @@ async function listTables (req) {
       WHERE ${scope} AND table_schema <> 'information_schema'
         AND table_name NOT LIKE '\\_\\_%'
         AND (lower(data_type) LIKE 'geometry%' OR lower(data_type) LIKE 'geography%'
-          OR lower(column_name) IN (${ID_NAMES}, ${WKT_NAMES}, ${LAT_NAMES}, ${LON_NAMES}))
+          OR lower(column_name) IN (${ID_NAMES}, ${STRING_ID_NAMES}, ${WKT_NAMES}, ${LAT_NAMES}, ${LON_NAMES}))
     )
     SELECT cat, sch, tbl,
       max(CASE WHEN (dt LIKE 'geometry%' OR dt LIKE 'geography%') AND col RLIKE '^[a-z_][a-z0-9_]*$' THEN col END) AS native_col,
       max(CASE WHEN col IN (${WKT_NAMES}) AND dt = 'string' THEN col END) AS wkt_col,
       max(CASE WHEN col IN (${LAT_NAMES}) AND dt IN ('double','float') THEN 1 ELSE 0 END) AS has_lat,
       max(CASE WHEN col IN (${LON_NAMES}) AND dt IN ('double','float') THEN 1 ELSE 0 END) AS has_lon,
-      max(CASE WHEN col IN (${ID_NAMES}) AND dt IN ('tinyint','smallint','int','bigint') THEN col END) AS id_col
+      max(CASE WHEN col IN (${ID_NAMES}) AND dt IN ('tinyint','smallint','int','bigint') THEN col END) AS id_col,
+      max(CASE WHEN col IN (${STRING_ID_NAMES}) AND dt = 'string' THEN col END) AS sid_col
     FROM c GROUP BY cat, sch, tbl
     ORDER BY cat, sch, tbl`
   const rows = await runSql(req, sql)
   const tables = rows
-    .filter(r => r.id_col && (r.native_col || r.wkt_col || (r.has_lat && r.has_lon)))
+    .filter(r => (r.id_col || r.sid_col) && (r.native_col || r.wkt_col || (r.has_lat && r.has_lon)))
     .map(r => ({
       table: `${r.cat}.${r.sch}.${r.tbl}`,
       catalog: r.cat,
       schema: r.sch,
       name: r.tbl,
-      idField: r.id_col,
+      idField: r.id_col || `${r.sid_col} (hashed)`,
       geometry: r.native_col || r.wkt_col || 'lon/lat'
     }))
   catalogCache.set(key, { tables, at: Date.now() })

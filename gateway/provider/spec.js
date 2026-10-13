@@ -14,6 +14,11 @@ const cache = new Map() // table -> { spec, at }
 const TTL_MS = parseInt(process.env.SPEC_TTL_MS) || 600000
 
 const ID_NAMES = ['objectid', 'oid', 'fid', 'bigid', 'id', 'object_id']
+// String ids (Overture uses `id STRING`, GERS ids, UUIDs): an integer object id is derived from them
+const STRING_ID_NAMES = ['id', 'gers_id', 'uuid', 'guid', 'globalid', 'feature_id', 'fid', 'objectid']
+// Below 2^53 so ArcGIS JS holds it exactly. Collisions become likely past ~10^7 rows (birthday bound),
+// so very large string-id tables are better served by a view with a real integer id.
+const SYNTHETIC_ID_MODULUS = '9007199254740881'
 const INT_TYPES = /^(tinyint|smallint|int|integer|bigint)$/
 const WKT_NAMES = ['geometry_wkt', 'geom_wkt', 'wkt', 'shape_wkt', 'geometry', 'geom', 'shape']
 const WKB_NAMES = ['geometry_wkb', 'geom_wkb', 'wkb', 'geometry', 'geom', 'shape']
@@ -84,8 +89,17 @@ function detect (allCols) {
     }
   }
   const id = byName(ID_NAMES, c => INT_TYPES.test(c.type))
-  if (!geom || !id) return null
-  return { objectId: id.name, geometryColumn: geom.column, geometryFormat: geom.format, geometryExpr: geom.expr, geometrySource: geom.source, spatialReference: 4326 }
+  const stringId = id ? null : byName(STRING_ID_NAMES, c => c.type === 'string')
+  if (!geom || (!id && !stringId)) return null
+  const spec = { objectId: id ? id.name : null, geometryColumn: geom.column, geometryFormat: geom.format, geometryExpr: geom.expr, geometrySource: geom.source, spatialReference: 4326 }
+  if (stringId) {
+    // Expose the derived id under `objectid` (or `__objectid` if that name is taken) through a wrapped source
+    const name = cols.some(c => c.lname === 'objectid') ? '__objectid' : 'objectid'
+    spec.objectId = name
+    spec.syntheticIdFrom = stringId.name
+    spec.objectIdExpr = `CAST(pmod(xxhash64(${stringId.name}), ${SYNTHETIC_ID_MODULUS}) AS BIGINT)`
+  }
+  return spec
 }
 
 function sqlGeomExpr (spec) {
@@ -97,6 +111,12 @@ function sqlGeomExpr (spec) {
 }
 
 // Inspect a table (cached). exec(sql, kind) -> rows
+/** The FROM target for a table: the table itself, or a wrapper adding the derived object id. */
+function sourceFor (table, spec) {
+  if (!spec || !spec.objectIdExpr) return table
+  return `(SELECT *, ${spec.objectIdExpr} AS ${spec.objectId} FROM ${table}) AS __src`
+}
+
 async function resolveSpec (table, exec) {
   const hit = cache.get(table)
   if (hit && Date.now() - hit.at < TTL_MS) return hit.spec
@@ -107,6 +127,7 @@ async function resolveSpec (table, exec) {
     const expr = sqlGeomExpr(spec)
     const notNull = spec.geometryColumn ? `${spec.geometryColumn} IS NOT NULL` : 'TRUE'
     const rows = await exec(`SELECT lower(ST_GeometryType(${expr})) AS t FROM ${table} WHERE ${notNull} LIMIT 1`, 'geomtype')
+    spec.source = sourceFor(table, spec)
     const t = rows[0] && String(rows[0].t || '').replace(/^st_/, '')
     spec.geometryType = ESRI_TYPE[t] || 'esriGeometryPoint'
   }
@@ -119,4 +140,4 @@ function current (defaults) {
   return store.getStore() || defaults
 }
 
-module.exports = { store, resolveSpec, current, detect, describeColumns }
+module.exports = { store, resolveSpec, current, detect, describeColumns, sourceFor }

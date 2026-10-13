@@ -196,8 +196,11 @@ Model.prototype.getData = function (req, callback) {
           }
         }
 
+        // Layer info (FeatureServer/0 without /query) only needs the schema, a geometry type and an
+        // extent: fetch one sample row instead of a full page, and take the extent from SQL (cached)
+        const isLayerInfo = !req.params.method
         // Regular query
-        queryString = buildQuery(table, req.query, thisTask)
+        queryString = buildQuery(table, isLayerInfo ? { ...req.query, resultRecordCount: '1', resultOffset: '0' } : req.query, thisTask)
 
         logger.info(`${thisTask}> Executing query: ${queryString}`)
 
@@ -257,8 +260,11 @@ Model.prototype.getData = function (req, callback) {
             buildBboxFilter(req.query.geometry, req.query.geometryType, req.query.inSR) !== null
         }
 
-        // Add extent if we have features
-        if (geojson.features && geojson.features.length > 0) {
+        if (isLayerInfo) {
+          const extent = await tableExtent(table, session, thisTask)
+          if (extent) geojson.metadata.extent = extent
+        } else if (geojson.features && geojson.features.length > 0) {
+          // Add extent if we have features
           const extent = calculateExtent(geojson.features)
           if (extent) {
             geojson.metadata.extent = extent
@@ -382,7 +388,7 @@ function buildCountQuery (table, query) {
   const whereClauses = buildWhereClauses(query)
   const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
 
-  return `SELECT COUNT(*) as cnt FROM ${table} ${whereClause}`.trim()
+  return `SELECT COUNT(*) as cnt FROM ${S().source || table} ${whereClause}`.trim()
 }
 
 // Build IDs only query (for returnIdsOnly)
@@ -401,7 +407,7 @@ function buildIdsQuery (table, query) {
     orderByClause = `ORDER BY ${S().objectId}`
   }
 
-  let sql = `SELECT ${S().objectId} FROM ${table} ${whereClause} ${orderByClause}`.trim()
+  let sql = `SELECT ${S().objectId} FROM ${S().source || table} ${whereClause} ${orderByClause}`.trim()
 
   sql += ` LIMIT ${limit}`
   if (offset > 0) {
@@ -426,9 +432,28 @@ function buildExtentQuery (table, query) {
       MIN(ST_YMin(ST_Envelope(${geomExpr}))) as ymin,
       MAX(ST_XMax(ST_Envelope(${geomExpr}))) as xmax,
       MAX(ST_YMax(ST_Envelope(${geomExpr}))) as ymax
-    FROM ${table}
+    FROM ${S().source || table}
     ${whereClause}
   `.trim()
+}
+
+// Whole-table extent for layer info, computed once per table in SQL (TTL cache)
+const extentCache = new Map()
+async function tableExtent (table, session, taskId) {
+  const hit = extentCache.get(table)
+  if (hit && Date.now() - hit.at < cacheTTLMs * 6) return hit.extent
+  try {
+    const rows = await executeAndRecord(session, buildExtentQuery(table, {}), 'extent', taskId)
+    const r = rows[0]
+    const extent = r && r.xmin !== null && r.xmin !== undefined
+      ? { xmin: r.xmin, ymin: r.ymin, xmax: r.xmax, ymax: r.ymax, spatialReference: { wkid: S().spatialReference } }
+      : null
+    extentCache.set(table, { extent, at: Date.now() })
+    return extent
+  } catch (error) {
+    logger.warn(`${taskId}> Extent query failed for ${table}: ${error.message}`)
+    return null
+  }
 }
 
 // Build SQL query with ST functions and filters
@@ -453,7 +478,7 @@ function buildQuery (table, query, taskId) {
   }
 
   // Build complete query
-  let sql = `SELECT ${selectFields} FROM ${table} ${whereClause} ${orderByClause}`.trim()
+  let sql = `SELECT ${selectFields} FROM ${S().source || table} ${whereClause} ${orderByClause}`.trim()
 
   // Add pagination
   sql += ` LIMIT ${limit}`
@@ -696,6 +721,14 @@ function translateWithSTFunctions (rows, query) {
       const properties = { ...row }
       delete properties.__geojson__
       if (S().geometryColumn) delete properties[S().geometryColumn]
+      // ArcGIS attributes are scalars: STRUCT/ARRAY/MAP values (e.g. Overture's names, bbox) become JSON text,
+      // binary values are dropped
+      for (const k of Object.keys(properties)) {
+        const v = properties[k]
+        if (v === null || typeof v !== 'object') continue
+        if (Buffer.isBuffer(v) || v instanceof Uint8Array) delete properties[k]
+        else if (!(v instanceof Date)) properties[k] = JSON.stringify(v, (key, x) => typeof x === 'bigint' ? Number(x) : x)
+      }
 
       return {
         type: 'Feature',
@@ -758,15 +791,15 @@ function getAllCoordinates (geometry) {
         break
       case 'LineString':
       case 'MultiPoint':
-        coords.push(...geom.coordinates)
+        for (const c of geom.coordinates) coords.push(c)
         break
       case 'Polygon':
       case 'MultiLineString':
-        geom.coordinates.forEach(ring => coords.push(...ring))
+        geom.coordinates.forEach(ring => { for (const c of ring) coords.push(c) })
         break
       case 'MultiPolygon':
         geom.coordinates.forEach(polygon => {
-          polygon.forEach(ring => coords.push(...ring))
+          polygon.forEach(ring => { for (const c of ring) coords.push(c) })
         })
         break
     }
@@ -819,7 +852,10 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId) {
       columnRows.push(row)
     }
 
-    const fields = columnRows
+    const derived = S().objectIdExpr
+      ? [{ name: S().objectId, type: 'esriFieldTypeBigInteger', alias: S().objectId, sqlType: 'bigint', nullable: false, editable: false, domain: null, defaultValue: null }]
+      : []
+    const fields = derived.concat(columnRows
       .filter(row => row.col_name !== S().geometryColumn)
       .map(row => ({
         name: row.col_name,
@@ -830,7 +866,7 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId) {
         editable: false,
         domain: null,
         defaultValue: null
-      }))
+      })))
 
     // Evict oldest entries if cache exceeds max size
     const keys = Object.keys(this.fieldsCache)
