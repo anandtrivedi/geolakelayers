@@ -16,6 +16,7 @@
 
 const path = require('path')
 const express = require('express')
+const crypto = require('crypto')
 const cors = require('cors')
 const Koop = require('@koopjs/koop-core')
 
@@ -24,7 +25,11 @@ const connectionManager = require('./provider/connection')
 const layerSpec = require('./provider/spec')
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
-const catalogs = (process.env.CATALOGS || 'main').split(',').map(s => s.trim()).filter(Boolean)
+const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean)
+// Catalogs to list: empty means every catalog the signed-in user can see, minus the excluded ones
+const catalogs = list(process.env.CATALOGS)
+const excludeCatalogs = list(process.env.EXCLUDE_CATALOGS === undefined ? 'system,samples,__databricks_internal' : process.env.EXCLUDE_CATALOGS)
+const catalogScope = catalogs.length ? catalogs.join(', ') : 'all catalogs you can see'
 
 const koop = new Koop({ logLevel: process.env.LOG_LEVEL || 'info', disableCors: true })
 const app = koop.server
@@ -64,7 +69,7 @@ app.get('/', async (req, res) => {
 <p>Serves Unity Catalog tables as ArcGIS FeatureServer layers for the Experience Builder <i>Databricks Data</i> widget:
 <code>/databricks/rest/services/&lt;catalog.schema.table&gt;/FeatureServer/0</code></p>
 <p>Browser origins allowed to call it: ${allowedOrigins.map(o => `<code>${esc(o)}</code>`).join(' ') || 'none'}</p>
-${error ? `<p style="color:#b00">Catalog failed: ${esc(error)}</p>` : `<h3>${tables.length} tables in ${esc(catalogs.join(', '))}</h3>
+${error ? `<p style="color:#b00">Catalog failed: ${esc(error)}</p>` : `<h3>${tables.length} tables in ${esc(catalogScope)}</h3>
 <table><tr><th>Table</th><th>Object id</th><th>Geometry</th><th></th></tr>${rows}</table>`}`)
 })
 
@@ -80,22 +85,31 @@ const WKT_NAMES = "'geometry_wkt','geom_wkt','wkt','shape_wkt','geometry','geom'
 const LAT_NAMES = "'latitude','lat','y'"
 const LON_NAMES = "'longitude','lon','lng','long','x'"
 
-const catalogCache = new Map() // user (or 'app') -> { tables, at }
+const catalogCache = new Map() // sha256(user token) or 'app' -> { tables, at }
 const CATALOG_TTL_MS = 300000
 
 // Tables with an integer id and some geometry source, using the same rules as spec.js
 async function listTables (req) {
   const userToken = obo(req)
-  const key = req.headers['x-forwarded-email'] || (userToken ? 'user' : 'app')
+  const key = userToken ? crypto.createHash('sha256').update(userToken).digest('hex') : 'app'
   const hit = catalogCache.get(key)
   if (hit && Date.now() - hit.at < CATALOG_TTL_MS) return hit.tables
-  const inList = catalogs.map(c => `'${c.replace(/'/g, '')}'`).join(',')
+  for (const [k, v] of catalogCache) if (Date.now() - v.at >= CATALOG_TTL_MS) catalogCache.delete(k)
+  const quote = names => names.map(c => `'${c.replace(/'/g, '')}'`).join(',')
+  const scope = [
+    catalogs.length ? `table_catalog IN (${quote(catalogs)})` : null,
+    excludeCatalogs.length ? `table_catalog NOT IN (${quote(excludeCatalogs)})` : null
+  ].filter(Boolean).join(' AND ') || 'TRUE'
+  // Only the columns that can matter (geometry types or the known id/geometry/lat/lon names), so a
+  // metastore-wide scan stays small
   const sql = `
     WITH c AS (
       SELECT table_catalog cat, table_schema sch, table_name tbl, lower(column_name) col, lower(data_type) dt
       FROM system.information_schema.columns
-      WHERE table_catalog IN (${inList}) AND table_schema <> 'information_schema'
+      WHERE ${scope} AND table_schema <> 'information_schema'
         AND table_name NOT LIKE '\\_\\_%'
+        AND (lower(data_type) LIKE 'geometry%' OR lower(data_type) LIKE 'geography%'
+          OR lower(column_name) IN (${ID_NAMES}, ${WKT_NAMES}, ${LAT_NAMES}, ${LON_NAMES}))
     )
     SELECT cat, sch, tbl,
       max(CASE WHEN (dt LIKE 'geometry%' OR dt LIKE 'geography%') AND col RLIKE '^[a-z_][a-z0-9_]*$' THEN col END) AS native_col,
@@ -130,7 +144,7 @@ async function listTables (req) {
 
 app.get('/api/catalog', async (req, res) => {
   try {
-    res.json({ catalogs, runAs: obo(req) ? 'user' : 'app', tables: await listTables(req) })
+    res.json({ catalogs: catalogs.length ? catalogs : null, excludeCatalogs, runAs: obo(req) ? 'user' : 'app', tables: await listTables(req) })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -182,5 +196,5 @@ app.get('/auth/handoff', (req, res) => {
 
 const port = process.env.DATABRICKS_APP_PORT || process.env.PORT || 8080
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Databricks feature gateway listening on :${port}; origins=${allowedOrigins.join(' ') || '(none)'}; catalogs=${catalogs.join(',')}`)
+  console.log(`Databricks feature gateway listening on :${port}; origins=${allowedOrigins.join(' ') || '(none)'}; catalogs=${catalogScope}`)
 })

@@ -81,9 +81,10 @@ you, with links to each layer:
 ![Gateway landing page](screenshots/gateway-landing.png)
 
 A table shows up if it has an integer id column (`objectid`, `oid`, `fid`, `bigid` or `id`) and geometry in one of
-these forms: a GEOMETRY or GEOGRAPHY column, a WKT or WKB column, or longitude/latitude columns. To allow a new
-Experience Builder or Portal address to call the gateway, add it to `ALLOWED_ORIGINS` in `gateway/app.yaml` and
-redeploy (steps in `CLAUDE.md`).
+these forms: a GEOMETRY or GEOGRAPHY column, a WKT or WKB column, or longitude/latitude columns. The gateway is a
+Databricks Asset Bundle (`gateway/databricks.yml`): each workspace is a target with its SQL warehouse, the
+Portal/Experience Builder addresses allowed to call it, and optionally which catalogs to list. Nothing about a
+workspace is hardcoded, so the same code deploys anywhere (steps in `CLAUDE.md`).
 
 ### The widget in Developer Edition
 

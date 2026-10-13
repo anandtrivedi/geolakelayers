@@ -1,0 +1,70 @@
+# Databricks feature gateway for the ArcGIS Experience Builder "Databricks Data" widget.
+#
+# One gateway per workspace (a Databricks sign-in is per workspace). Workspaces that share a metastore
+# see the same Unity Catalog catalogs, so one gateway can serve all of them.
+#
+# Deploy:  databricks bundle deploy -t <target>  &&  databricks bundle run gateway -t <target>
+# New workspace: copy a target, set its host, warehouse_id and allowed_origins.
+
+bundle:
+  name: databricks-exb-gateway
+
+variables:
+  app_name:
+    description: Name of the Databricks App
+    default: databricks-exb-gateway
+  warehouse_id:
+    description: SQL warehouse the gateway queries (serverless recommended)
+  allowed_origins:
+    description: Comma-separated browser origins allowed to call the gateway (Portal / Experience Builder URLs)
+    default: ""
+  catalogs:
+    description: Comma-separated catalogs to list. Empty lists every catalog the user can see (slower on large metastores)
+    default: ""
+  exclude_catalogs:
+    description: Catalogs never listed
+    default: system,samples,__databricks_internal
+
+resources:
+  apps:
+    gateway:
+      name: ${var.app_name}
+      description: Serves Unity Catalog tables as ArcGIS FeatureServer layers for the Experience Builder Databricks Data widget
+      source_code_path: .
+      # Queries run as the signed-in user, so Unity Catalog decides what each person sees
+      user_api_scopes:
+        - sql
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+      config:
+        command: ["node", "server.js"]
+        env:
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: ALLOWED_ORIGINS
+            value: ${var.allowed_origins}
+          - name: CATALOGS
+            value: ${var.catalogs}
+          - name: EXCLUDE_CATALOGS
+            value: ${var.exclude_catalogs}
+          - name: RATE_LIMIT_MAX
+            value: "2000"
+          - name: LOG_LEVEL
+            value: info
+      permissions:
+        - group_name: account users
+          level: CAN_USE
+
+targets:
+  # your-workspace (shares its metastore with a second workspace)
+  prod:
+    default: true
+    workspace:
+      host: https://your-workspace.cloud.databricks.com
+    variables:
+      warehouse_id: abcdef0123456789
+      catalogs: main
+      allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199

@@ -16,6 +16,16 @@ const { version } = require('../package.json')
 const USER_CLIENT_TTL_MS = parseInt(process.env.USER_CLIENT_TTL_MS) || 15 * 60 * 1000
 const USER_CLIENT_MAX = 200
 
+// Workspace host and warehouse: explicit settings win; inside Databricks Apps the runtime injects
+// DATABRICKS_HOST (no scheme) and the bundle maps the sql-warehouse resource to DATABRICKS_WAREHOUSE_ID.
+function connectionTarget () {
+  const host = process.env.DATABRICKS_SERVER_HOSTNAME ||
+    (process.env.DATABRICKS_HOST || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
+  const path = process.env.DATABRICKS_HTTP_PATH ||
+    (process.env.DATABRICKS_WAREHOUSE_ID ? `/sql/1.0/warehouses/${process.env.DATABRICKS_WAREHOUSE_ID}` : '')
+  return { host, path }
+}
+
 class ConnectionManager {
   constructor () {
     this.client = null
@@ -44,13 +54,12 @@ class ConnectionManager {
   }
 
   async _doConnect () {
-    const serverHostname = process.env.DATABRICKS_SERVER_HOSTNAME
-    const httpPath = process.env.DATABRICKS_HTTP_PATH
+    const { host: serverHostname, path: httpPath } = connectionTarget()
 
     if (!serverHostname || !httpPath) {
       throw new Error(
         'Missing required connection settings. ' +
-        'Set DATABRICKS_SERVER_HOSTNAME and DATABRICKS_HTTP_PATH environment variables.'
+        'Set DATABRICKS_HOST (or DATABRICKS_SERVER_HOSTNAME) and DATABRICKS_WAREHOUSE_ID (or DATABRICKS_HTTP_PATH).'
       )
     }
 
@@ -132,8 +141,7 @@ class ConnectionManager {
       if (this.userClients.size >= USER_CLIENT_MAX) this.sweepUserClients(true)
       const client = new DBSQLClient()
       const connected = client.connect({
-        host: process.env.DATABRICKS_SERVER_HOSTNAME,
-        path: process.env.DATABRICKS_HTTP_PATH,
+        ...connectionTarget(),
         token: userToken,
         userAgentEntry: `esri_databricks-koop-provider/${version}`
       })
