@@ -20,6 +20,9 @@ export interface Config {
   layers: string[]
   /** Let viewers browse the catalog and add more tables (default true) */
   allowBrowse: boolean
+  /** Let people edit Databricks layers in this app (default false). Only layers whose gateway has
+      editing turned on and whose table can be edited become editable; Unity Catalog still decides. */
+  allowEditing?: boolean
 
   /** @deprecated single-workspace settings before 1.20.3; migrated into `workspaces` */
   gatewayUrl?: string

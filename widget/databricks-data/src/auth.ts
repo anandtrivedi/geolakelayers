@@ -115,6 +115,11 @@ export async function fetchDirectory (gateway: string): Promise<Array<{ name: st
   return (await memo(memoKey(gateway, '/api/info'), () => getJson(gateway, '/api/info'))).directory || []
 }
 
+/** Whether this gateway's editing master switch is on. */
+export async function fetchEditing (gateway: string): Promise<boolean> {
+  return !!(await memo(memoKey(gateway, '/api/info'), () => getJson(gateway, '/api/info'))).editing
+}
+
 /** Catalogs the signed-in user can see. */
 export async function fetchCatalogNames (gateway: string): Promise<string[]> {
   return (await memo(memoKey(gateway, '/api/catalogs'), () => getJson(gateway, '/api/catalogs'))).catalogs

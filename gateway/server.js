@@ -68,6 +68,61 @@ app.use((req, res, next) => {
   next()
 })
 
+// Editing: off unless EDITING=true (bundle variable `editing`). Apps turn it on per layer in the widget.
+const editingEnabled = process.env.EDITING === 'true'
+const edits = require('./edits')
+
+app.post('/databricks/rest/services/:id/FeatureServer/:layer/applyEdits', async (req, res) => {
+  const fail = (code, message) => res.status(code === 403 ? 403 : 200).json({ error: { code, message, details: [] } })
+  if (!editingEnabled) return fail(403, 'Editing is turned off on this gateway')
+  // Edits run as the caller, so only allow-listed apps (or the gateway's own pages) may send them. Browsers
+  // always send Origin on cross-site POSTs, so a form post from another site is refused here. (The Apps
+  // front door strips Authorization before the request reaches the app, so it can't be checked.)
+  const self = `https://${req.headers['x-forwarded-host'] || req.headers.host}`
+  const origin = req.headers.origin
+  if (!origin || (origin !== self && !allowedOrigins.includes(origin))) return fail(403, 'Edits are accepted only from allow-listed apps')
+  const table = req.params.id
+  if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(table)) return fail(400, 'catalog.schema.table expected')
+  try {
+    const who = layerSpec.whoOf(obo(req))
+    const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), who)
+    if (!edits.editableSpec(spec)) return fail(400, `${table} can't be edited through the gateway (needs an integer id column; map-optimized copies are read-only)`)
+    const columns = layerSpec.describeColumns(await runSql(req, `DESCRIBE ${table}`))
+    const body = req.body || {}
+    const plan = edits.planEdits({
+      table, spec, columns,
+      adds: edits.parseList(body.adds),
+      updates: edits.parseList(body.updates),
+      deletes: edits.parseList(body.deletes)
+    })
+    const results = { addResults: [], updateResults: [], deleteResults: [] }
+    let changed = false
+    for (const step of plan) {
+      const out = { objectId: step.id ?? null, success: false }
+      try {
+        if (step.error) throw new Error(step.error)
+        if (step.kind === 'add') {
+          const next = await runSql(req, step.nextIdSql)
+          out.objectId = Number(next[0]?.n)
+          await runSql(req, step.sql, 120, { ...step.params, newid: out.objectId })
+        } else if (step.sql) {
+          await runSql(req, step.sql, 120, step.params)
+        }
+        out.success = true
+        changed = true
+      } catch (err) {
+        out.error = { code: 500, description: err.message.split('\n')[0].slice(0, 300) }
+      }
+      results[`${step.kind}Results`].push(out)
+    }
+    // Make the next map refresh read the table again
+    if (changed) Model.forgetTable(table)
+    res.json(results)
+  } catch (err) {
+    fail(500, err.message.split('\n')[0].slice(0, 300))
+  }
+})
+
 koop.register(provider)
 
 app.use(express.static(path.join(__dirname, 'public')))
@@ -96,7 +151,8 @@ app.get('/api/info', (req, res) => {
     allowedOrigins,
     catalogCap: catalogs,
     excludeCatalogs,
-    directory
+    directory,
+    editing: editingEnabled
   })
 })
 
@@ -107,10 +163,10 @@ app.get('/api/whoami', (req, res) => {
 // Forwarded user token, so queries run with the caller's Unity Catalog permissions
 const obo = req => (process.env.USE_OBO !== 'false' && req.headers['x-forwarded-access-token']) || null
 
-async function runSql (req, sql, timeout = 60) {
+async function runSql (req, sql, timeout = 60, namedParameters) {
   const session = await connectionManager.getSession(obo(req), req.warehouseId)
   try {
-    const op = await session.executeStatement(sql, { queryTimeout: timeout })
+    const op = await session.executeStatement(sql, namedParameters ? { queryTimeout: timeout, namedParameters } : { queryTimeout: timeout })
     const rows = await op.fetchAll()
     await op.close()
     return rows

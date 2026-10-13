@@ -280,6 +280,10 @@ Model.prototype.getData = function (req, callback) {
         if (isLayerInfo) {
           const extent = await tableExtent(table, session, thisTask, who)
           if (extent) geojson.metadata.extent = extent
+          // Editable layers (gateway EDITING on, real integer id, not a map-optimized copy) say so
+          if (process.env.EDITING === 'true' && require('../edits').editableSpec(spec)) {
+            geojson.metadata.capabilities = 'Query,Create,Update,Delete,Editing'
+          }
           const total = await tableCount(table, session, thisTask, who)
           if (total > BIG_TABLE_FEATURES) {
             geojson.metadata.minScale = BIG_TABLE_MIN_SCALE

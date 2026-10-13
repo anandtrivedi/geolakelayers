@@ -25,6 +25,7 @@ export default {
   retryLayer: 'Failed: click to try again',
   layerSummary: '{type}, {n} fields',
   zoomInToSee: 'large table: zoom in to see it',
+  editable: 'editable',
   notInLayerList: 'not shown in Map Layers (see the browser console)',
   stateAdding: 'Adding…',
   stateDrawing: 'Drawing…',

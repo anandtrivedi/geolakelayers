@@ -128,6 +128,26 @@ each gateway's `allowed_origins`.
 To see a layer's rows, add a **Table** widget, pick the map, and turn on **Display layers generated at
 runtime**. Clicking a feature shows its fields when the Map widget's pop-ups are enabled.
 
+## Editing
+
+Databricks layers can be edited with Experience Builder's **Edit** widget or an editable **Table**. Three
+switches have to agree:
+
+1. **Gateway (Databricks admin):** `editing: "true"` in the workspace's bundle target. Off by default; while
+   it's off, layers advertise only `Query` and edit requests are refused.
+2. **App (author):** **Allow editing Databricks layers** in the widget's settings (Viewers section). Each
+   workspace card says whether its gateway allows editing.
+3. **Unity Catalog (per person):** edits run as the person editing, so they need `MODIFY` on the table.
+
+Editable tables have a real integer id column; tables with a derived id (string ids such as Overture's) and
+map-optimized copies stay read-only. Each save is SQL on the Delta table (`INSERT` / `UPDATE` / `DELETE`), so
+it takes a second or two: right for corrections, reviews and batch attribute updates, not for high-volume
+capture. New features get the next id after the table's current maximum, and there is no row versioning
+(the last save wins). For heavy transactional editing, a Lakebase-backed feature service is the better fit.
+
+Edits are accepted only from origins in `allowed_origins` (and the gateway's own pages); values are sent as
+SQL parameters and column names are checked against the table.
+
 ## Configuration reference
 
 Gateway (bundle variables → app environment; list settings use `-` for "none" because Databricks Apps
@@ -143,9 +163,10 @@ rejects empty values):
 | `directory` | `-` | Other gateways, `name=url;name=url`, shown in the console and the widget |
 | `MAX_ROWS` | `4000` | Features per page |
 | `BIG_TABLE_FEATURES` | `250000` | Above this, layers draw only when zoomed in (about zoom 9) |
+| `editing` | `"false"` | Master switch for editing on this gateway |
 
 Widget (set in the builder): workspaces (name, gateway URL, warehouse, catalogs viewers can browse), whether
-viewers can browse and add tables, start-up layers.
+viewers can browse and add tables, whether layers can be edited, start-up layers.
 
 ## Security model
 

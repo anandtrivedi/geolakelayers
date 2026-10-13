@@ -8,7 +8,7 @@ import { PlusOutlined } from 'jimu-icons/outlined/editor/plus'
 import { RightOutlined } from 'jimu-icons/outlined/directional/right'
 import { DownOutlined } from 'jimu-icons/outlined/directional/down'
 import type { IMConfig, CatalogTable, Workspace } from '../config'
-import { getToken, signIn, listenForToken, fetchCatalog, fetchCatalogNames, fetchWarehouses, fetchDirectory, setWarehouse } from '../auth'
+import { getToken, signIn, listenForToken, fetchCatalog, fetchCatalogNames, fetchWarehouses, fetchDirectory, fetchEditing, setWarehouse } from '../auth'
 import type { WarehouseInfo } from '../auth'
 import { workspacesOf, labelFromUrl, newWorkspaceId, normalizeUrl, layerKey, parseLayerKey } from '../workspaces'
 import { TableTree } from '../table-tree'
@@ -22,7 +22,7 @@ import defaultMessages from './translations/default'
   Each thing is set in exactly one place. Card contents are filled from that workspace's gateway with the
   author's own permissions after sign-in.
 */
-interface WorkspaceInfo { warehouses: WarehouseInfo[], defaultWarehouse: string | null, catalogs: string[], error?: string }
+interface WorkspaceInfo { warehouses: WarehouseInfo[], defaultWarehouse: string | null, catalogs: string[], editing?: boolean, error?: string }
 
 export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   const nls = (id: keyof typeof defaultMessages, values?: { [k: string]: string }) =>
@@ -93,8 +93,8 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   // After a workspace is signed in: its allowed warehouses, the catalogs the author can see, the directory
   const loadWorkspace = async (ws: Workspace) => {
     try {
-      const [w, c] = await Promise.all([fetchWarehouses(ws.gatewayUrl), fetchCatalogNames(ws.gatewayUrl)])
-      setInfo(i => ({ ...i, [ws.id]: { warehouses: w.warehouses, defaultWarehouse: w.default, catalogs: c } }))
+      const [w, c, editing] = await Promise.all([fetchWarehouses(ws.gatewayUrl), fetchCatalogNames(ws.gatewayUrl), fetchEditing(ws.gatewayUrl).catch(() => false)])
+      setInfo(i => ({ ...i, [ws.id]: { warehouses: w.warehouses, defaultWarehouse: w.default, catalogs: c, editing } }))
       // Warm the tables of the catalogs viewers browse, so opening them in the tree is instant
       setWarehouse(ws.gatewayUrl, ws.warehouseId)
       for (const cat of ws.catalogs) fetchCatalog(ws.gatewayUrl, [cat]).catch(() => {})
@@ -150,6 +150,10 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
           <Switch checked={allowBrowse} aria-label={nls('allowBrowse')} onChange={e => setConfig('allowBrowse', e.target.checked)} />
         </SettingRow>
         <SettingRow flow='wrap'><small className='hint'>{allowBrowse ? nls('allowBrowseOn') : nls('allowBrowseOff')}</small></SettingRow>
+        <SettingRow label={nls('allowEditing')}>
+          <Switch checked={props.config.allowEditing === true} aria-label={nls('allowEditing')} onChange={e => setConfig('allowEditing', e.target.checked)} />
+        </SettingRow>
+        <SettingRow flow='wrap'><small className='hint'>{props.config.allowEditing ? nls('allowEditingOn') : nls('allowEditingOff')}</small></SettingRow>
       </SettingSection>
 
       <SettingSection title={nls('workspaces')}>
@@ -190,6 +194,9 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
                     </div>
                   )}
 
+                  {user && props.config.allowEditing && wi && !wi.error && (
+                    <small className='hint'>{wi.editing ? nls('gatewayEditingOn') : nls('gatewayEditingOff')}</small>
+                  )}
                   {user && (
                     <label className='field'>{nls('warehouse')}
                       <Select size='sm' className='w-100' aria-label={nls('warehouse')} value={ws.warehouseId || ''}

@@ -27,6 +27,9 @@ variables:
   directory:
     description: Other ArcGateways shown in the console and offered in the widget, "name=url;name=url". "-" = none
     default: "-"
+  editing:
+    description: Master switch for editing ("true" / "false"). Off by default; apps also have to turn it on.
+    default: "false"
   exclude_catalogs:
     description: Catalogs never listed
     default: system,samples,hive_metastore,__databricks_internal
@@ -58,6 +61,8 @@ resources:
             value: ${var.catalogs}
           - name: DIRECTORY
             value: ${var.directory}
+          - name: EDITING
+            value: ${var.editing}
           - name: EXCLUDE_CATALOGS
             value: ${var.exclude_catalogs}
           - name: RATE_LIMIT_MAX
@@ -83,6 +88,7 @@ targets:
       warehouse_id: abcdef0123456789
       # Large serverless warehouse authors may pick for heavier layers (2X-Large deliberately not allowed)
       allowed_warehouses: abcdef1234567890
+      editing: "true"
       directory: prod=https://arcgateway-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
 

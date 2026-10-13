@@ -192,8 +192,12 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       layer.renderer = rendererFor(layer.geometryType, colorIndex.current++) as any
       layer.outFields = ['*']
       layer.popupTemplate = { title, content: [{ type: 'fields' }] } as any
+      // Editing needs both: the app allows it, and the gateway advertises it for this table
+      const editable = props.config.allowEditing === true && !!(layer as any).capabilities?.operations?.supportsEditing
+      layer.editingEnabled = editable
       // Big tables come with a minScale from the gateway: say so instead of looking empty when zoomed out
-      const zoomHint = (layer.minScale > 0 ? ` · ${nls('zoomInToSee')}` : '') + (gl.fallbackReason ? ` · ${nls('notInLayerList')}` : '')
+      const zoomHint = (layer.minScale > 0 ? ` · ${nls('zoomInToSee')}` : '') + (gl.fallbackReason ? ` · ${nls('notInLayerList')}` : '') +
+        (editable ? ` · ${nls('editable')}` : '')
       const summary = nls('layerSummary', { type: layer.geometryType, n: String(layer.fields.length) }) + zoomHint
       update(entry, { state: 'drawing', info: summary })
       const lv = await jmv.view.whenLayerView(layer)
