@@ -259,6 +259,12 @@ time on Lakehouse//RT against about 1.2 s on a regular serverless warehouse; see
 160 ms against 600 ms per page, and a 24-tile map pan finishing in 1.0 s against 1.8 s. Real tables add
 file reads, so expect less of a gap on big unclustered tables.
 
+On real prod tables (October 2026, Lakehouse//RT vs the regular Serverless Starter warehouse, timed from
+a client): an AIS points page (270 MB table, native GEOMETRY) 330–500 ms vs 1.5–2.0 s, and a 24-tile pan
+1.5 s vs 6.3 s; a bbox count 140 ms vs 1.1–1.4 s; the map-optimized Overture places copy 125 ms vs 1.1 s;
+AIS H3 hexes 125–160 ms vs 0.8–1.2 s. Through ArcGateway's FeatureServer query (2,000 features): about
+300 ms vs 1.05–1.15 s.
+
 ## Configuration reference
 
 Gateway (bundle variables → app environment; list settings use `-` for "none" because Databricks Apps
