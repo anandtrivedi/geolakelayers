@@ -140,3 +140,25 @@ test('scan schema: samples text tables without native geometry and lists what it
 test('OGC console writes refuse preflights too', async () => {
   assert.equal((await call('/api/ogc/services', { method: 'OPTIONS', origin: 'https://portal.example' })).status, 403)
 })
+
+test('/api/token returns the forwarded token and its expiry, only to a same-origin JSON POST', async () => {
+  const exp = Math.floor(Date.now() / 1000) + 3600
+  const jwt = ['e30', Buffer.from(JSON.stringify({ exp })).toString('base64url'), 'sig'].join('.')
+  const host = `127.0.0.1:${server.address().port}`
+  let r = await fetch(base + '/api/token', { method: 'POST', body: '{}', headers: { 'x-forwarded-access-token': jwt, 'x-forwarded-host': host, 'content-type': 'application/json', origin: `https://${host}` } })
+  assert.equal(r.status, 200)
+  assert.equal(r.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(await r.json(), { token: jwt, expiresAt: exp * 1000 })
+  r = await call('/api/token', { method: 'POST', body: {}, origin: 'https://evil.example.com' })
+  assert.equal(r.status, 403)
+  r = await call('/api/token', { method: 'POST', body: {}, type: 'text/plain' })
+  assert.equal(r.status, 403)
+})
+
+test('/api/health reads each settings table as the caller', async () => {
+  const r = await call('/api/health')
+  assert.equal(r.status, 200)
+  assert.ok(r.body.checks.length >= 1)
+  for (const c of r.body.checks) assert.equal(typeof c.ok, 'boolean')
+  assert.ok(r.body.checks.some(c => c.name === 'Layer overrides table'))
+})

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, layerPath } from '../api'
 import type { CatalogTable, GatewayInfo, LayerSpec, OgcService, OptimizeJob, ScanResult } from '../api'
-import { Copy, UrlField } from './Copy'
+import { Copy, CopyToken, UrlField } from './Copy'
 import { MapPreview } from './MapPreview'
 import { CatalogTree } from './CatalogTree'
 import { LayerSettings } from './LayerSettings'
@@ -194,7 +194,7 @@ function UseThisTable ({ t, info, url, services, onAddToOgc, onGuide }: {
       <div className='use-row' id='use-scripts'>
         <div className='use-what'><b>Scripts and notebooks</b><span className='muted small'>Esri FeatureServer REST</span></div>
         <div className='use-how'>
-          <p className='small'>Send a Databricks OAuth token as <code>Authorization: Bearer</code>. Personal access tokens aren't accepted.</p>
+          <p className='small'>Send a Databricks OAuth token as <code>Authorization: Bearer</code>. Personal access tokens aren't accepted. <CopyToken /></p>
           <div className='url-row'>
             <input className='url' readOnly value={url} title={url} aria-label='Layer URL' spellCheck={false} />
             <Copy text={url} label='Copy layer URL' />

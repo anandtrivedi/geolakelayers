@@ -87,6 +87,8 @@ async function send<T> (method: string, path: string, body?: unknown): Promise<T
 
 export const api = {
   info: () => get<GatewayInfo>('/api/info'),
+  token: () => send<{ token: string, expiresAt: number | null }>('POST', '/api/token'),
+  health: () => get<{ checks: { name: string, table: string, ok: boolean, detail?: string }[] }>('/api/health').then(d => d.checks),
   warehouses: () => get<{ default: string | null, warehouses: Warehouse[] }>('/api/warehouses'),
   catalogs: () => get<{ catalogs: string[] }>('/api/catalogs').then(d => d.catalogs),
   tables: (catalog: string) => get<{ tables: CatalogTable[] }>(`/api/catalog?catalogs=${encodeURIComponent(catalog)}`).then(d => d.tables),

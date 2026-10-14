@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, ApiError } from '../api'
 import type { CatalogTable, GatewayInfo, OgcCollection, OgcColumns, OgcService, Warehouse } from '../api'
 import { CatalogTree } from './CatalogTree'
-import { Copy } from './Copy'
+import { Copy, CopyToken } from './Copy'
 import { MapPreview } from './MapPreview'
 
 // OGC services: named sets of tables served as OGC API – Features (/ogc/<name>), kept in a Unity Catalog table
@@ -311,9 +311,9 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
         <span>
           Give a client the <b>landing page</b> URL; it finds the collections from there. Every request needs{' '}
           <code>Authorization: Bearer &lt;Databricks OAuth token&gt;</code>. In QGIS, add a WFS / OGC API – Features
-          connection with an API Header authentication config. Get a token with <code>databricks auth token</code>; it lasts
-          about an hour, so paste a new one when it expires.
+          connection with an API Header authentication config. A token lasts about an hour; copy a new one when it expires.
         </span>
+        <CopyToken />
       </div>
       <div className='endpoint-list'>
         {rows.map(([label, url]) => (

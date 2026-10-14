@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from './api'
 import type { GatewayInfo, Warehouse } from './api'
 import { Architecture } from './components/Architecture'
@@ -44,7 +44,7 @@ export function App () {
         <div className='topbar-meta'>
           {info && <span className='chip'><span className='dot' />{here?.name || info.workspaceHost}</span>}
           {info && <span className='muted small'>{info.user}</span>}
-          <span className='built-by'>Built by Anand Trivedi · Databricks</span>
+          <span className='built-by'>Built on Databricks Apps by Anand Trivedi</span>
         </div>
       </header>
 
@@ -66,7 +66,7 @@ export function App () {
       </main>
 
       <footer className='footer muted small'>
-        {info ? `LakeGate ${info.version}` : 'LakeGate'} · Unity Catalog tables as ArcGIS FeatureServer layers and OGC API – Features · Powered by Databricks
+        {info ? `LakeGate ${info.version}` : 'LakeGate'} · Unity Catalog tables as ArcGIS FeatureServer layers and OGC API – Features · Built on Databricks Apps by Anand Trivedi
       </footer>
     </div>
   )
@@ -149,6 +149,7 @@ function Workspaces ({ info, warehouses }: { info: GatewayInfo, warehouses: Ware
   const wh = (id: string) => warehouses.find(w => w.id === id)
   return (
     <>
+      <Health info={info} warehouses={warehouses} />
       <section className='two-col'>
         <div className='card'>
           <h2>Browser access</h2>
@@ -197,5 +198,61 @@ function Workspaces ({ info, warehouses }: { info: GatewayInfo, warehouses: Ware
         </ol>
       </section>
     </>
+  )
+}
+
+// What a first-time admin needs to know is working: who queries run as, the warehouse, the settings tables,
+// the settings in effect, and whether an Experience Builder address may call this gateway
+function Health ({ info, warehouses }: { info: GatewayInfo, warehouses: Warehouse[] }) {
+  const [checks, setChecks] = useState<Awaited<ReturnType<typeof api.health>> | null>(null)
+  const [checkError, setCheckError] = useState('')
+  const [origin, setOrigin] = useState('')
+  useEffect(() => { api.health().then(setChecks).catch(e => setCheckError(e.message)) }, [])
+  const def = warehouses.find(w => w.id === info.defaultWarehouse)
+  const tested = useMemo(() => {
+    const v = origin.trim()
+    if (!v) return null
+    try {
+      const o = new URL(/^[a-z]+:\/\//i.test(v) ? v : `https://${v}`).origin
+      return { origin: o, ok: info.allowedOrigins.includes(o) }
+    } catch (_) { return { origin: v, ok: false, invalid: true } }
+  }, [origin, info.allowedOrigins])
+  const row = (ok: boolean | null, label: string, detail: React.ReactNode) => (
+    <li className='health-row'>
+      <span className={`health-dot ${ok === null ? 'wait' : ok ? 'ok' : 'bad'}`} aria-label={ok === null ? 'checking' : ok ? 'ok' : 'problem'} />
+      <span><b>{label}</b> <span className='muted'>{detail}</span></span>
+    </li>
+  )
+  return (
+    <section className='two-col'>
+      <div className='card'>
+        <h2>Health</h2>
+        <ul className='plain health'>
+          {row(info.runAs === 'user', 'Queries run as you', info.runAs === 'user' ? 'Unity Catalog grants decide what each person sees.' : 'User authorization is off, so queries run as the app.')}
+          {row(def ? true : null, 'Default warehouse', def ? `${def.name}: ${def.state.toLowerCase()}${def.state !== 'RUNNING' && def.serverless ? ' (starts on the first query)' : ''}` : (info.defaultWarehouse || 'none bound'))}
+          {checks?.map(c => row(c.ok, c.name, c.ok ? <code>{c.table}</code> : <>can't read <code>{c.table}</code>. Everyone needs SELECT on it (and USE SCHEMA, USE CATALOG). {c.detail}</>))}
+          {!checks && !checkError && row(null, 'Settings tables', 'checking…')}
+          {checkError && row(false, 'Settings tables', checkError)}
+        </ul>
+        <p className='muted small'>Checked with your permissions. Someone with fewer grants can run into problems you don't.</p>
+      </div>
+      <div className='card'>
+        <h2>Settings in effect</h2>
+        <dl className='settings-list'>
+          <dt>Editing</dt><dd>{info.editing ? 'on: apps may turn it on; people still need MODIFY' : 'off: layers are read-only'}</dd>
+          <dt>Catalogs the widget may list</dt><dd>{info.catalogCap.length ? info.catalogCap.join(', ') : 'any catalog the person can see'}</dd>
+          <dt>Never listed</dt><dd>{info.excludeCatalogs.join(', ') || 'none'}</dd>
+          <dt>OGC services</dt><dd>{info.ogc.enabled ? <code>{info.ogc.table}</code> : 'off'}</dd>
+          <dt>Layer overrides</dt><dd>{info.overrides.enabled ? <code>{info.overrides.table}</code> : 'off'}</dd>
+          <dt>Widget link</dt><dd>{info.widgetSource ? <a href={info.widgetSource} target='_blank' rel='noreferrer'>{info.widgetSource.replace(/^https:\/\//, '')}</a> : 'not shown'}</dd>
+        </dl>
+        <p className='muted small'>Set in the gateway's bundle (<code>gateway/databricks.yml</code>) and applied on deploy.</p>
+        <h3>Can this Experience Builder call the gateway?</h3>
+        <input className='url' value={origin} onChange={e => setOrigin(e.target.value)} placeholder='Paste its address, e.g. https://portal.example.com/portal/apps/experiencebuilder/' aria-label='Experience Builder address' spellCheck={false} />
+        {tested && <p className={`small ${tested.ok ? '' : 'error'}`}>
+          {tested.invalid ? 'That isn\'t a web address.' : tested.ok ? `Yes: ${tested.origin} is allowed.` : `No: add ${tested.origin} to allowed_origins in the bundle and redeploy. Until then its sign-in popup closes and nothing loads.`}
+        </p>}
+      </div>
+    </section>
   )
 }

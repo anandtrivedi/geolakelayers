@@ -1,5 +1,7 @@
 # LakeGate
 
+*Built on Databricks Apps by Anand Trivedi.*
+
 Databricks geospatial gateway for ArcGIS and OGC. LakeGate is a small Databricks App that serves Unity Catalog tables
 as live map layers, in two forms:
 

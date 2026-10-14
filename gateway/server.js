@@ -46,6 +46,7 @@ const app = koop.server
 app.use('/api/optimize', consoleOnly('Optimize can only be started from the LakeGate console'))
 app.use('/api/overrides', consoleOnly('Layer overrides can only be changed from the LakeGate console'))
 app.use('/api/ogc', consoleOnly('OGC services can only be changed from the LakeGate console'))
+app.use('/api/token', consoleOnly('A token can only be copied from the LakeGate console'))
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
   methods: ['GET', 'POST'],
@@ -187,6 +188,31 @@ app.get('/api/realtime', (req, res) => res.json(connectionManager.realtimeStatus
 
 app.get('/api/whoami', (req, res) => {
   res.json({ user: req.headers['x-forwarded-email'] || null, origin: req.headers.origin || null })
+})
+
+// The signed-in user's token for this app, so QGIS and scripts can send it as a Bearer header. Same token the
+// sign-in popup hands the widget. POST from the console only (consoleOnly: same-origin JSON), never cached.
+app.post('/api/token', (req, res) => {
+  res.set('Cache-Control', 'no-store')
+  const token = req.headers['x-forwarded-access-token']
+  if (!token) return res.status(500).json({ error: 'No user token forwarded. Enable user authorization (user_api_scopes) on this app.' })
+  let expiresAt = null
+  try { expiresAt = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).exp * 1000 || null } catch (_) {}
+  res.json({ token, expiresAt })
+})
+
+// Can the caller read what the gateway depends on? Runs as the caller, like every other query.
+app.get('/api/health', async (req, res) => {
+  const tables = [['OGC services table', ogcTable], ['Layer overrides table', overridesTable]].filter(([, t]) => t && THREE_PART.test(t))
+  const checks = await Promise.all(tables.map(async ([name, table]) => {
+    try {
+      await runSql(req, `SELECT 1 FROM ${table} LIMIT 1`, 30)
+      return { name, table, ok: true }
+    } catch (err) {
+      return { name, table, ok: false, detail: String(err.message || err).split('\n')[0].slice(0, 300) }
+    }
+  }))
+  res.json({ checks })
 })
 
 async function runSql (req, sql, timeout = 60, namedParameters) {

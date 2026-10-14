@@ -197,3 +197,14 @@ section.card > .map-preview { margin-top: 14px; }
 .start-num { width: 26px; height: 26px; border-radius: 50%; background: var(--red-soft); color: var(--red); font-weight: 700; display: grid; place-items: center; font-size: 0.85rem; }
 .page-intro { margin: 0 0 14px; color: var(--muted); max-width: 900px; }
 @media (max-width: 900px) { .start-grid { grid-template-columns: 1fr; } }
+
+.health { margin: 0; }
+.health-row { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; }
+.health-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; display: inline-block; transform: translateY(1px); }
+.health-dot.ok { background: #00a972; }
+.health-dot.bad { background: #ff3621; }
+.health-dot.wait { background: #c8cdd0; }
+.settings-list { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0 0 8px; font-size: 14px; }
+.settings-list dt { color: var(--muted, #5f6b70); }
+.settings-list dd { margin: 0; overflow-wrap: anywhere; }
+.copy-token { display: inline; }
