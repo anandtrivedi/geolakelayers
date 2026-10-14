@@ -62,13 +62,25 @@ function withQuery (base, query, changes) {
 
 /**
  * deps: { model: { queryFeatures, collectionInfo, checkRateLimit }, store (or null when OGC is off),
- *         obo(req), selfOrigin(req), defaultLimit, maxLimit }
+ *         obo(req), selfOrigin(req), defaultLimit, maxLimit, readWarehouse (warehouse for OGC reads) }
  */
 function ogcRouter (deps) {
   const { model, store, obo, selfOrigin } = deps
   const defaultLimit = deps.defaultLimit || 100
   const maxLimit = deps.maxLimit || 4000
   const router = express.Router({ strict: false })
+  // OGC clients can't pick a warehouse, so each service names its engine (a request that names an allowed
+  // warehouse, like the console's preview, still wins). An engine that's no longer allowed falls back to the
+  // bound warehouse rather than breaking clients that can do nothing about it.
+  const warned = new Set()
+  const readWarehouse = (req, service) => {
+    if (req.warehouseId) return req.warehouseId
+    const w = service?.warehouse
+    if (!w) return undefined
+    if ((deps.allowedWarehouses || []).includes(w)) return w
+    if (!warned.has(w)) { warned.add(w); console.warn(`OGC service ${service.name}: warehouse ${w} is no longer allowed; using the bound warehouse`) }
+    return undefined
+  }
 
   const handle = fn => async (req, res) => {
     try {
@@ -78,7 +90,7 @@ function ogcRouter (deps) {
     }
   }
   const base = (req, service) => `${selfOrigin(req)}/ogc/${service}`
-  const ctx = req => ({ userToken: obo(req), warehouseId: req.warehouseId })
+  const ctx = (req, service) => ({ userToken: obo(req), warehouseId: readWarehouse(req, service) })
 
   async function serviceOf (req) {
     if (!store) throw new OgcError(404, 'NotFound', 'OGC services are not turned on for this gateway (bundle variable ogc_services_table)')
@@ -91,7 +103,7 @@ function ogcRouter (deps) {
     if (!c) throw new OgcError(404, 'NotFound', `No collection ${id} in ${service.name}`)
     return c
   }
-  const infoOf = (req, c) => model.collectionInfo({ table: c.table, timeField: c.timeField, ...ctx(req) })
+  const infoOf = (req, c, service) => model.collectionInfo({ table: c.table, timeField: c.timeField, ...ctx(req, service) })
 
   function collectionJson (req, service, c, info) {
     const b = base(req, service.name)
@@ -156,7 +168,7 @@ function ogcRouter (deps) {
     const info = {}
     await Promise.all(s.collections.map(async c => {
       try {
-        const i = await infoOf(req, c)
+        const i = await infoOf(req, c, s)
         info[c.id] = { queryables: queryablesOf(i.fields), hasTime: !!c.timeField }
       } catch (e) {
         info[c.id] = { queryables: [], hasTime: !!c.timeField }
@@ -169,7 +181,7 @@ function ogcRouter (deps) {
     parseFormat(req.query)
     const s = await serviceOf(req)
     // Tables the caller can't read (or that stopped being map-ready) are left out rather than listed broken
-    const results = await Promise.all(s.collections.map(c => infoOf(req, c).then(i => collectionJson(req, s, c, i), () => null)))
+    const results = await Promise.all(s.collections.map(c => infoOf(req, c, s).then(i => collectionJson(req, s, c, i), () => null)))
     res.type(JSON_TYPE).json({
       links: [link(`${base(req, s.name)}/collections`, 'self', JSON_TYPE, 'Collections')],
       crs: SUPPORTED,
@@ -181,14 +193,14 @@ function ogcRouter (deps) {
     parseFormat(req.query)
     const s = await serviceOf(req)
     const c = collectionOf(s, req.params.cid)
-    res.type(JSON_TYPE).json(collectionJson(req, s, c, await infoOf(req, c)))
+    res.type(JSON_TYPE).json(collectionJson(req, s, c, await infoOf(req, c, s)))
   }))
 
   router.get('/:service/collections/:cid/queryables', handle(async (req, res) => {
     parseFormat(req.query)
     const s = await serviceOf(req)
     const c = collectionOf(s, req.params.cid)
-    const info = await infoOf(req, c)
+    const info = await infoOf(req, c, s)
     const { jsonType } = require('./openapi')
     const properties = {}
     for (const q of queryablesOf(info.fields)) properties[q.name] = { title: q.name, ...jsonType(q.sqlType) }
@@ -206,11 +218,11 @@ function ogcRouter (deps) {
     if (model.checkRateLimit && !model.checkRateLimit(clientIp(req))) throw new OgcError(429, 'TooManyRequests', 'Rate limit exceeded. Try again later.')
     const s = await serviceOf(req)
     const c = collectionOf(s, req.params.cid)
-    const info = await infoOf(req, c)
+    const info = await infoOf(req, c, s)
     const q = parseItemsQuery(req.query, { queryables: queryablesOf(info.fields), hasTime: !!c.timeField, defaultLimit, maxLimit })
     const result = await model.queryFeatures({
       table: c.table,
-      ...ctx(req),
+      ...ctx(req, s),
       bbox: q.bbox,
       propertyFilters: q.filters,
       params: q.params,
@@ -254,7 +266,7 @@ function ogcRouter (deps) {
     const s = await serviceOf(req)
     const c = collectionOf(s, req.params.cid)
     if (!/^-?\d{1,16}$/.test(req.params.fid) || !Number.isSafeInteger(Number(req.params.fid))) throw new OgcError(404, 'NotFound', `No feature ${req.params.fid}`)
-    const result = await model.queryFeatures({ table: c.table, ...ctx(req), featureId: Number(req.params.fid), limit: 1 })
+    const result = await model.queryFeatures({ table: c.table, ...ctx(req, s), featureId: Number(req.params.fid), limit: 1 })
     const f = result.features[0]
     if (!f) throw new OgcError(404, 'NotFound', `No feature ${req.params.fid}`)
     const itemsUrl = `${base(req, s.name)}/collections/${c.id}/items`
@@ -302,8 +314,12 @@ function consoleApi (deps) {
   const off = () => { throw new OgcError(404, 'NotFound', 'OGC services are not turned on (bundle variable ogc_services_table)') }
   const ctx = req => ({ userToken: obo(req), warehouseId: req.warehouseId })
 
-  // Every table must be map-ready for the author, and a time field must be a date/timestamp column
+  // Every table must be map-ready for the author, a time field must be a date/timestamp column, and the
+  // engine must be an allowed warehouse
   async function checkTables (req, def) {
+    if (def.warehouse && !(deps.allowedWarehouses || []).includes(def.warehouse)) {
+      throw new OgcError(400, 'InvalidParameterValue', `Warehouse ${def.warehouse} is not allowed on this gateway`)
+    }
     for (const c of def.collections) {
       let info
       try {

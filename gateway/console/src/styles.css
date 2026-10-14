@@ -154,3 +154,7 @@ section.card > .map-preview { margin-top: 14px; }
 .override-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
 .override-form select, .override-form input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text); background: #fff; min-width: 180px; }
 .override-note { flex-basis: 100%; margin: 0; }
+
+/* Author credit: subtle, always in the header so it's in every screenshot */
+.built-by { font-size: 0.72rem; color: rgba(255,255,255,0.55); padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.18); white-space: nowrap; }
+.chip.small.rt { background: #e6f6ef; color: #00804f; }

@@ -20,11 +20,19 @@ const USER_CLIENT_MAX = 200
 const SESSION_POOL_SIZE = parseInt(process.env.SESSION_POOL_SIZE) || 6
 const SESSION_IDLE_MS = parseInt(process.env.SESSION_IDLE_MS) || 10 * 60 * 1000
 
-// Lakehouse//RT warehouses, reached over the Statement Execution API. '-' = none.
-const realtimeWarehouses = () => (process.env.REALTIME_WAREHOUSES || '').split(',').map(s => s.trim()).filter(s => s && s !== '-')
-// After Lakehouse//RT refuses a table's query (an unsupported function or type), that table is read on the
-// regular warehouse for this long
+// Lakehouse//RT warehouses are recognized by their type (warehouse_type REALTIME), looked up once per
+// warehouse and cached; they're reached over the Statement Execution API.
+const WAREHOUSE_TYPE_TTL_MS = 10 * 60 * 1000
+const warehouseTypes = new Map() // id -> { realtime, at }
+/** Record a warehouse's type (from a warehouses listing, or a lookup). */
+function noteWarehouseType (id, type) {
+  if (id) warehouseTypes.set(id, { realtime: String(type || '').toUpperCase() === 'REALTIME', at: Date.now() })
+}
+// Tables Lakehouse//RT can't serve are read on the regular warehouse: for a while after an unexplained
+// refusal, for much longer when the reason is known (row filter or column mask, unsupported feature)
 const REALTIME_FALLBACK_MS = parseInt(process.env.REALTIME_FALLBACK_MS) || 10 * 60 * 1000
+const REALTIME_INCOMPATIBLE_MS = parseInt(process.env.REALTIME_INCOMPATIBLE_MS) || 6 * 3600 * 1000
+const INCOMPATIBLE = /UNSUPPORTED|NOT_SUPPORTED|not supported|ROW_FILTER|COLUMN_MASK|ABAC|row filter|column mask/i
 // Statements Lakehouse//RT can't run: anything but a read, and metadata (DESCRIBE, SHOW, system tables)
 const READ = /^\s*(\(\s*)*(SELECT|WITH)\b/i
 const METADATA = /^\s*(DESCRIBE|SHOW)\b|information_schema|\bsystem\./i
@@ -132,7 +140,7 @@ class ConnectionManager {
    * @returns {Promise<IDBSQLSession>}
    */
   async getSession (userToken, warehouseId) {
-    if (warehouseId && realtimeWarehouses().includes(warehouseId)) return this.realtimeSession(userToken, warehouseId)
+    if (warehouseId && userToken && await this.isRealtime(warehouseId, userToken)) return this.realtimeSession(userToken, warehouseId)
     if (userToken) return this.getUserSession(userToken, warehouseId)
     const client = await this.connect()
     try {
@@ -215,6 +223,23 @@ class ConnectionManager {
     }
   }
 
+  /** Is this a Lakehouse//RT warehouse? Asked once per warehouse (as the caller) and cached. */
+  async isRealtime (warehouseId, userToken) {
+    const hit = warehouseTypes.get(warehouseId)
+    if (hit && Date.now() - hit.at < WAREHOUSE_TYPE_TTL_MS) return hit.realtime
+    const { host } = connectionTarget()
+    try {
+      const r = await fetch(`https://${host}/api/2.0/sql/warehouses/${encodeURIComponent(warehouseId)}`, { headers: { Authorization: `Bearer ${userToken}` } })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      noteWarehouseType(warehouseId, (await r.json()).warehouse_type)
+    } catch (err) {
+      // Can't tell: treat it as a regular warehouse, and ask again in a minute
+      logger.warn(`Could not read the type of warehouse ${warehouseId}: ${err.message}`)
+      warehouseTypes.set(warehouseId, { realtime: false, at: Date.now() - WAREHOUSE_TYPE_TTL_MS + 60000 })
+    }
+    return warehouseTypes.get(warehouseId).realtime
+  }
+
   /**
    * A session on a Lakehouse//RT warehouse: reads go there over the Statement Execution API; metadata and
    * writes go to the regular (bound) warehouse, and so does any read Lakehouse//RT refuses, for that table,
@@ -224,17 +249,37 @@ class ConnectionManager {
     if (!userToken) throw new Error('Lakehouse//RT warehouses need the caller\'s token (USE_OBO)')
     const { host } = connectionTarget()
     const rt = require('./sea').seaSession({ host, token: userToken, warehouseId })
-    const stats = this.rt || (this.rt = { queries: 0, fallbacks: 0, routed: 0, errors: [], skip: new Map() })
+    const stats = this.rt || (this.rt = { queries: 0, fallbacks: 0, routed: 0, errors: [], skip: new Map(), checked: new Map() })
     let regular = null
     const onRegular = async (...args) => {
       if (!regular) regular = await this.getSession(userToken, undefined)
       return regular.executeStatement(...args)
     }
+    const pin = (table, ms, reason) => { if (table) stats.skip.set(table, { until: Date.now() + ms, reason }) }
+    // Row filters and column masks aren't supported on Lakehouse//RT (queries fail), so look before sending
+    // a table there; policies belong to the table, so one check serves every caller for a while
+    const governed = async table => {
+      const hit = stats.checked.get(table)
+      if (hit && Date.now() - hit.at < WAREHOUSE_TYPE_TTL_MS) return hit.governed
+      const [cat, sch, tbl] = table.split('.')
+      const where = `table_schema = '${sch}' AND table_name = '${tbl}'`
+      let isGoverned = false
+      try {
+        const op = await onRegular(`SELECT (SELECT count(*) FROM ${cat}.information_schema.row_filters WHERE ${where}) + (SELECT count(*) FROM ${cat}.information_schema.column_masks WHERE ${where}) AS n`, { queryTimeout: 30 })
+        isGoverned = Number((await op.fetchAll())[0]?.n || 0) > 0
+        await op.close()
+      } catch (err) {
+        logger.warn(`Could not check ${table} for row filters or column masks: ${err.message.split('\n')[0]}`)
+      }
+      stats.checked.set(table, { governed: isGoverned, at: Date.now() })
+      if (isGoverned) pin(table, REALTIME_INCOMPATIBLE_MS, 'row filter or column mask')
+      return isGoverned
+    }
     return {
       executeStatement: async (sql, opts) => {
         const table = tableOf(sql)
-        const skipUntil = table && stats.skip.get(table)
-        if (!READ.test(sql) || METADATA.test(sql) || (skipUntil && skipUntil > Date.now())) {
+        const pinned = table && stats.skip.get(table)
+        if (!READ.test(sql) || METADATA.test(sql) || (pinned && pinned.until > Date.now()) || (table && await governed(table))) {
           stats.routed++
           return onRegular(sql, opts)
         }
@@ -245,10 +290,11 @@ class ConnectionManager {
         } catch (err) {
           if (CALLER_ERROR.test(err.message)) throw err
           stats.fallbacks++
-          stats.errors.unshift({ at: new Date().toISOString(), table, error: err.message.split('\n')[0].slice(0, 300) })
+          const reason = err.message.split('\n')[0].slice(0, 300)
+          stats.errors.unshift({ at: new Date().toISOString(), table, error: reason })
           stats.errors.length = Math.min(stats.errors.length, 20)
-          if (table) stats.skip.set(table, Date.now() + REALTIME_FALLBACK_MS)
-          logger.warn(`Lakehouse//RT refused a query${table ? ` on ${table}` : ''}; using the regular warehouse: ${err.message.split('\n')[0]}`)
+          pin(table, INCOMPATIBLE.test(err.message) ? REALTIME_INCOMPATIBLE_MS : REALTIME_FALLBACK_MS, reason)
+          logger.warn(`Lakehouse//RT refused a query${table ? ` on ${table}` : ''}; using the regular warehouse: ${reason}`)
           return onRegular(sql, opts)
         }
       },
@@ -261,11 +307,11 @@ class ConnectionManager {
     const s = this.rt || { queries: 0, fallbacks: 0, routed: 0, errors: [], skip: new Map() }
     const now = Date.now()
     return {
-      warehouses: realtimeWarehouses(),
+      warehouses: [...warehouseTypes].filter(([, t]) => t.realtime).map(([id]) => id),
       queries: s.queries,
       fallbacks: s.fallbacks,
       routedToRegular: s.routed,
-      tablesOnRegular: [...s.skip].filter(([, until]) => until > now).map(([table, until]) => ({ table, until: new Date(until).toISOString() })),
+      tablesOnRegular: [...s.skip].filter(([, p]) => p.until > now).map(([table, p]) => ({ table, until: new Date(p.until).toISOString(), reason: p.reason })),
       recentErrors: s.errors
     }
   }
@@ -307,5 +353,6 @@ class ConnectionManager {
 
 module.exports = new ConnectionManager()
 module.exports.ConnectionManager = ConnectionManager
-module.exports.realtimeWarehouses = realtimeWarehouses
+module.exports.noteWarehouseType = noteWarehouseType
+module.exports._warehouseTypes = warehouseTypes
 module.exports._routing = { READ, METADATA, CALLER_ERROR, tableOf }

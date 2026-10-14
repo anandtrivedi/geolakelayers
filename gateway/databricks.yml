@@ -10,9 +10,6 @@ bundle:
   name: arcgateway
 
 variables:
-  realtime_warehouses:
-    description: Comma-separated Lakehouse//RT warehouse ids. Map and OGC reads go there when an app picks one; metadata and writes stay on the bound warehouse. "-" = none
-    default: "-"
   app_name:
     description: Name of the Databricks App
     default: arcgateway
@@ -22,7 +19,7 @@ variables:
     description: Comma-separated browser origins allowed to call the gateway (Portal / Experience Builder URLs). "-" = none
     default: "-"
   allowed_warehouses:
-    description: Extra comma-separated warehouse ids app authors may pick in the widget (the bound warehouse is always allowed). "-" = none
+    description: Extra comma-separated warehouse ids app authors and OGC services may pick (the bound warehouse is always allowed). Lakehouse//RT warehouses are recognized by type. "-" = none
     default: "-"
   catalogs:
     description: Optional cap on the catalogs the widget may list. "-" = no cap (authors choose any catalog the user can see)
@@ -74,8 +71,6 @@ resources:
             value: ${var.editing}
           - name: EXCLUDE_CATALOGS
             value: ${var.exclude_catalogs}
-          - name: REALTIME_WAREHOUSES
-            value: ${var.realtime_warehouses}
           - name: LAYER_OVERRIDES_TABLE
             value: ${var.layer_overrides_table}
           - name: OGC_SERVICES_TABLE
@@ -102,12 +97,11 @@ targets:
     variables:
       warehouse_id: abcdef0123456789
       # Large serverless warehouse authors may pick for heavier layers (2X-Large deliberately not allowed)
-      allowed_warehouses: abcdef1234567890
+      # fff7454b: Large serverless; 0000000000000a01: Lakehouse//RT (Small), recognized by its type
+      allowed_warehouses: abcdef1234567890,0000000000000a01
       editing: "true"
       ogc_services_table: main.arcgateway.ogc_services
       layer_overrides_table: main.arcgateway.layer_overrides
-      # Lakehouse//RT warehouse: map reads go there when an app picks it
-      realtime_warehouses: 0000000000000a01
       directory: prod=https://arcgateway-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
 

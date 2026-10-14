@@ -82,48 +82,89 @@ test('realtime session: reads on Lakehouse//RT, metadata and writes on the regul
   sea.seaSession = () => ({
     async executeStatement (sql) {
       rtCalls.push(sql)
-      if (refuse.test(sql)) throw new Error('[UNSUPPORTED_FEATURE] st_asgeojson is not supported')
+      if (refuse.test(sql)) throw new Error(refuse.message || '[UNSUPPORTED_FEATURE] st_asgeojson is not supported')
       if (/denied/.test(sql)) throw new Error('[INSUFFICIENT_PERMISSIONS] no')
       return { fetchAll: async () => [{ from: 'rt' }], close: async () => {} }
     },
     async close () {}
   })
-  const { ConnectionManager } = require('../provider/connection')
-  const cm = new ConnectionManager()
+  const connection = require('../provider/connection')
+  const cm = new connection.ConnectionManager()
+  // Warehouse types are recognized from the warehouses listing (or looked up); here: noted directly
+  connection.noteWarehouseType('rt0000000000000a', 'REALTIME')
+  connection.noteWarehouseType('reg000000000000b', 'PRO')
   const regularCalls = []
   let regularOpened = 0
   const regularWarehouses = []
+  const governedTables = new Set(['q.r.masked'])
   cm.getUserSession = async (token, wh) => {
     regularOpened++
     regularWarehouses.push(wh)
-    return { executeStatement: async sql => { regularCalls.push(sql); return { fetchAll: async () => [{ from: 'regular' }], close: async () => {} } }, close: async () => {} }
+    return {
+      executeStatement: async sql => {
+        regularCalls.push(sql)
+        const n = /information_schema\.row_filters/.test(sql) ? ([...governedTables].some(t => { const [, s, n] = t.split('.'); return sql.includes(`table_schema = '${s}' AND table_name = '${n}'`) }) ? 1 : 0) : undefined
+        return { fetchAll: async () => [n === undefined ? { from: 'regular' } : { n }], close: async () => {} }
+      },
+      close: async () => {}
+    }
   }
   try {
     const s = await cm.getSession('tok', 'rt0000000000000a')
     const run = async sql => (await (await s.executeStatement(sql, {})).fetchAll())[0].from
     assert.equal(await run('SELECT * FROM a.b.c LIMIT 10'), 'rt')
-    assert.equal(regularOpened, 0, 'no regular session until one is needed')
+    assert.ok(regularCalls.some(q => /row_filters[\s\S]*column_masks/.test(q)), 'checked for row filters and column masks first')
+    const checks = regularCalls.length
+    assert.equal(await run('SELECT count(*) FROM a.b.c'), 'rt')
+    assert.equal(regularCalls.length, checks, 'the policy check is cached per table')
     assert.equal(await run('DESCRIBE a.b.c'), 'regular')
     assert.equal(await run('INSERT INTO a.b.c VALUES (1)'), 'regular')
     assert.equal(regularOpened, 1, 'one regular session per request, reused')
     assert.deepEqual(regularWarehouses, [undefined], 'the bound warehouse')
-    refuse = /x\.y\.z/
-    assert.equal(await run('SELECT ST_AsGeoJSON(g) FROM x.y.z'), 'regular', 'refused read retried on the regular warehouse')
+    // A table with a row filter or column mask never goes to Lakehouse//RT
     const rtBefore = rtCalls.length
-    assert.equal(await run('SELECT count(*) FROM x.y.z'), 'regular', 'that table now skips Lakehouse//RT')
+    assert.equal(await run('SELECT * FROM q.r.masked'), 'regular')
     assert.equal(rtCalls.length, rtBefore)
+    refuse = Object.assign(/x\.y\.z/, { message: '[UNSUPPORTED_FEATURE] st_asgeojson is not supported' })
+    assert.equal(await run('SELECT ST_AsGeoJSON(g) FROM x.y.z'), 'regular', 'refused read retried on the regular warehouse')
+    assert.equal(await run('SELECT count(*) FROM x.y.z'), 'regular', 'that table now skips Lakehouse//RT')
+    refuse = Object.assign(/t\.u\.v/, { message: 'HTTP 503 temporarily unavailable' })
+    assert.equal(await run('SELECT * FROM t.u.v'), 'regular')
     assert.equal(await run('SELECT * FROM a.b.c'), 'rt', 'other tables still use it')
     await assert.rejects(s.executeStatement('SELECT denied FROM q.r.s', {}), /INSUFFICIENT_PERMISSIONS/, 'permission errors are not retried')
     const st = cm.realtimeStatus()
-    assert.deepEqual(st.warehouses, ['rt0000000000000a'])
-    assert.equal(st.fallbacks, 1)
-    assert.deepEqual(st.tablesOnRegular.map(t => t.table), ['x.y.z'])
-    assert.match(st.recentErrors[0].error, /UNSUPPORTED_FEATURE/)
-    await assert.rejects(cm.getSession(null, 'rt0000000000000a'), /caller's token/)
-    // Regular warehouses don't go through the realtime path
+    assert.ok(st.warehouses.includes('rt0000000000000a') && !st.warehouses.includes('reg000000000000b'))
+    assert.equal(st.fallbacks, 2)
+    const pins = Object.fromEntries(st.tablesOnRegular.map(t => [t.table, t]))
+    assert.equal(pins['q.r.masked'].reason, 'row filter or column mask')
+    const hours = t => (Date.parse(pins[t].until) - Date.now()) / 3600000
+    assert.ok(hours('x.y.z') > 5, 'a known incompatibility is pinned for hours')
+    assert.ok(hours('t.u.v') < 0.2, 'an unexplained failure only for minutes')
+    assert.match(st.recentErrors.at(-1).error, /UNSUPPORTED_FEATURE/)
+    // Regular warehouses don't go through the realtime path; no token, no realtime path either
     await cm.getSession('tok', 'reg000000000000b')
     assert.equal(regularOpened, 2)
   } finally {
     sea.seaSession = original
   }
+})
+
+test('isRealtime looks a warehouse up once (as the caller), caches it, and treats a failed lookup as regular', async () => {
+  const connection = require('../provider/connection')
+  const cm = new connection.ConnectionManager()
+  const realFetch = global.fetch
+  const seen = []
+  global.fetch = async (url, init) => {
+    seen.push([url, init.headers.Authorization])
+    if (url.endsWith('/broken0000000000')) return { ok: false, status: 403, json: async () => ({}) }
+    return { ok: true, json: async () => ({ warehouse_type: url.endsWith('/rtlook000000000a') ? 'REALTIME' : 'PRO' }) }
+  }
+  try {
+    assert.equal(await cm.isRealtime('rtlook000000000a', 'tok'), true)
+    assert.equal(await cm.isRealtime('rtlook000000000a', 'tok'), true)
+    assert.equal(seen.length, 1, 'cached')
+    assert.deepEqual(seen[0], ['https://ws.example.com/api/2.0/sql/warehouses/rtlook000000000a', 'Bearer tok'])
+    assert.equal(await cm.isRealtime('prolook00000000b', 'tok'), false)
+    assert.equal(await cm.isRealtime('broken0000000000', 'tok'), false)
+  } finally { global.fetch = realFetch }
 })

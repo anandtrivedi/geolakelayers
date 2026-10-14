@@ -1,11 +1,19 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError } from '../api'
-import type { CatalogTable, GatewayInfo, OgcCollection, OgcColumns, OgcService } from '../api'
+import type { CatalogTable, GatewayInfo, OgcCollection, OgcColumns, OgcService, Warehouse } from '../api'
 import { CatalogTree } from './CatalogTree'
 import { MapPreview } from './MapPreview'
 
 // OGC services: named sets of tables served as OGC API – Features (/ogc/<name>), kept in a Unity Catalog table
+// Engine label for a service: its warehouse, or the gateway's bound one
+function engineOf (s: OgcService, warehouses: Warehouse[], info: GatewayInfo) {
+  const w = warehouses.find(x => x.id === (s.warehouse || info.defaultWarehouse))
+  return { name: w?.name || (s.warehouse ? s.warehouse : 'bound warehouse'), realtime: !!w?.realtime }
+}
+
 export function OgcServices ({ info }: { info: GatewayInfo }) {
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  useEffect(() => { api.warehouses().then(d => setWarehouses(d.warehouses)).catch(() => {}) }, [])
   const [services, setServices] = useState<OgcService[] | null>(null)
   const [error, setError] = useState('')
   const [needsSetup, setNeedsSetup] = useState(false)
@@ -33,7 +41,7 @@ export function OgcServices ({ info }: { info: GatewayInfo }) {
   }
 
   if (draft) {
-    return <Editor info={info} draft={draft.service} isNew={draft.isNew} existing={services || []}
+    return <Editor info={info} warehouses={warehouses} draft={draft.service} isNew={draft.isNew} existing={services || []}
       onCancel={() => setDraft(null)}
       onSaved={s => { setDraft(null); setOpen(s.name); reload() }} />
   }
@@ -52,7 +60,7 @@ export function OgcServices ({ info }: { info: GatewayInfo }) {
               what each client sees. Definitions are kept in <code>{info.ogc.table}</code>.
             </p>
           </div>
-          {!needsSetup && <button className='button' onClick={() => setDraft({ isNew: true, service: { name: '', title: '', description: '', collections: [] } })}>New service</button>}
+          {!needsSetup && <button className='button' onClick={() => setDraft({ isNew: true, service: { name: '', title: '', description: '', collections: [], warehouse: warehouses.find(w => w.realtime)?.id || '' } })}>New service</button>}
         </div>
         {needsSetup && <Setup table={info.ogc.table || ''} onDone={reload} />}
         {error && <p className='error'>Could not read services: {error}</p>}
@@ -61,7 +69,7 @@ export function OgcServices ({ info }: { info: GatewayInfo }) {
         <div className='ws-grid'>
           {(services || []).map(s => (
             <div key={s.name} className={`ws-card${open === s.name ? ' current' : ''}`}>
-              <div className='ws-name'>{s.title}<span className='chip small'>{s.collections.length} {s.collections.length === 1 ? 'table' : 'tables'}</span></div>
+              <div className='ws-name'>{s.title}<span className='chip small'>{s.collections.length} {s.collections.length === 1 ? 'table' : 'tables'}</span>{engineOf(s, warehouses, info).realtime && <span className='chip small rt'>Lakehouse//RT</span>}</div>
               <code className='ws-url'>/ogc/{s.name}</code>
               <div className='muted small'>{s.updatedBy || s.owner}{s.updatedAt ? ` · ${new Date(s.updatedAt).toLocaleString()}` : ''}</div>
               <div className='card-actions'>
@@ -73,7 +81,7 @@ export function OgcServices ({ info }: { info: GatewayInfo }) {
           ))}
         </div>
       </section>
-      {shown && <Endpoints key={shown.name} info={info} service={shown} />}
+      {shown && <Endpoints key={shown.name} info={info} service={shown} engine={engineOf(shown, warehouses, info)} />}
     </>
   )
 }
@@ -124,8 +132,8 @@ function collectionIdFor (table: string, picked: OgcCollection[]): string {
   return `${name}_${i}`
 }
 
-function Editor ({ info, draft, isNew, existing, onCancel, onSaved }: {
-  info: GatewayInfo, draft: OgcService, isNew: boolean, existing: OgcService[], onCancel: () => void, onSaved: (s: OgcService) => void
+function Editor ({ info, warehouses, draft, isNew, existing, onCancel, onSaved }: {
+  info: GatewayInfo, warehouses: Warehouse[], draft: OgcService, isNew: boolean, existing: OgcService[], onCancel: () => void, onSaved: (s: OgcService) => void
 }) {
   const [s, setS] = useState<OgcService>(draft)
   const [columns, setColumns] = useState<Record<string, OgcColumns | 'failed'>>({})
@@ -193,7 +201,18 @@ function Editor ({ info, draft, isNew, existing, onCancel, onSaved }: {
             {nameTaken ? 'A service with this name exists' : nameOk ? `${info.gatewayUrl}/ogc/${s.name}` : 'Lowercase letters, digits, - and _'}
           </span>
         </label>
-        <label className='wide'>Description
+        <label>Engine
+          <select value={s.warehouse || ''} onChange={e => setS(prev => ({ ...prev, warehouse: e.target.value }))}>
+            <option value=''>{`Bound warehouse${warehouses.find(w => w.id === info.defaultWarehouse) ? ` (${warehouses.find(w => w.id === info.defaultWarehouse)!.name})` : ''}`}</option>
+            {warehouses.filter(w => w.id !== info.defaultWarehouse).map(w => <option key={w.id} value={w.id}>{w.realtime ? `${w.name} (Lakehouse//RT, low-latency reads)` : `${w.name} (${w.size})`}</option>)}
+          </select>
+          <span className='small muted'>
+            {warehouses.find(w => w.id === s.warehouse)?.realtime
+              ? 'Reads run on Lakehouse//RT. Tables with row filters or column masks are read on the bound warehouse automatically.'
+              : 'Where this service\u2019s queries run. Lakehouse//RT warehouses answer map-sized reads in about a tenth of the time.'}
+          </span>
+        </label>
+        <label>Description
           <input value={s.description} placeholder='What these layers are for' onChange={e => setS(prev => ({ ...prev, description: e.target.value }))} />
         </label>
       </div>
@@ -249,7 +268,7 @@ function Copy ({ text, label = 'Copy' }: { text: string, label?: string }) {
   return <button className='button ghost' onClick={async () => { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500) }}>{done ? 'Copied' : label}</button>
 }
 
-function Endpoints ({ info, service }: { info: GatewayInfo, service: OgcService }) {
+function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: OgcService, engine: { name: string, realtime: boolean } }) {
   const base = `${info.gatewayUrl}/ogc/${service.name}`
   const [preview, setPreview] = useState(service.collections[0]?.id || '')
   const first = service.collections[0]
@@ -281,6 +300,7 @@ function Endpoints ({ info, service }: { info: GatewayInfo, service: OgcService 
         <a className='button ghost' href={base} target='_blank' rel='noreferrer'>Open landing page</a>
       </div>
       {service.description && <p className='muted'>{service.description}</p>}
+      <p className='small muted'>Engine: <b>{engine.name}</b>{engine.realtime ? ' (Lakehouse//RT)' : ''}. Change it with Edit.</p>
       <div className='endpoint-list'>
         {rows.map(([label, url]) => (
           <div key={label} className='endpoint'>

@@ -242,15 +242,24 @@ A map pan sends dozens of small read queries at once, which is the workload Lake
 2. Give viewers CAN_USE on it, as on the regular warehouse. Warehouse permissions use workspace groups
    (`users`, not `account users`):
    `databricks warehouses update-permissions <id> --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}'`
-3. Add its id to `realtime_warehouses` in the gateway's bundle target and redeploy. Authors then pick it
-   in the widget's warehouse list ("Lakehouse//RT, low-latency reads").
+3. Add its id to `allowed_warehouses` in the gateway's bundle target and redeploy. ArcGateway recognizes
+   Lakehouse//RT warehouses by their type; nothing else to configure.
+
+Then pick it as the engine:
+
+- Experience Builder: in the widget's settings, each workspace's warehouse list labels it
+  "Lakehouse//RT, low-latency reads".
+- OGC API services: the service editor in the console has an **Engine** picker. New services default to a
+  Lakehouse//RT warehouse when the gateway has one. OGC clients can't choose a warehouse themselves, so the
+  service decides; if its warehouse is later removed from the allow-list, it reads on the bound warehouse.
 
 Feature, count and extent queries run on Lakehouse//RT, over the Statement Execution API and as the
 viewer. Metadata (DESCRIBE, information_schema), edits, overrides and OGC service changes stay on the bound
-warehouse, which must be a regular SQL warehouse. If Lakehouse//RT refuses a table's query (an unsupported
-function or type, a table with row filters or column masks), that query is retried on the bound warehouse
-and the table is read there for 10 minutes, so layers keep drawing. `/api/realtime` shows how many queries
-it served and what it refused.
+warehouse, which must be a regular SQL warehouse. Tables with row filters or column masks (not supported
+on Lakehouse//RT yet) are detected before the first query and read on the bound warehouse. If
+Lakehouse//RT refuses a table's query anyway, the query is retried on the bound warehouse and the table
+stays there (for hours when the reason is a known incompatibility, minutes otherwise), so layers keep
+drawing. `/api/realtime` shows how many queries it served and what it sent elsewhere, and why.
 
 Limits while it's in Beta: managed tables only, no row filters or column masks yet, read-only, not in
 GovCloud. Spatial SQL works (tested on a Lakehouse//RT warehouse in October 2026: ST_AsGeoJSON,
@@ -277,7 +286,7 @@ rejects empty values):
 | Setting | Default | What it does |
 |---|---|---|
 | `warehouse_id` | required | Bound warehouse; the default for every query |
-| `allowed_warehouses` | `-` | Extra warehouses authors may pick; anything else is refused (403) |
+| `allowed_warehouses` | `-` | Extra warehouses authors and OGC services may pick (Lakehouse//RT ones are recognized by type); anything else is refused (403) |
 | `allowed_origins` | `-` | Browser origins allowed by CORS and by the sign-in handoff |
 | `catalogs` | `-` | Optional cap on which catalogs can be listed |
 | `exclude_catalogs` | `system,samples,hive_metastore,__databricks_internal` | Never listed |
@@ -285,7 +294,6 @@ rejects empty values):
 | `MAX_ROWS` | `4000` | Features per page |
 | `BIG_TABLE_FEATURES` | `250000` | Above this, layers draw only when zoomed in (about zoom 9) |
 | `editing` | `"false"` | Master switch for editing on this gateway |
-| `realtime_warehouses` | `-` | Lakehouse//RT warehouse ids; reads go there when an app picks one |
 | `layer_overrides_table` | `-` | Unity Catalog table holding geometry/id overrides; `-` turns overrides off |
 | `ogc_services_table` | `-` | Unity Catalog table holding OGC API service definitions; `-` turns OGC API off |
 

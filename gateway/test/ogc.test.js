@@ -69,7 +69,7 @@ async function server () {
   const model = fakeModel()
   const mem = memoryRun()
   const store = services.createStore({ table: 'c.s.ogc_services', run: mem.run, obo: req => req.headers['x-forwarded-access-token'] || null })
-  const deps = { model, store, obo: req => req.headers['x-forwarded-access-token'] || null, selfOrigin: () => 'https://gw.example', defaultLimit: 10, maxLimit: 20 }
+  const deps = { model, store, obo: req => req.headers['x-forwarded-access-token'] || null, selfOrigin: () => 'https://gw.example', defaultLimit: 10, maxLimit: 20, allowedWarehouses: ['abcdef0123456789', 'bound00000000000'] }
   const app = express()
   app.use('/ogc', ogcRouter(deps))
   app.use('/api/ogc', consoleApi(deps))
@@ -396,4 +396,53 @@ test('helpers: withQuery and jsonType', () => {
   assert.deepEqual(jsonType('boolean'), { type: 'boolean' })
   const doc = buildOpenApi({ service: { name: 'd', title: 'D', collections: [] }, baseUrl: 'https://x/ogc/d', info: {}, maxLimit: 5, defaultLimit: 2 })
   assert.equal(doc.components.parameters.limit.schema.maximum, 5)
+})
+
+test('OGC engine: each service reads on its warehouse; the request header wins; a stale one falls back; saving a disallowed one fails', async () => {
+  const s = await server()
+  try {
+    let r = await s.call('/api/ogc/services', { method: 'POST', body: JSON.stringify({ ...demo, warehouse: 'abcdef0123456789' }) })
+    assert.equal(r.status, 201)
+    assert.equal(r.body.warehouse, 'abcdef0123456789')
+    await s.call('/ogc/demo/collections/places/items?limit=1')
+    assert.equal(s.model.calls.at(-1).warehouseId, 'abcdef0123456789')
+    // The header is applied by the gateway's warehouse middleware (req.warehouseId); emulate it here
+    s.store._cache.clear()
+    r = await s.call('/api/ogc/services', { method: 'POST', body: JSON.stringify({ name: 'nope', collections: [{ table: 'c.s.places' }], warehouse: 'fedcba9876543210' }) })
+    assert.equal(r.status, 400)
+    assert.match(r.body.error, /not allowed/)
+    r = await s.call('/api/ogc/services', { method: 'POST', body: JSON.stringify({ name: 'bad', collections: [{ table: 'c.s.places' }], warehouse: 'x; DROP' }) })
+    assert.equal(r.status, 400)
+    // A service whose engine was later removed from the allow-list reads on the bound warehouse
+    s.mem.rows.get('demo').warehouse = 'fedcba9876543210'
+    s.store._cache.clear()
+    await s.call('/ogc/demo/collections/places/items?limit=1')
+    assert.equal(s.model.calls.at(-1).warehouseId, undefined)
+    // No engine = the bound warehouse
+    await s.call('/api/ogc/services', { method: 'POST', body: JSON.stringify({ ...demo, name: 'plain' }) })
+    await s.call('/ogc/plain/collections/places/items?limit=1')
+    assert.equal(s.model.calls.at(-1).warehouseId, undefined)
+  } finally { s.close() }
+})
+
+test('services store: tables from before the engine setting are read without it and get the column on the next write', async () => {
+  const calls = []
+  let hasColumn = false
+  const rows = new Map()
+  const run = async (req, sql, p = {}) => {
+    calls.push(sql)
+    if (!hasColumn && /\bwarehouse\b/.test(sql) && !/^ALTER/.test(sql)) throw new Error("[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column, variable, or function parameter with name `warehouse` cannot be resolved")
+    if (/^ALTER TABLE c\.s\.t ADD COLUMNS \(warehouse STRING/.test(sql)) { hasColumn = true; return [] }
+    if (sql.startsWith('SELECT 1')) return rows.has(p.name) ? [{ x: 1 }] : []
+    if (sql.startsWith('SELECT')) return [...rows.values()].filter(r => !p.name || r.name === p.name)
+    if (sql.startsWith('INSERT')) { rows.set(p.name, { ...p, version: 1 }); return [] }
+    return []
+  }
+  const store = services.createStore({ table: 'c.s.t', run, obo: () => null })
+  const req = { headers: {} }
+  rows.set('old', { name: 'old', collections: JSON.stringify([{ table: 'a.b.c' }]), version: 1 })
+  assert.equal((await store.list(req))[0].warehouse, '', 'old rows read without the column')
+  await store.create(req, services.validateService({ ...demo, warehouse: 'abcdef0123456789' }))
+  assert.ok(calls.some(c => /^ALTER TABLE c\.s\.t ADD COLUMNS \(warehouse STRING/.test(c)), 'column added on write')
+  assert.equal(rows.get('demo').warehouse, 'abcdef0123456789')
 })

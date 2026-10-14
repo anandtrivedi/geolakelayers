@@ -38,12 +38,11 @@ export function App () {
             <div className='brand-sub'>Databricks for ArcGIS</div>
           </div>
         </div>
-        {info && (
-          <div className='topbar-meta'>
-            <span className='chip'><span className='dot' />{here?.name || info.workspaceHost}</span>
-            <span className='muted small'>{info.user}</span>
-          </div>
-        )}
+        <div className='topbar-meta'>
+          {info && <span className='chip'><span className='dot' />{here?.name || info.workspaceHost}</span>}
+          {info && <span className='muted small'>{info.user}</span>}
+          <span className='built-by'>Built by Anand Trivedi · Databricks</span>
+        </div>
       </header>
 
       <nav className='tabs' role='tablist'>

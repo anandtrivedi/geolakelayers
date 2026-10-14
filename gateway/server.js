@@ -57,12 +57,10 @@ app.use(cors({
 // Warehouses apps may use. The widget picks one per request (X-Databricks-Warehouse); anything not on
 // this list is refused, so a page can't move queries onto a bigger warehouse. Default: the bound one.
 const defaultWarehouse = process.env.DATABRICKS_WAREHOUSE_ID || ''
-// Lakehouse//RT warehouses are allowed too; reads go there and everything else to the bound warehouse,
-// which therefore has to be a regular one
-const realtime = connectionManager.realtimeWarehouses()
-const allowedWarehouses = list(process.env.ALLOWED_WAREHOUSES).concat(realtime, defaultWarehouse ? [defaultWarehouse] : [])
+// Allowed warehouses may include Lakehouse//RT ones (recognized by type): reads go there, metadata and writes
+// to the bound warehouse, which has to be a regular one
+const allowedWarehouses = list(process.env.ALLOWED_WAREHOUSES).concat(defaultWarehouse ? [defaultWarehouse] : [])
   .filter((v, i, a) => a.indexOf(v) === i)
-if (realtime.includes(defaultWarehouse)) console.warn('The bound warehouse is listed as Lakehouse//RT; it must be a regular SQL warehouse (metadata and writes run there)')
 
 app.use((req, res, next) => {
   const requested = String(req.headers['x-databricks-warehouse'] || '').trim()
@@ -140,7 +138,9 @@ const ogcDeps = {
   obo,
   selfOrigin,
   defaultLimit: parseInt(process.env.OGC_DEFAULT_LIMIT) || 100,
-  maxLimit: Math.min(parseInt(process.env.OGC_MAX_LIMIT) || Infinity, parseInt(process.env.MAX_ROWS) || 10000)
+  maxLimit: Math.min(parseInt(process.env.OGC_MAX_LIMIT) || Infinity, parseInt(process.env.MAX_ROWS) || 10000),
+  // Each service picks its engine; one that's no longer allowed falls back to the bound warehouse
+  allowedWarehouses
 }
 app.use('/ogc', ogc.ogcRouter(ogcDeps))
 app.use('/api/ogc', ogc.consoleApi(ogcDeps))
@@ -168,7 +168,6 @@ app.get('/api/info', (req, res) => {
     runAs: obo(req) ? 'user' : 'app',
     defaultWarehouse: defaultWarehouse || null,
     allowedWarehouses,
-    realtimeWarehouses: realtime,
     allowedOrigins,
     catalogCap: catalogs,
     excludeCatalogs,
@@ -498,7 +497,10 @@ app.get('/api/warehouses', async (req, res) => {
     })
     const warehouses = (d.warehouses || [])
       .filter(w => allowedWarehouses.includes(w.id))
-      .map(w => ({ id: w.id, name: w.name, state: w.state, size: w.cluster_size, serverless: !!w.enable_serverless_compute, realtime: realtime.includes(w.id) }))
+      .map(w => {
+        connectionManager.noteWarehouseType(w.id, w.warehouse_type)
+        return { id: w.id, name: w.name, state: w.state, size: w.cluster_size, serverless: !!w.enable_serverless_compute, realtime: w.warehouse_type === 'REALTIME' }
+      })
     res.json({ default: defaultWarehouse || null, warehouses })
   } catch (err) {
     res.status(500).json({ error: err.message })

@@ -42,7 +42,10 @@ function validateService (body, name) {
     if (t.length > 200) throw invalid(`Title for ${table} is longer than 200 characters`)
     return { id, table, title: t, description: String(c.description || '').slice(0, 2000), timeField }
   })
-  return { name: n, title, description, collections }
+  // Engine: the warehouse this service's reads run on ('' = the gateway's bound warehouse)
+  const warehouse = b.warehouse ? String(b.warehouse) : ''
+  if (warehouse && !/^[a-f0-9]{8,32}$/i.test(warehouse)) throw invalid('warehouse must be a warehouse id')
+  return { name: n, title, description, collections, warehouse }
 }
 
 // Table name, or schema_table when two picked tables share a name
@@ -56,7 +59,7 @@ function defaultCollectionId (table, list) {
 function fromRow (row) {
   try {
     const collections = JSON.parse(row.collections)
-    const s = validateService({ title: row.title, description: row.description, collections }, row.name)
+    const s = validateService({ title: row.title, description: row.description, collections, warehouse: row.warehouse || '' }, row.name)
     return {
       ...s,
       owner: row.owner || null,
@@ -70,16 +73,20 @@ function fromRow (row) {
   }
 }
 
-const COLUMNS = 'name, title, description, collections, owner, created_at, updated_by, updated_at, version'
+const COLUMNS = 'name, title, description, collections, warehouse, owner, created_at, updated_by, updated_at, version'
+const OLD_COLUMNS = COLUMNS.replace('warehouse, ', '')
 
 function createTableSql (table) {
   return `CREATE TABLE IF NOT EXISTS ${table} (
   name STRING NOT NULL, title STRING, description STRING,
   collections STRING NOT NULL COMMENT 'JSON [{id, table, title, description, timeField}]',
+  warehouse STRING COMMENT 'warehouse id for reads; empty = the gateway bound warehouse',
   owner STRING, created_at TIMESTAMP, updated_by STRING, updated_at TIMESTAMP, version BIGINT
 ) COMMENT 'ArcGateway OGC API services' TBLPROPERTIES ('arcgateway.ogc_services' = 'true')`
 }
 
+// Tables created before the engine setting have no warehouse column
+const noWarehouseColumn = err => /UNRESOLVED_COLUMN|cannot be resolved|cannot resolve/i.test(err?.message || '') && /warehouse/i.test(err?.message || '')
 const notSetUp = err => /TABLE_OR_VIEW_NOT_FOUND|cannot be found|does not exist/i.test(err?.message || '')
 const denied = err => /PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS|does not have .* privilege|not authorized/i.test(err?.message || '')
 
@@ -102,6 +109,25 @@ function createStore ({ table, run, obo }) {
   const forget = name => {
     for (const k of cache.keys()) if (k.endsWith('|list') || k.endsWith(`|${name}`)) cache.delete(k)
   }
+  // Read with the warehouse column, or without it on a table from before the engine setting
+  const select = async (req, where, params) => {
+    try {
+      return await run(req, `SELECT ${COLUMNS} FROM ${table}${where}`, params)
+    } catch (err) {
+      if (!noWarehouseColumn(err)) throw err
+      return run(req, `SELECT ${OLD_COLUMNS} FROM ${table}${where}`, params)
+    }
+  }
+  // Writes add the column first if the table predates it (needs MODIFY, which writers have)
+  const write = async (req, sql, params) => {
+    try {
+      return await run(req, sql, params)
+    } catch (err) {
+      if (!noWarehouseColumn(err)) throw err
+      await run(req, `ALTER TABLE ${table} ADD COLUMNS (warehouse STRING COMMENT 'warehouse id for reads; empty = the gateway bound warehouse')`)
+      return run(req, sql, params)
+    }
+  }
   const wrap = err => {
     if (err instanceof OgcError) return err
     if (notSetUp(err)) return Object.assign(new OgcError(404, 'NotSetUp', `The OGC services table ${table} does not exist yet`), { setup: true })
@@ -114,14 +140,14 @@ function createStore ({ table, run, obo }) {
     async list (req) {
       try {
         return await remember(req, 'list', async () =>
-          (await run(req, `SELECT ${COLUMNS} FROM ${table} ORDER BY name`)).map(fromRow).filter(Boolean))
+          (await select(req, ' ORDER BY name')).map(fromRow).filter(Boolean))
       } catch (err) { throw wrap(err) }
     },
     async get (req, name) {
       if (!NAME.test(String(name || ''))) return null
       try {
         return await remember(req, name, async () => {
-          const rows = await run(req, `SELECT ${COLUMNS} FROM ${table} WHERE name = :name`, { name })
+          const rows = await select(req, ' WHERE name = :name', { name })
           return rows.length ? fromRow(rows[0]) : null
         })
       } catch (err) { throw wrap(err) }
@@ -130,16 +156,16 @@ function createStore ({ table, run, obo }) {
       try {
         const exists = await run(req, `SELECT 1 AS x FROM ${table} WHERE name = :name`, { name: def.name })
         if (exists.length) throw new OgcError(409, 'Conflict', `A service named ${def.name} already exists`)
-        await run(req, `INSERT INTO ${table} (${COLUMNS}) VALUES (:name, :title, :description, :collections, current_user(), current_timestamp(), current_user(), current_timestamp(), 1)`,
-          { name: def.name, title: def.title, description: def.description, collections: JSON.stringify(def.collections) })
+        await write(req, `INSERT INTO ${table} (${COLUMNS}) VALUES (:name, :title, :description, :collections, NULLIF(:warehouse, ''), current_user(), current_timestamp(), current_user(), current_timestamp(), 1)`,
+          { name: def.name, title: def.title, description: def.description, collections: JSON.stringify(def.collections), warehouse: def.warehouse || '' })
         forget(def.name)
       } catch (err) { throw wrap(err) }
     },
     async update (req, def, version) {
       if (!Number.isSafeInteger(Number(version))) throw invalid('version is required to update a service')
       try {
-        const rows = await run(req, `UPDATE ${table} SET title = :title, description = :description, collections = :collections, updated_by = current_user(), updated_at = current_timestamp(), version = version + 1 WHERE name = :name AND version = CAST(:version AS BIGINT)`,
-          { name: def.name, title: def.title, description: def.description, collections: JSON.stringify(def.collections), version: String(version) })
+        const rows = await write(req, `UPDATE ${table} SET title = :title, description = :description, collections = :collections, warehouse = NULLIF(:warehouse, ''), updated_by = current_user(), updated_at = current_timestamp(), version = version + 1 WHERE name = :name AND version = CAST(:version AS BIGINT)`,
+          { name: def.name, title: def.title, description: def.description, collections: JSON.stringify(def.collections), warehouse: def.warehouse || '', version: String(version) })
         forget(def.name)
         if (Number(rows[0]?.num_affected_rows ?? 1) === 0) throw new OgcError(409, 'Conflict', `${def.name} was changed by someone else (or deleted); reload it and try again`)
       } catch (err) { throw wrap(err) }

@@ -18,7 +18,7 @@ export interface GatewayInfo {
   ogc: { enabled: boolean, table: string | null }
 }
 
-export interface Warehouse { id: string, name: string, state: string, size: string, serverless: boolean }
+export interface Warehouse { id: string, name: string, state: string, size: string, serverless: boolean, realtime?: boolean }
 
 export interface CatalogTable {
   table: string
@@ -52,6 +52,8 @@ export interface OgcService {
   title: string
   description: string
   collections: OgcCollection[]
+  /** Engine: warehouse id for reads ('' = the gateway's bound warehouse) */
+  warehouse?: string
   owner?: string | null
   updatedBy?: string | null
   updatedAt?: string | null
