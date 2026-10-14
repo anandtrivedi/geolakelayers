@@ -144,11 +144,11 @@ function ogcRouter (deps) {
     const b = base(req, s.name)
     res.type(JSON_TYPE).json({
       title: s.title,
-      description: s.description || 'Unity Catalog tables as OGC API – Features, served by ArcGateway',
+      description: s.description || 'Unity Catalog tables as OGC API – Features, served by LakeGate',
       links: [
         link(b, 'self', JSON_TYPE, 'This document'),
         link(`${b}/api`, 'service-desc', OPENAPI_TYPE, 'API definition'),
-        link(`${selfOrigin(req)}/#ogc`, 'service-doc', 'text/html', 'ArcGateway console'),
+        link(`${selfOrigin(req)}/#ogc`, 'service-doc', 'text/html', 'LakeGate console'),
         link(`${b}/conformance`, 'conformance', JSON_TYPE, 'Conformance classes'),
         link(`${b}/conformance`, 'http://www.opengis.net/def/rel/ogc/1.0/conformance', JSON_TYPE, 'Conformance classes'),
         link(`${b}/collections`, 'data', JSON_TYPE, 'Collections'),

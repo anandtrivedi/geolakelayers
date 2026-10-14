@@ -1,4 +1,4 @@
-// How ArcGateway fits: map clients -> ArcGateway (one per Databricks workspace) -> SQL warehouse ->
+// How LakeGate fits: map clients -> LakeGate (one per Databricks workspace) -> SQL warehouse ->
 // Unity Catalog, which holds both the data and the gateway's settings. House style: teal header bands,
 // red flow arrows, green governed-access arrow, featured boxes in #fff3f0 with a Databricks-red border,
 // light-gray context boxes, Arial.
@@ -59,8 +59,8 @@ function Arrow ({ d, color = RED, label, lx, ly, dashed = false }: {
 export function Architecture () {
   return (
     <svg viewBox='0 0 1120 556' role='img' aria-labelledby='arch-title arch-desc' style={{ width: '100%', height: 'auto', fontFamily: 'Arial, Helvetica, sans-serif' }}>
-      <title id='arch-title'>How ArcGateway fits between map clients and Databricks</title>
-      <desc id='arch-desc'>ArcGIS and OGC API clients call an ArcGateway in each Databricks workspace. The gateway runs FeatureServer and OGC API queries on a SQL warehouse as the signed-in user, so Unity Catalog permissions apply. Its settings and the data are Unity Catalog tables.</desc>
+      <title id='arch-title'>How LakeGate fits between map clients and Databricks</title>
+      <desc id='arch-desc'>ArcGIS and OGC API clients call a LakeGate gateway in each Databricks workspace. The gateway runs FeatureServer and OGC API queries on a SQL warehouse as the signed-in user, so Unity Catalog permissions apply. Its settings and the data are Unity Catalog tables.</desc>
       <defs>
         <filter id='shadow' x='-10%' y='-10%' width='120%' height='130%'><feDropShadow dx='0' dy='2' stdDeviation='2.5' floodColor='#1b3139' floodOpacity='0.12' /></filter>
         <marker id='redHead' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill={RED} /></marker>
@@ -83,10 +83,10 @@ export function Architecture () {
 
       <Box x={430} y={82} w={280} h={70} gray title='Databricks Apps front door'
         lines={['Databricks SSO, token per workspace', 'CORS: allow-listed origins']} />
-      <Box x={430} y={196} w={280} h={170} featured title='ArcGateway (this app)'
+      <Box x={430} y={196} w={280} h={170} featured title='LakeGate (this app)'
         lines={['FeatureServer layer per UC table', 'OGC API – Features services', 'queries run as the viewer (OBO)', 'geometry + id by type and content', 'warehouse allow-list, catalog scope', 'one per workspace, same bundle']} />
       <Box x={430} y={430} w={280} h={84} title='Other workspaces'
-        lines={['their own ArcGateway', '(e.g. gov: own metastore)', 'listed in the workspace directory']} />
+        lines={['their own LakeGate gateway', '(e.g. gov: own metastore)', 'listed in the workspace directory']} />
 
       <Box x={820} y={82} w={260} h={92} title='SQL warehouse (serverless)'
         lines={['bbox pushdown with ST_Intersects', 'paging, counts, extents', 'allow-listed per gateway']} />
@@ -94,7 +94,7 @@ export function Architecture () {
         lines={['grants, row filters and column masks', 'decide what each viewer sees']} />
       <Box x={836} y={292} w={228} h={92} gray shadow={false} title='Delta tables'
         lines={['Maritime, Overture, AIS, ...', 'data stays in Databricks', '(nothing copied to ArcGIS)']} />
-      <Box x={836} y={398} w={228} h={100} gray shadow={false} title='ArcGateway settings'
+      <Box x={836} y={398} w={228} h={100} gray shadow={false} title='LakeGate settings'
         lines={['OGC services', 'layer overrides', 'UC tables, read as the viewer']} />
 
       <Arrow d='M300 118 L428 118' label='sign in (popup)' lx={364} ly={108} dashed />

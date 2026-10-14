@@ -10,7 +10,7 @@
     /api/warehouses     allow-listed warehouses the caller can use (widget settings)
     /api/optimize       write a map-optimized copy of a table (console), job status at /api/optimize/<id>
     /auth/handoff       popup page that hands the signed-in user's token to an allowed origin
-    /                   ArcGateway console (public/, built from console/)
+    /                   LakeGate console (public/, built from console/)
     /api/info           gateway status and the workspace directory (console)
     /ogc/<service>/...  OGC API – Features (ogc/), services defined at /api/ogc (console)
 
@@ -43,9 +43,9 @@ const koop = new Koop({ logLevel: process.env.LOG_LEVEL || 'info', disableCors: 
 const app = koop.server
 
 // Console-only routes: refuse CORS preflights before the cors middleware below answers them
-app.use('/api/optimize', consoleOnly('Optimize can only be started from the ArcGateway console'))
-app.use('/api/overrides', consoleOnly('Layer overrides can only be changed from the ArcGateway console'))
-app.use('/api/ogc', consoleOnly('OGC services can only be changed from the ArcGateway console'))
+app.use('/api/optimize', consoleOnly('Optimize can only be started from the LakeGate console'))
+app.use('/api/overrides', consoleOnly('Layer overrides can only be changed from the LakeGate console'))
+app.use('/api/ogc', consoleOnly('OGC services can only be changed from the LakeGate console'))
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
   methods: ['GET', 'POST'],
@@ -154,7 +154,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }))
 
-// Other ArcGateways (one per workspace), so authors can pick a workspace instead of pasting a URL.
+// Other LakeGate gateways (one per workspace), so authors can pick a workspace instead of pasting a URL.
 // DIRECTORY = "name=url;name=url"
 const directory = parseDirectory(process.env.DIRECTORY)
 const { version } = require('./package.json')
@@ -417,14 +417,14 @@ app.post('/api/optimize', express.json(), async (req, res) => {
   let spec
   try {
     spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), layerSpec.whoOf(obo(req)))
-    // Never replace a table ArcGateway didn't write: CREATE OR REPLACE on a name the author typed
+    // Never replace a table LakeGate didn't write: CREATE OR REPLACE on a name the author typed
     // could otherwise wipe an unrelated table
     const [cat, sch] = target.split('.')
     const existing = await runSql(req, `SHOW TABLES IN ${cat}.${sch} LIKE '${name}'`, 60)
     if (existing.length) {
       const props = await runSql(req, `SHOW TBLPROPERTIES ${target}.${name}`, 60)
       const ours = props.some(p => (p.key || Object.values(p)[0]) === 'arcgateway.optimized')
-      if (!ours) return res.status(409).json({ error: `${target}.${name} already exists and was not written by ArcGateway; pick another name` })
+      if (!ours) return res.status(409).json({ error: `${target}.${name} already exists and was not written by LakeGate; pick another name` })
     }
   } catch (err) {
     return res.status(500).json({ error: err.message })
@@ -436,7 +436,7 @@ app.post('/api/optimize', express.json(), async (req, res) => {
   const sql = `
     CREATE OR REPLACE TABLE ${out}
     CLUSTER BY (_xmin, _ymin)
-    COMMENT 'Map-optimized copy of ${table}, written by ArcGateway'
+    COMMENT 'Map-optimized copy of ${table}, written by LakeGate'
     TBLPROPERTIES ('arcgateway.optimized' = 'true', 'arcgateway.source' = '${table}')
     AS SELECT *, ST_XMin(geom) AS _xmin, ST_YMin(geom) AS _ymin, ST_XMax(geom) AS _xmax, ST_YMax(geom) AS _ymax
     FROM (SELECT *${except}, ${geomExpr} AS geom FROM ${spec.source || table}) AS src

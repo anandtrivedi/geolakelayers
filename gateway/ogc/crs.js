@@ -1,5 +1,5 @@
 /*
-  crs.js — the two coordinate reference systems ArcGateway's OGC API offers (OGC API – Features Part 2):
+  crs.js — the two coordinate reference systems LakeGate's OGC API offers (OGC API – Features Part 2):
   CRS84 (lon/lat WGS 84, the default and storage CRS) and EPSG:3857 (Web Mercator)
 */
 

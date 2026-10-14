@@ -1,4 +1,4 @@
-# ArcGateway: Databricks feature gateway for ArcGIS (Experience Builder "Databricks Data" widget, Map Viewer, Pro).
+# LakeGate: Databricks feature gateway for ArcGIS (Experience Builder "Databricks Data" widget, Map Viewer, Pro).
 #
 # One gateway per workspace (a Databricks sign-in is per workspace). Workspaces that share a metastore
 # see the same Unity Catalog catalogs, so one gateway can serve all of them.
@@ -25,7 +25,7 @@ variables:
     description: Optional cap on the catalogs the widget may list. "-" = no cap (authors choose any catalog the user can see)
     default: "-"
   directory:
-    description: Other ArcGateways shown in the console and offered in the widget, "name=url;name=url". "-" = none
+    description: Other LakeGate gateways shown in the console and offered in the widget, "name=url;name=url". "-" = none
     default: "-"
   editing:
     description: Master switch for editing ("true" / "false"). Off by default; apps also have to turn it on.
@@ -47,7 +47,7 @@ resources:
   apps:
     gateway:
       name: ${var.app_name}
-      description: ArcGateway - serves Unity Catalog tables as ArcGIS FeatureServer layers (Experience Builder Databricks Data widget, Map Viewer, ArcGIS Pro)
+      description: LakeGate - serves Unity Catalog tables as ArcGIS FeatureServer layers (Experience Builder Databricks Data widget, Map Viewer, ArcGIS Pro)
       source_code_path: .
       # Queries run as the signed-in user, so Unity Catalog decides what each person sees
       user_api_scopes:

@@ -111,7 +111,7 @@ export async function fetchWarehouses (gateway: string): Promise<{ default: stri
   return memo(memoKey(gateway, '/api/warehouses'), () => getJson(gateway, '/api/warehouses'))
 }
 
-/** Other ArcGateways this gateway knows about (its workspace directory). */
+/** Other LakeGate gateways this gateway knows about (its workspace directory). */
 export async function fetchDirectory (gateway: string): Promise<Array<{ name: string, url: string }>> {
   return (await memo(memoKey(gateway, '/api/info'), () => getJson(gateway, '/api/info'))).directory || []
 }

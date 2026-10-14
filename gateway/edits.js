@@ -1,5 +1,5 @@
 /*
-  edits.js — ArcGIS applyEdits for ArcGateway (off unless EDITING=true)
+  edits.js — ArcGIS applyEdits for LakeGate (off unless EDITING=true)
 
   POST <layer>/applyEdits with adds / updates / deletes, the way the ArcGIS Maps SDK (Experience Builder's
   Edit widget, editable Table) sends them. Each edit is SQL on the Delta table, run as the editor, so Unity

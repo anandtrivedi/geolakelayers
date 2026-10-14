@@ -1,9 +1,15 @@
-# Databricks Data for ArcGIS Experience Builder
+# LakeGate
 
-An Experience Builder widget that puts Unity Catalog tables on an ArcGIS map as live layers, backed by
-**ArcGateway**, a small Databricks App that serves those tables as ArcGIS FeatureServer layers. Authors pick
-tables from one or more Databricks workspaces; viewers sign in with Databricks and see only what Unity Catalog
-lets them see. Nothing is copied into ArcGIS: every pan and zoom is a query on a Databricks SQL warehouse.
+Databricks geospatial for ArcGIS and OGC. LakeGate is a small Databricks App that serves Unity Catalog tables
+as live map layers, in two forms:
+
+- **ArcGIS FeatureServer layers** for Experience Builder apps, through the **Databricks Data** widget in this
+  repository (`widget/databricks-data/`).
+- **OGC API – Features services** for QGIS, GDAL, OpenLayers, Leaflet, MapLibre and scripts. These need only
+  LakeGate, no widget.
+
+Viewers sign in with Databricks and see only what Unity Catalog lets them see. Nothing is copied: every pan and
+zoom is a query on a Databricks SQL warehouse.
 
 ![Published experience with Unity Catalog layers](screenshots/published-app-layers.png)
 
@@ -12,12 +18,12 @@ Which client uses what (Experience Builder, OGC clients like QGIS and GDAL, scri
 
 ## How it fits
 
-![Architecture: ArcGIS clients, ArcGateway per workspace, SQL warehouse and Unity Catalog](screenshots/architecture.png)
+![Architecture: ArcGIS clients, LakeGate per workspace, SQL warehouse and Unity Catalog](screenshots/architecture.png)
 
 - **Databricks Data widget** (`widget/databricks-data/`): signs the user in to each workspace, lists the
   tables they can use, and adds them to the map as Experience Builder data sources, so Map Layers, Legend,
   Table and Filter treat them like any other layer.
-- **ArcGateway** (`gateway/`): a Databricks App, one per workspace. It turns ArcGIS FeatureServer requests
+- **LakeGate** (`gateway/`): a Databricks App, one per workspace. It turns ArcGIS FeatureServer requests
   (extent, paging, filters, counts) into SQL and runs them **as the signed-in user**. Map Viewer, ArcGIS Pro
   and SDK apps can use its layer URLs too. It also publishes sets of tables as **OGC API – Features**
   services for QGIS, GDAL, OpenLayers, MapLibre and pipelines (see [OGC API – Features](#ogc-api--features)).
@@ -25,7 +31,7 @@ Which client uses what (Experience Builder, OGC clients like QGIS and GDAL, scri
   column, WKT, WKB or GeoJSON in a text or binary column, or longitude/latitude columns (see
   [How tables are read](#how-tables-are-read)).
 
-A Databricks sign-in belongs to one workspace, so each workspace runs its own ArcGateway (same code, one
+A Databricks sign-in belongs to one workspace, so each workspace runs its own LakeGate gateway (same code, one
 bundle). Workspaces that share a metastore see the same catalogs and can share one gateway.
 
 ## Deployment
@@ -34,9 +40,12 @@ You need: a recent Databricks CLI (built with v1.17) with a profile for each wor
 with user authorization, a serverless SQL warehouse, and ArcGIS Enterprise 11.0 or later (this project is
 built and tested against 12.1).
 
-### 1. Deploy ArcGateway to a workspace
+### 1. Deploy LakeGate to a workspace
 
-ArcGateway is a Databricks Asset Bundle in `gateway/`. Each workspace is a target in
+The Databricks app and bundle are still named `arcgateway` (LakeGate was called ArcGateway), so its URL is
+`https://arcgateway-<workspace id>.<region>.databricksapps.com`.
+
+LakeGate is a Databricks Asset Bundle in `gateway/`. Each workspace is a target in
 `gateway/databricks.yml`:
 
 ```yaml
@@ -67,7 +76,7 @@ the warehouse bound as an app resource. Its URL is printed at the end
 console shows who you are, the workspace, warehouse and allowed origins, and lets you browse tables and
 preview them on a map.
 
-![ArcGateway console](screenshots/arcgateway-overview.png)
+![LakeGate console](screenshots/arcgateway-overview.png)
 
 ![Exploring a catalog in the console](screenshots/arcgateway-explore.png)
 
@@ -155,11 +164,11 @@ SQL parameters and column names are checked against the table.
 
 ## How tables are read
 
-ArcGateway works out each table's geometry and object id from column types and values, never from
+LakeGate works out each table's geometry and object id from column types and values, never from
 column names.
 
 - Geometry: a GEOMETRY or GEOGRAPHY column is used by its type (another SRID is reprojected to 4326).
-  Otherwise ArcGateway samples the table's text and binary columns with `try_to_geometry`; a column whose
+  Otherwise LakeGate samples the table's text and binary columns with `try_to_geometry`; a column whose
   values parse as WKT, EWKT, GeoJSON or WKB (95% of 200 sampled values) is the geometry, in the SRID the
   values carry, else 4326.
 - Object id: the table's Unity Catalog primary key when it is a single integer column. Otherwise an id
@@ -184,7 +193,7 @@ To make a table editable without an override, declare its primary key:
 
 ## OGC API – Features
 
-Besides ArcGIS layers, ArcGateway publishes OGC API – Features services: pick tables in the console, save
+Besides ArcGIS layers, LakeGate publishes OGC API – Features services: pick tables in the console, save
 them under a name, and each table becomes a collection at
 `https://<gateway>/ogc/<service>/collections/<table>/items`. Responses are GeoJSON. The service implements
 Part 1 (Core, GeoJSON, OpenAPI 3.0) and Part 2 (CRS84 and EPSG:3857).
@@ -245,7 +254,7 @@ A map pan sends dozens of small read queries at once, which is the workload Lake
 2. Give viewers CAN_USE on it, as on the regular warehouse. Warehouse permissions use workspace groups
    (`users`, not `account users`):
    `databricks warehouses update-permissions <id> --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}'`
-3. Add its id to `allowed_warehouses` in the gateway's bundle target and redeploy. ArcGateway recognizes
+3. Add its id to `allowed_warehouses` in the gateway's bundle target and redeploy. LakeGate recognizes
    Lakehouse//RT warehouses by their type; nothing else to configure.
 
 Then pick it as the engine:
@@ -277,7 +286,7 @@ file reads, so expect less of a gap on big unclustered tables.
 On real prod tables (October 2026, Lakehouse//RT vs the regular Serverless Starter warehouse, timed from
 a client): an AIS points page (270 MB table, native GEOMETRY) 330–500 ms vs 1.5–2.0 s, and a 24-tile pan
 1.5 s vs 6.3 s; a bbox count 140 ms vs 1.1–1.4 s; the map-optimized Overture places copy 125 ms vs 1.1 s;
-AIS H3 hexes 125–160 ms vs 0.8–1.2 s. Through ArcGateway's FeatureServer query (2,000 features): about
+AIS H3 hexes 125–160 ms vs 0.8–1.2 s. Through LakeGate's FeatureServer query (2,000 features): about
 300 ms vs 1.05–1.15 s. The smallest Lakehouse//RT size (Small, 12 DBU/hour) matched X-Large on all of these,
 including 24 tiles at once, so start small and let autoscaling handle concurrency.
 
@@ -311,7 +320,7 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
   in the builder they are shared between its windows, never in published apps.
 - The browser never sends SQL. Table, column and catalog names are checked as plain identifiers; `where`
   clauses are validated; bounding boxes are built from numbers.
-- Caches are per user. "Optimize for maps" only replaces tables ArcGateway wrote itself.
+- Caches are per user. "Optimize for maps" only replaces tables LakeGate wrote itself.
 
 ## Performance
 
@@ -350,7 +359,7 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
 | Path | What it is |
 |---|---|
 | `widget/databricks-data/` | Experience Builder widget (runtime, settings, shared sign-in, tree) |
-| `gateway/` | ArcGateway Databricks App and its bundle (`databricks.yml`) |
+| `gateway/` | LakeGate Databricks App and its bundle (`databricks.yml`) |
 | `gateway/console/` | Console source; built into `gateway/public/` |
 | `test/` | Browser tests and screenshot scripts |
 | `screenshots/` | Images in this README |

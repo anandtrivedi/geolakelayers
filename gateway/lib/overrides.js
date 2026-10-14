@@ -54,7 +54,7 @@ function createTableSql (table) {
   table_name STRING NOT NULL COMMENT 'catalog.schema.table',
   geometry_column STRING, geometry_srid INT, lon_column STRING, lat_column STRING, id_column STRING,
   updated_by STRING, updated_at TIMESTAMP
-) COMMENT 'ArcGateway layer overrides: geometry and id columns for tables that are not detected automatically'
+) COMMENT 'LakeGate layer overrides: geometry and id columns for tables that are not detected automatically'
 TBLPROPERTIES ('arcgateway.layer_overrides' = 'true')`
 }
 

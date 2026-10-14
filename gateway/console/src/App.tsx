@@ -37,8 +37,8 @@ export function App () {
         <div className='brand'>
           <Mark />
           <div>
-            <div className='brand-name'>ArcGateway</div>
-            <div className='brand-sub'>Databricks for ArcGIS</div>
+            <div className='brand-name'>LakeGate</div>
+            <div className='brand-sub'>Databricks geospatial for ArcGIS and OGC</div>
           </div>
         </div>
         <div className='topbar-meta'>
@@ -66,7 +66,7 @@ export function App () {
       </main>
 
       <footer className='footer muted small'>
-        {info ? `${info.name} ${info.version}` : 'ArcGateway'} · Unity Catalog tables as ArcGIS FeatureServer layers and OGC API – Features · Powered by Databricks
+        {info ? `LakeGate ${info.version}` : 'LakeGate'} · Unity Catalog tables as ArcGIS FeatureServer layers and OGC API – Features · Powered by Databricks
       </footer>
     </div>
   )
@@ -78,9 +78,9 @@ function Overview ({ info, warehouses, go }: { info: GatewayInfo, warehouses: Wa
   return (
     <>
       <section className='hero card'>
-        <h1>Databricks tables on ArcGIS and OGC maps</h1>
+        <h1>Geospatial data from Databricks, on ArcGIS and OGC maps</h1>
         <p>
-          ArcGateway connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, through the
+          LakeGate connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, through the
           Databricks Data widget, and anything that speaks OGC API – Features, such as QGIS, GDAL, OpenLayers, Leaflet
           and Python. The data stays in Databricks: maps query it live, and each person sees only what Unity Catalog
           lets them see.
@@ -183,7 +183,7 @@ function Workspaces ({ info, warehouses }: { info: GatewayInfo, warehouses: Ware
       <section className='card'>
         <h2>Workspace directory</h2>
         <p className='muted'>
-          A Databricks sign-in belongs to one workspace, so each workspace runs its own ArcGateway (the same
+          A Databricks sign-in belongs to one workspace, so each workspace runs its own LakeGate gateway (the same
           code, deployed from one bundle). Workspaces that share a metastore see the same catalogs and can
           share a gateway. The Databricks Data widget offers this list when an author adds a workspace.
         </p>

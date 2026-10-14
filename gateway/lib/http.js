@@ -8,7 +8,7 @@ const THREE_PART = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
 // Comma-separated setting; '-' means none (Databricks Apps refuses empty env values)
 const list = v => (v || '').split(',').map(s => s.trim()).filter(s => s && s !== '-')
 
-// Other ArcGateways (one per workspace): "name=url;name=url", https only
+// Other LakeGate gateways (one per workspace): "name=url;name=url", https only
 function parseDirectory (value) {
   return (value || '').split(';').map(s => s.trim()).filter(s => s && s !== '-')
     .map(entry => { const i = entry.indexOf('='); return i > 0 ? { name: entry.slice(0, i).trim(), url: entry.slice(i + 1).trim().replace(/\/$/, '') } : null })

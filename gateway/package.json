@@ -2,7 +2,7 @@
   "name": "arcgateway",
   "version": "0.2.0",
   "private": true,
-  "description": "ArcGateway: serves Unity Catalog tables as ArcGIS FeatureServer layers (provider vendored from koop-provider-databricks @ a08f6e7)",
+  "description": "LakeGate: serves Unity Catalog tables as ArcGIS FeatureServer layers (provider vendored from koop-provider-databricks @ a08f6e7)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
