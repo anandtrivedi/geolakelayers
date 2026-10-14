@@ -1,6 +1,6 @@
 # LakeGate
 
-Databricks geospatial for ArcGIS and OGC. LakeGate is a small Databricks App that serves Unity Catalog tables
+Databricks geospatial gateway for ArcGIS and OGC. LakeGate is a small Databricks App that serves Unity Catalog tables
 as live map layers, in two forms:
 
 - **ArcGIS FeatureServer layers** for Experience Builder apps, through the **Databricks Data** widget in this

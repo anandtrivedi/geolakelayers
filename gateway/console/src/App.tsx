@@ -38,7 +38,7 @@ export function App () {
           <Mark />
           <div>
             <div className='brand-name'>LakeGate</div>
-            <div className='brand-sub'>Databricks geospatial for ArcGIS and OGC</div>
+            <div className='brand-sub'>Databricks geospatial gateway for ArcGIS and OGC</div>
           </div>
         </div>
         <div className='topbar-meta'>
