@@ -170,8 +170,10 @@ When that isn't right (geometry in two longitude/latitude columns, a mostly empt
 wrong one of two geometry columns, or a real id column without a declared primary key), set an override:
 Explore → a table → **How it's read → Change**. Overrides are kept in a Unity Catalog table
 (`layer_overrides_table` in the bundle) and apply to everyone who uses the table through this gateway.
-**Create overrides table** makes it once and grants SELECT to account users; grant MODIFY on it to the
-people who should set overrides. Pick an id column only if its values are unique and never change:
+**Create overrides table** makes it once and grants SELECT to account users. People also need USE CATALOG
+and USE SCHEMA on its catalog and schema (`GRANT USE SCHEMA ON SCHEMA <catalog>.<schema> TO \`account users\``);
+without them their reads fall back to automatic detection. Grant MODIFY on the table to the people who
+should set overrides. Pick an id column only if its values are unique and never change:
 ArcGIS selects, pages and edits by it.
 
 To make a table editable without an override, declare its primary key:
