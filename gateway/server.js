@@ -12,6 +12,7 @@
     /auth/handoff       popup page that hands the signed-in user's token to an allowed origin
     /                   ArcGateway console (public/, built from console/)
     /api/info           gateway status and the workspace directory (console)
+    /ogc/<service>/...  OGC API – Features (ogc/), services defined at /api/ogc (console)
 
   Every request has already been authenticated by the Databricks Apps front door. A request may name a
   warehouse (X-Databricks-Warehouse); only ALLOWED_WAREHOUSES (plus the bound one) are accepted. Queries run as the
@@ -29,10 +30,9 @@ const provider = require('./provider')
 const Model = require('./provider/model')
 const connectionManager = require('./provider/connection')
 const layerSpec = require('./provider/spec')
+const { PLAIN, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly } = require('./lib/http')
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
-// Comma-separated setting; '-' means none (Databricks Apps refuses empty env values)
-const list = v => (v || '').split(',').map(s => s.trim()).filter(s => s && s !== '-')
 // Catalogs to list: empty means every catalog the signed-in user can see, minus the excluded ones
 const catalogs = list(process.env.CATALOGS)
 const excludeCatalogs = list(process.env.EXCLUDE_CATALOGS === undefined ? 'system,samples,hive_metastore,__databricks_internal' : process.env.EXCLUDE_CATALOGS)
@@ -41,14 +41,12 @@ const catalogScope = catalogs.length ? catalogs.join(', ') : 'all catalogs you c
 const koop = new Koop({ logLevel: process.env.LOG_LEVEL || 'info', disableCors: true })
 const app = koop.server
 
-app.use('/api/optimize', (req, res, next) => {
-  if (req.method === 'OPTIONS') return res.status(403).end()
-  next()
-})
+app.use('/api/optimize', consoleOnly('Optimize can only be started from the ArcGateway console'))
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
   methods: ['GET', 'POST'],
   allowedHeaders: ['authorization', 'content-type', 'x-databricks-warehouse'],
+  exposedHeaders: ['Content-Crs'],
   maxAge: 600
 }))
 
@@ -123,6 +121,22 @@ app.post('/databricks/rest/services/:id/FeatureServer/:layer/applyEdits', async 
   }
 })
 
+// OGC API – Features: named sets of tables defined in the console and kept in a Unity Catalog table
+// (OGC_SERVICES_TABLE, '-' = off). Same caller token, warehouse allow-list and caches as the Esri layers.
+const ogc = require('./ogc')
+const ogcTable = list(process.env.OGC_SERVICES_TABLE)[0] || null
+const ogcStore = ogcTable ? ogc.createStore({ table: ogcTable, run: (req, sql, params) => runSql(req, sql, 60, params), obo }) : null
+const ogcDeps = {
+  model: Model,
+  store: ogcStore,
+  obo,
+  selfOrigin,
+  defaultLimit: parseInt(process.env.OGC_DEFAULT_LIMIT) || 100,
+  maxLimit: Math.min(parseInt(process.env.OGC_MAX_LIMIT) || Infinity, parseInt(process.env.MAX_ROWS) || 10000)
+}
+app.use('/ogc', ogc.ogcRouter(ogcDeps))
+app.use('/api/ogc', consoleOnly('OGC services can only be changed from the ArcGateway console'), ogc.consoleApi(ogcDeps))
+
 koop.register(provider)
 
 app.use(express.static(path.join(__dirname, 'public')))
@@ -131,9 +145,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }))
 
 // Other ArcGateways (one per workspace), so authors can pick a workspace instead of pasting a URL.
 // DIRECTORY = "name=url;name=url"
-const directory = (process.env.DIRECTORY || '').split(';').map(s => s.trim()).filter(s => s && s !== '-')
-  .map(entry => { const i = entry.indexOf('='); return i > 0 ? { name: entry.slice(0, i).trim(), url: entry.slice(i + 1).trim().replace(/\/$/, '') } : null })
-  .filter(e => e && /^https:\/\//.test(e.url))
+const directory = parseDirectory(process.env.DIRECTORY)
 const { version } = require('./package.json')
 
 // Everything the console needs to describe this gateway
@@ -152,16 +164,14 @@ app.get('/api/info', (req, res) => {
     catalogCap: catalogs,
     excludeCatalogs,
     directory,
-    editing: editingEnabled
+    editing: editingEnabled,
+    ogc: { enabled: !!ogcStore, table: ogcTable }
   })
 })
 
 app.get('/api/whoami', (req, res) => {
   res.json({ user: req.headers['x-forwarded-email'] || null, origin: req.headers.origin || null })
 })
-
-// Forwarded user token, so queries run with the caller's Unity Catalog permissions
-const obo = req => (process.env.USE_OBO !== 'false' && req.headers['x-forwarded-access-token']) || null
 
 async function runSql (req, sql, timeout = 60, namedParameters) {
   const session = await connectionManager.getSession(obo(req), req.warehouseId)
@@ -175,15 +185,7 @@ async function runSql (req, sql, timeout = 60, namedParameters) {
   }
 }
 
-const PLAIN = /^[A-Za-z_][A-Za-z0-9_]*$/
-
-// Catalog scope for one request: the widget's choice (?catalogs=a,b), limited to the gateway's own
-// CATALOGS cap when one is set. Names must be plain identifiers.
-function requestedCatalogs (req) {
-  const asked = list(req.query.catalogs).filter(c => PLAIN.test(c))
-  if (!catalogs.length) return asked
-  return asked.length ? asked.filter(c => catalogs.includes(c)) : catalogs
-}
+const requestedCatalogs = req => scopedCatalogs(req, catalogs)
 
 const ID_NAMES = "'objectid','oid','fid','bigid','id','object_id'"
 const STRING_ID_NAMES = "'id','gers_id','uuid','guid','globalid','feature_id','fid','objectid'"
@@ -269,12 +271,7 @@ app.get('/api/spec/:table', async (req, res) => {
 // (needs CREATE TABLE on the target schema) as a background job the console polls.
 const optimizeJobs = new Map() // id -> { state, source, target, startedAt, finishedAt, rows, error }
 app.post('/api/optimize', express.json(), async (req, res) => {
-  // Writes a table as the caller, so only the console may ask: same-origin JSON (a cross-site form post
-  // can't send application/json without a CORS preflight, which this route never approves)
-  const self = `https://${req.headers['x-forwarded-host'] || req.headers.host}`
-  if (!String(req.headers['content-type'] || '').startsWith('application/json') || (req.headers.origin && req.headers.origin !== self)) {
-    return res.status(403).json({ error: 'Optimize can only be started from the ArcGateway console' })
-  }
+  // Writes a table as the caller, so only the console may ask (consoleOnly above: same-origin JSON)
   const { table, target } = req.body || {}
   const name = String((req.body || {}).name || '')
   const three = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
@@ -402,14 +399,19 @@ app.get('/auth/handoff', (req, res) => {
 </script>`)
 })
 
-const port = process.env.DATABRICKS_APP_PORT || process.env.PORT || 8080
-const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`Databricks feature gateway listening on :${port}; origins=${allowedOrigins.join(' ') || '(none)'}; catalogs=${catalogScope}; warehouses=${allowedWarehouses.join(',') || '(none)'}`)
-})
+function start (port = process.env.DATABRICKS_APP_PORT || process.env.PORT || 8080) {
+  const server = app.listen(port, '0.0.0.0', () => {
+    console.log(`Databricks feature gateway listening on :${server.address().port}; origins=${allowedOrigins.join(' ') || '(none)'}; catalogs=${catalogScope}; warehouses=${allowedWarehouses.join(',') || '(none)'}`)
+  })
+  // The Databricks Apps proxy keeps connections to the app open and reuses them. Node's default 5 s
+  // keep-alive closes idle sockets first, so a request racing that close comes back as a 502 (seen as
+  // bursts of failed map tiles). Keep sockets open longer than the proxy does.
+  server.keepAliveTimeout = 65000
+  server.headersTimeout = 66000
+  return server
+}
 
-// The Databricks Apps proxy keeps connections to the app open and reuses them. Node's default 5 s
-// keep-alive closes idle sockets first, so a request racing that close comes back as a 502 (seen as
-// bursts of failed map tiles). Keep sockets open longer than the proxy does.
-server.keepAliveTimeout = 65000
-server.headersTimeout = 66000
+if (require.main === module) start()
+
+module.exports = { app, start }
 

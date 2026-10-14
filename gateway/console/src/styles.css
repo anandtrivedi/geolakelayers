@@ -106,3 +106,38 @@ h3 { font-size: 1.1rem; margin: 2px 0 0; }
 .button:disabled { opacity: 0.6; cursor: progress; }
 .optimized-note { margin: 12px 0 0; display: flex; align-items: center; gap: 8px; }
 .optimized-note .chip.small { margin-left: 0; }
+
+/* OGC services */
+.ogc-intro { max-width: 860px; line-height: 1.5; margin: 0; }
+.card-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.button.danger { background: #b3261e; border-color: #b3261e; }
+.button.danger:hover { background: #8f1e18; }
+.ogc-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.ogc-fields .wide { grid-column: 1 / -1; }
+.ogc-fields label, .picked-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
+.ogc-fields input, .picked-fields input, .picked-fields select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text); background: #fff; }
+.ogc-fields input:disabled { background: #f3f5f6; }
+input.invalid { border-color: #b3261e; }
+.ogc-editor { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 18px; align-items: start; }
+.ogc-editor .explorer-tree { max-height: 560px; position: static; }
+.picker-hint { margin-bottom: 8px; }
+.node.table input[type=checkbox] { margin: 0 4px 0 0; pointer-events: none; }
+.picked-head { margin: 16px 0 8px; font-size: 0.95rem; }
+.ogc-editor .picked-head { margin-top: 0; }
+.picked-list { display: flex; flex-direction: column; gap: 10px; }
+.picked { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.picked-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.picked-table { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picked-fields { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 10px; }
+.icon-button { border: 1px solid var(--border); background: #fff; border-radius: 5px; width: 26px; height: 26px; cursor: pointer; color: var(--muted); font: inherit; line-height: 1; }
+.icon-button:hover:not(:disabled) { color: var(--text); background: #f0f3f5; }
+.icon-button:disabled { opacity: 0.4; cursor: default; }
+.endpoint-list { display: flex; flex-direction: column; gap: 6px; }
+.endpoint { display: grid; grid-template-columns: 200px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+.endpoint-label { font-size: 0.85rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; gap: 6px; align-items: center; }
+.endpoint-label .geom-chip { margin-left: 0; font-weight: 400; }
+.snippet-wrap { position: relative; }
+.snippet-wrap .button { position: absolute; top: 8px; right: 8px; }
+.snippet { background: #1b3139; color: #e8eef0; border-radius: 8px; padding: 14px 16px; font-size: 0.8rem; line-height: 1.55; overflow: auto; margin: 0 0 10px; white-space: pre; }
+.endpoint-list + .picked-head, .snippet-wrap + p { margin-top: 14px; }
+section.card > .map-preview { margin-top: 14px; }

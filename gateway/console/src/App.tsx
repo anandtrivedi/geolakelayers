@@ -3,8 +3,10 @@ import { api } from './api'
 import type { GatewayInfo, Warehouse } from './api'
 import { Architecture } from './components/Architecture'
 import { Explorer } from './components/Explorer'
+import { OgcServices } from './components/OgcServices'
 
-type Tab = 'overview' | 'explore' | 'workspaces'
+type Tab = 'overview' | 'explore' | 'ogc' | 'workspaces'
+const TAB_LABELS: Record<Tab, string> = { overview: 'Overview', explore: 'Explore data', ogc: 'OGC services', workspaces: 'Workspaces' }
 
 const Mark = () => (
   <svg width='26' height='29' viewBox='0 0 300 331' aria-hidden='true'>
@@ -13,7 +15,7 @@ const Mark = () => (
 )
 
 export function App () {
-  const [tab, setTab] = useState<Tab>(() => (location.hash.slice(1) as Tab) || 'overview')
+  const [tab, setTab] = useState<Tab>(() => { const h = location.hash.slice(1) as Tab; return h in TAB_LABELS ? h : 'overview' })
   const [info, setInfo] = useState<GatewayInfo | null>(null)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [error, setError] = useState('')
@@ -45,9 +47,9 @@ export function App () {
       </header>
 
       <nav className='tabs' role='tablist'>
-        {(['overview', 'explore', 'workspaces'] as Tab[]).map(t => (
+        {(Object.keys(TAB_LABELS) as Tab[]).map(t => (
           <button key={t} role='tab' aria-selected={tab === t} className={`tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-            {t === 'overview' ? 'Overview' : t === 'explore' ? 'Explore data' : 'Workspaces'}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </nav>
@@ -56,11 +58,12 @@ export function App () {
         {error && <div className='card error'>Could not reach the gateway: {error}</div>}
         {tab === 'overview' && info && <Overview info={info} warehouses={warehouses} />}
         {tab === 'explore' && <Explorer />}
+        {tab === 'ogc' && info && <OgcServices info={info} />}
         {tab === 'workspaces' && info && <Workspaces info={info} />}
       </main>
 
       <footer className='footer muted small'>
-        {info ? `${info.name} ${info.version}` : 'ArcGateway'} · Unity Catalog tables as ArcGIS FeatureServer layers · Powered by Databricks
+        {info ? `${info.name} ${info.version}` : 'ArcGateway'} · Unity Catalog tables as ArcGIS FeatureServer layers and OGC API – Features · Powered by Databricks
       </footer>
     </div>
   )

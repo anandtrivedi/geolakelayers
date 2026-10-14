@@ -25,7 +25,8 @@ function loadSdk (): Promise<void> {
   return sdk
 }
 
-export function MapPreview ({ table }: { table: string }) {
+// table: a FeatureServer layer; ogc: an OGC API – Features collection (drawn with OGCFeatureLayer)
+export function MapPreview ({ table, ogc }: { table: string, ogc?: { url: string, collectionId: string } }) {
   const el = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState('Loading map…')
 
@@ -36,11 +37,14 @@ export function MapPreview ({ table }: { table: string }) {
     ;(async () => {
       try {
         await loadSdk()
-        const [ArcMap, MapView, FeatureLayer] = await window.$arcgis!.import([
-          '@arcgis/core/Map.js', '@arcgis/core/views/MapView.js', '@arcgis/core/layers/FeatureLayer.js'
+        const [ArcMap, MapView, FeatureLayer, OGCFeatureLayer] = await window.$arcgis!.import([
+          '@arcgis/core/Map.js', '@arcgis/core/views/MapView.js', '@arcgis/core/layers/FeatureLayer.js', '@arcgis/core/layers/OGCFeatureLayer.js'
         ])
         if (cancelled || !el.current) return
-        const layer = new FeatureLayer({ url: `${location.origin}${layerPath(table)}`, outFields: ['*'], popupTemplate: { title: table.split('.').pop(), content: [{ type: 'fields' }] } })
+        const popupTemplate = { title: table.split('.').pop(), content: [{ type: 'fields' }] }
+        const layer = ogc
+          ? new OGCFeatureLayer({ url: ogc.url, collectionId: ogc.collectionId, outFields: ['*'], popupTemplate })
+          : new FeatureLayer({ url: `${location.origin}${layerPath(table)}`, outFields: ['*'], popupTemplate })
         view = new MapView({ container: el.current, map: new ArcMap({ basemap: 'gray-vector', layers: [layer] }), center: [-98, 38], zoom: 3 })
         setStatus('Loading layer…')
         await layer.load()
@@ -55,7 +59,7 @@ export function MapPreview ({ table }: { table: string }) {
       }
     })()
     return () => { cancelled = true; view?.destroy() }
-  }, [table])
+  }, [table, ogc?.url, ogc?.collectionId])
 
   return (
     <div className='map-preview'>

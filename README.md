@@ -16,7 +16,8 @@ lets them see. Nothing is copied into ArcGIS: every pan and zoom is a query on a
   Table and Filter treat them like any other layer.
 - **ArcGateway** (`gateway/`): a Databricks App, one per workspace. It turns ArcGIS FeatureServer requests
   (extent, paging, filters, counts) into SQL and runs them **as the signed-in user**. Map Viewer, ArcGIS Pro
-  and SDK apps can use its layer URLs too.
+  and SDK apps can use its layer URLs too. It also publishes sets of tables as **OGC API – Features**
+  services for QGIS, GDAL, OpenLayers, MapLibre and pipelines (see [OGC API – Features](#ogc-api--features)).
 - **Your data stays in Unity Catalog.** A table is map-ready if it has an id column and geometry stored as
   GEOMETRY/GEOGRAPHY, WKT, WKB or longitude/latitude columns.
 
@@ -148,6 +149,58 @@ capture. New features get the next id after the table's current maximum, and the
 Edits are accepted only from origins in `allowed_origins` (and the gateway's own pages); values are sent as
 SQL parameters and column names are checked against the table.
 
+## OGC API – Features
+
+Besides ArcGIS layers, ArcGateway publishes OGC API – Features services: pick tables in the console, save
+them under a name, and each table becomes a collection at
+`https://<gateway>/ogc/<service>/collections/<table>/items`. Responses are GeoJSON. The service implements
+Part 1 (Core, GeoJSON, OpenAPI 3.0) and Part 2 (CRS84 and EPSG:3857).
+
+Turning it on (Databricks admin): set `ogc_services_table` in the bundle target to a Unity Catalog table
+name, for example `main.arcgateway.ogc_services`, and redeploy. Then open the console's **OGC services**
+tab and use **Create table** once (it needs CREATE TABLE on that schema). Grant SELECT on the table to the
+people and service principals that read services, and MODIFY to the people who define them.
+
+Defining a service: **OGC services → New service**, tick tables in the catalog tree, set a title per
+table and optionally a time field (enables `datetime` filtering), and save. The service's card lists its
+landing page, conformance, OpenAPI, collection and items URLs, with copyable `curl` and GDAL commands and
+a map preview.
+
+| Path | What it returns |
+|---|---|
+| `/ogc/<service>` | Landing page (links to the API definition, conformance and collections) |
+| `/ogc/<service>/conformance` | Conformance classes |
+| `/ogc/<service>/api` | OpenAPI 3.0 definition, with each collection's queryable fields |
+| `/ogc/<service>/collections` | One collection per table: extent, time range, CRS list |
+| `/ogc/<service>/collections/<id>/items` | Features as GeoJSON, paged with `next` links |
+| `/ogc/<service>/collections/<id>/items/<fid>` | One feature |
+| `/ogc/<service>/collections/<id>/queryables` | Fields that can be filtered with `?field=value` |
+
+Items accept `bbox` (and `bbox-crs`), `crs` (CRS84 or `http://www.opengis.net/def/crs/EPSG/0/3857`),
+`limit` (default 100, at most `MAX_ROWS`), `offset`, `datetime` (instant or interval, for collections with
+a time field) and `field=value` filters on queryable fields. Unknown parameters are refused with a 400, as
+the standard requires, so a typo never returns the whole table.
+
+Who can call it: everything still goes through the Databricks Apps front door, so clients need a
+Databricks OAuth token. Personal access tokens are not accepted.
+
+- Browser maps on the gateway's own pages use the session; on another site they need an allow-listed
+  origin and a Bearer token, the same way the Experience Builder widget signs in.
+- Scripts and pipelines send `Authorization: Bearer <token>`. For a person:
+  `databricks auth token --host <workspace URL>`. For a service principal: its OAuth M2M token from
+  `<workspace>/oidc/v1/token` (client credentials). The service principal needs CAN_USE on the app,
+  CAN_USE on the warehouse and SELECT on the tables.
+
+```bash
+TOKEN=$(databricks auth token --host https://<workspace> | jq -r .access_token)
+curl -H "Authorization: Bearer $TOKEN" "https://<gateway>/ogc/<service>/collections/<id>/items?limit=10&bbox=-77.2,38.8,-76.9,39.0"
+GDAL_HTTP_HEADERS="Authorization: Bearer $TOKEN" ogrinfo -ro -so "OAPIF:https://<gateway>/ogc/<service>"
+```
+
+Queries run as the caller, exactly like the ArcGIS layers, so Unity Catalog grants (and row filters and
+column masks) decide what each client gets. Collections the caller can't read are left out of their
+collection list. The services are read-only.
+
 ## Configuration reference
 
 Gateway (bundle variables → app environment; list settings use `-` for "none" because Databricks Apps
@@ -164,6 +217,7 @@ rejects empty values):
 | `MAX_ROWS` | `4000` | Features per page |
 | `BIG_TABLE_FEATURES` | `250000` | Above this, layers draw only when zoomed in (about zoom 9) |
 | `editing` | `"false"` | Master switch for editing on this gateway |
+| `ogc_services_table` | `-` | Unity Catalog table holding OGC API service definitions; `-` turns OGC API off |
 
 Widget (set in the builder): workspaces (name, gateway URL, warehouse, catalogs viewers can browse), whether
 viewers can browse and add tables, whether layers can be edited, start-up layers.
@@ -202,6 +256,9 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
 - `gateway/console/`: the console (React + TypeScript, Vite). `npm run console:build` writes `gateway/public/`,
   which is deployed as static files.
 - `gateway/provider/`: adapted from `koop-provider-databricks`; `spec.js` works out each table's geometry and id.
+- Tests: `cd gateway && npm test` (node:test, no network; Databricks SQL is faked) and the widget's jest
+  tests in `widget/databricks-data/tests/`, which run inside a Developer Edition client.
+  `scripts/test-all.sh` runs both (set `EXB_CLIENT` to the Developer Edition `client` folder).
 - `test/index.html` and `test/browser-test.mjs`: the widget's request path on plain ArcGIS Maps SDK, run
   headless against a deployed gateway. `test/console-shots.mjs` screenshots the console.
 - `CLAUDE.md` has the design notes and known gotchas.

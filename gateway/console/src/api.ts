@@ -13,6 +13,8 @@ export interface GatewayInfo {
   catalogCap: string[]
   excludeCatalogs: string[]
   directory: { name: string, url: string }[]
+  editing: boolean
+  ogc: { enabled: boolean, table: string | null }
 }
 
 export interface Warehouse { id: string, name: string, state: string, size: string, serverless: boolean }
@@ -34,12 +36,39 @@ export interface LayerSpec {
   bboxColumns?: boolean
 }
 
+export interface OgcCollection { id: string, table: string, title: string, description?: string, timeField: string | null }
+export interface OgcService {
+  name: string
+  title: string
+  description: string
+  collections: OgcCollection[]
+  owner?: string | null
+  updatedBy?: string | null
+  updatedAt?: string | null
+  version?: number
+}
+export interface OgcColumns { table: string, idField: string, count: number, timeFields: string[], queryables: string[] }
+
+/** Error from the gateway; setup = the OGC services table doesn't exist yet */
+export class ApiError extends Error {
+  status: number
+  setup: boolean
+  constructor (message: string, status: number, setup = false) { super(message); this.status = status; this.setup = setup }
+}
+
 export interface OptimizeJob { id: string, state: 'running' | 'done' | 'failed', source: string, target: string, startedAt: number, finishedAt?: number, rows?: number, error?: string }
 
 async function get<T> (path: string): Promise<T> {
   const r = await fetch(path, { credentials: 'same-origin' })
   const d = await r.json().catch(() => ({}))
-  if (!r.ok) throw new Error(d?.error?.message || d?.error || `HTTP ${r.status}`)
+  if (!r.ok) throw new ApiError(d?.error?.message || d?.error || d?.description || `HTTP ${r.status}`, r.status, !!d?.setup)
+  return d as T
+}
+
+async function send<T> (method: string, path: string, body?: unknown): Promise<T> {
+  const r = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) })
+  const d = r.status === 204 ? {} : await r.json().catch(() => ({}))
+  if (!r.ok) throw new ApiError(d?.error || `HTTP ${r.status}`, r.status, !!d?.setup)
   return d as T
 }
 
@@ -56,6 +85,13 @@ export const api = {
     return d
   },
   job: (id: string) => get<OptimizeJob>(`/api/optimize/${id}`),
+  ogcServices: () => get<{ table: string, services: OgcService[] }>('/api/ogc/services').then(d => d.services),
+  ogcSave: (s: OgcService, isNew: boolean) => isNew
+    ? send<OgcService>('POST', '/api/ogc/services', s)
+    : send<OgcService>('PUT', `/api/ogc/services/${encodeURIComponent(s.name)}`, s),
+  ogcDelete: (name: string) => send<void>('DELETE', `/api/ogc/services/${encodeURIComponent(name)}`),
+  ogcSetup: () => send<{ ready: boolean }>('POST', '/api/ogc/setup'),
+  ogcColumns: (table: string) => get<OgcColumns>(`/api/ogc/columns/${encodeURIComponent(table)}`),
   count: (table: string) => get<{ count: number }>(`${layerPath(table)}/query?f=json&where=1%3D1&returnCountOnly=true`).then(d => d.count)
 }
 

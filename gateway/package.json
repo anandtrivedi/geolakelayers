@@ -6,6 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test test/*.test.js",
     "console:dev": "vite --config console/vite.config.ts",
     "console:build": "vite build --config console/vite.config.ts"
   },

@@ -6,7 +6,8 @@
   Reuses a single client connection to enable connection pooling across requests.
 */
 
-const { DBSQLClient } = require('@databricks/sql')
+// Looked up on each connect (not destructured) so tests can swap in a fake client
+const dbsql = require('@databricks/sql')
 const logger = require('./logger')
 const crypto = require('crypto')
 const { version } = require('../package.json')
@@ -97,7 +98,7 @@ class ConnectionManager {
       )
     }
 
-    this.client = new DBSQLClient()
+    this.client = new dbsql.DBSQLClient()
     await this.client.connect(connectOptions)
 
     // Register cleanup handlers once
@@ -145,7 +146,7 @@ class ConnectionManager {
     let entry = this.userClients.get(key)
     if (!entry) {
       if (this.userClients.size >= USER_CLIENT_MAX) this.sweepUserClients(true)
-      const client = new DBSQLClient()
+      const client = new dbsql.DBSQLClient()
       const connected = client.connect({
         ...connectionTarget(warehouseId),
         token: userToken,
@@ -237,3 +238,4 @@ class ConnectionManager {
 }
 
 module.exports = new ConnectionManager()
+module.exports.ConnectionManager = ConnectionManager

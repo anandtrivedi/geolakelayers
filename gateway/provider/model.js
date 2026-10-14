@@ -48,9 +48,12 @@ function recordQuery (entry) {
 }
 
 // Execute a statement, fetch all rows, and record it in the query log
-async function executeAndRecord (session, sql, kind, taskId) {
+// (params: named SQL parameters, only sent when there are some)
+async function executeAndRecord (session, sql, kind, taskId, params) {
   const started = Date.now()
-  const op = await session.executeStatement(sql, { queryTimeout: queryTimeoutSeconds })
+  const options = { queryTimeout: queryTimeoutSeconds }
+  if (params && Object.keys(params).length) options.namedParameters = params
+  const op = await session.executeStatement(sql, options)
   const rows = await op.fetchAll()
   await op.close()
   recordQuery({
@@ -208,26 +211,10 @@ Model.prototype.getData = function (req, callback) {
         // Layer info (FeatureServer/0 without /query) only needs the schema, a geometry type and an
         // extent: fetch one sample row instead of a full page, and take the extent from SQL (cached)
         // (Koop doesn't set req.params.method reliably, so look at the path: layer info ends at the layer id)
-        const isLayerInfo = /\/FeatureServer(\/\d+)?\/?$/.test((req.originalUrl || req.url || '').split('?')[0])
+        const isLayerInfo = isLayerInfoPath(req.originalUrl || req.url)
         // Regular query
-        queryString = buildQuery(table, isLayerInfo ? { ...req.query, resultRecordCount: '1', resultOffset: '0' } : req.query, thisTask)
-
-        logger.info(`${thisTask}> Executing query: ${queryString}`)
-
-        // Don't use maxRows option - it conflicts with SQL LIMIT
-        const cacheKey = queryCacheKey(userToken, req.warehouseId, queryString)
-        result = queryCacheGet(cacheKey)
-        if (result) {
-          logger.info(`${thisTask}> Cache hit (${result.length} rows)`)
-        } else {
-          result = await executeAndRecord(session, queryString, 'features', thisTask)
-          queryCachePut(cacheKey, result)
-        }
-
-        logger.info(`${thisTask}> Received ${result.length} rows`)
-
-        // Convert to GeoJSON using ST_AsGeoJSON results
-        const geojson = translateWithSTFunctions(result, req.query)
+        const featureQuery = isLayerInfo ? { ...req.query, resultRecordCount: '1', resultOffset: '0' } : req.query
+        const { geojson } = await runFeatureQuery(session, table, featureQuery, { userToken, warehouseId: req.warehouseId, taskId: thisTask })
 
         logger.info(`${thisTask}> Translated to ${geojson.features.length} features`)
         if (geojson.features.length > 0) {
@@ -380,7 +367,7 @@ function pushValidatedWhere (whereClauses, where) {
 // user WHERE, bbox spatial filter, H3 filter, and time filter. Keeping this
 // in one place ensures returnCountOnly/returnIdsOnly/returnExtentOnly apply the
 // exact same filters as the feature query (ArcGIS clients rely on that parity).
-function buildWhereClauses (query) {
+function buildWhereClauses (query, extra = []) {
   const whereClauses = []
 
   pushValidatedWhere(whereClauses, query.where)
@@ -406,12 +393,15 @@ function buildWhereClauses (query) {
     }
   }
 
+  // Extra clauses built by the caller (OGC API filters), already safe SQL with named parameters
+  for (const clause of extra) whereClauses.push(clause)
+
   return whereClauses
 }
 
 // Build count query (for returnCountOnly)
-function buildCountQuery (table, query) {
-  const whereClauses = buildWhereClauses(query)
+function buildCountQuery (table, query, extra = []) {
+  const whereClauses = buildWhereClauses(query, extra)
   const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
 
   return `SELECT COUNT(*) as cnt FROM ${S().source || table} ${whereClause}`.trim()
@@ -466,9 +456,13 @@ function buildExtentQuery (table, query) {
 // Per-user query cache: key includes the user (UC permissions differ), warehouse and the exact SQL
 const queryCache = new Map() // key -> { rows, at }
 let queryCacheRows = 0
-function queryCacheKey (userToken, warehouseId, sql) {
+function queryCacheKey (userToken, warehouseId, sql, params) {
   const crypto = require('crypto')
-  return crypto.createHash('sha256').update(`${userToken || 'app'}|${warehouseId || ''}|${sql}`).digest('hex')
+  const p = params && Object.keys(params).length ? `\0${JSON.stringify(params)}` : ''
+  return crypto.createHash('sha256').update(`${userToken || 'app'}|${warehouseId || ''}|${sql}${p}`).digest('hex')
+}
+function queryCacheStats () {
+  return { entries: queryCache.size, rows: queryCacheRows }
 }
 function queryCacheGet (key) {
   const hit = queryCache.get(key)
@@ -493,6 +487,7 @@ function queryCachePut (key, rows) {
 function forgetTable (table) {
   layerSpec.forgetTable(table)
   for (const m of [countCache, extentCache]) for (const k of m.keys()) if (k.endsWith(`|${table}`)) m.delete(k)
+  for (const k of temporalCache.keys()) if (k.includes(`|${table}|`)) temporalCache.delete(k)
   for (const k of Object.keys(fieldsCache)) if (k.endsWith(`|${table}`)) delete fieldsCache[k]
   // Query-cache keys are hashes of the SQL; replacing a table is rare, so clear them all
   queryCache.clear(); queryCacheRows = 0
@@ -537,7 +532,7 @@ async function tableExtent (table, session, taskId, who = 'app') {
 }
 
 // Build SQL query with ST functions and filters
-function buildQuery (table, query, taskId) {
+function buildQuery (table, query, taskId, extra = []) {
   const returnGeometry = query.returnGeometry !== 'false'
   const offset = parseResultOffset(query.resultOffset)
   const limit = parseResultRecordCount(query.resultRecordCount)
@@ -545,7 +540,7 @@ function buildQuery (table, query, taskId) {
   // Build SELECT clause
   const selectFields = buildSelectClause(query.outFields, returnGeometry)
 
-  const whereClauses = buildWhereClauses(query)
+  const whereClauses = buildWhereClauses(query, extra)
   const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
 
   // Build ORDER BY clause
@@ -781,7 +776,8 @@ function sanitizeOrderBy (orderBy) {
 }
 
 // Translate results with ST_AsGeoJSON to GeoJSON
-function translateWithSTFunctions (rows, query) {
+// (stringifyComplex: ArcGIS attributes must be scalars; GeoJSON clients get STRUCT/ARRAY values as JSON)
+function translateWithSTFunctions (rows, query, { stringifyComplex = true } = {}) {
   const returnGeometry = query.returnGeometry !== 'false'
 
   return {
@@ -810,7 +806,9 @@ function translateWithSTFunctions (rows, query) {
         const v = properties[k]
         if (v === null || typeof v !== 'object') continue
         if (Buffer.isBuffer(v) || v instanceof Uint8Array) delete properties[k]
-        else if (!(v instanceof Date)) properties[k] = JSON.stringify(v, (key, x) => typeof x === 'bigint' ? Number(x) : x)
+        else if (v instanceof Date) continue
+        else if (stringifyComplex) properties[k] = JSON.stringify(v, bigintToNumber)
+        else properties[k] = JSON.parse(JSON.stringify(v, bigintToNumber))
       }
 
       return {
@@ -820,6 +818,32 @@ function translateWithSTFunctions (rows, query) {
       }
     })
   }
+}
+
+function bigintToNumber (key, x) {
+  return typeof x === 'bigint' ? Number(x) : x
+}
+
+// Layer info (FeatureServer or FeatureServer/0, no /query) vs. a query
+function isLayerInfoPath (url) {
+  return /\/FeatureServer(\/\d+)?\/?$/.test(String(url || '').split('?')[0])
+}
+
+// One page of features: build the SQL, use the per-user cache, translate to GeoJSON. Shared by the
+// Esri path (getData) and OGC API – Features (queryFeatures). Must run with the table's spec in scope.
+async function runFeatureQuery (session, table, query, { userToken, warehouseId, taskId, extra = [], params = {}, stringifyComplex = true } = {}) {
+  const sql = buildQuery(table, query, taskId, extra)
+  logger.info(`${taskId}> Executing query: ${sql}`)
+  const key = queryCacheKey(userToken, warehouseId, sql, params)
+  let rows = queryCacheGet(key)
+  if (rows) {
+    logger.info(`${taskId}> Cache hit (${rows.length} rows)`)
+  } else {
+    rows = await executeAndRecord(session, sql, 'features', taskId, params)
+    queryCachePut(key, rows)
+  }
+  logger.info(`${taskId}> Received ${rows.length} rows`)
+  return { rows, geojson: translateWithSTFunctions(rows, query, { stringifyComplex }) }
 }
 
 // Calculate extent from features
@@ -977,11 +1001,112 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId, who =
   }
 }
 
+// OGC API – Features: one page of a table as GeoJSON, run as the caller.
+//   bbox: list of [xmin, ymin, xmax, ymax] boxes in 4326 (OR-ed; two when crossing the antimeridian)
+//   propertyFilters: [{ column, type }] with values in params (names checked by the caller against DESCRIBE)
+//   time: { field, startMs, endMs } (either end may be null)
+//   cursor: last objectId of the previous page (keyset paging); featureId: one feature
+// Returns { features, numberMatched?, lastId, spec }; throws err.code 400 for tables that can't be served.
+async function queryFeatures ({ table, userToken, warehouseId, bbox = [], propertyFilters = [], params = {}, time, featureId, limit, offset = 0, cursor, count = 'none', taskId = uuidv4() }) {
+  if (!isValidTableName(table)) throw Object.assign(new Error('Invalid table name'), { code: 400 })
+  const session = await connectionManager.getSession(userToken, warehouseId)
+  try {
+    const who = layerSpec.whoOf(userToken)
+    const spec = await layerSpec.resolveSpec(table, (sql, kind) => executeAndRecord(session, sql, kind, taskId), who)
+    if (!spec) throw Object.assign(new Error(`${table} has no usable geometry or id`), { code: 400 })
+    return await layerSpec.store.run(spec, async () => {
+      const extra = []
+      const p = { ...params }
+      const boxes = bbox.map(b => buildBboxFilter(b.join(','), null, '4326')).filter(Boolean)
+      if (boxes.length) extra.push(boxes.length === 1 ? boxes[0] : `(${boxes.join(' OR ')})`)
+      for (const f of propertyFilters) extra.push(f.clause)
+      if (time && time.field) {
+        if (!validateColumnName(time.field).valid) throw Object.assign(new Error('Invalid time field'), { code: 400 })
+        const clause = buildTimeFilter(`${time.startMs ?? 'null'},${time.endMs ?? 'null'}`, time.field)
+        if (clause) extra.push(clause)
+      }
+      // numberMatched counts the filters only, not the paging clauses added below
+      const filterOnly = { extra: [...extra], params: { ...p } }
+      const idCol = S().objectId
+      const keyset = cursor !== undefined && cursor !== null
+      if (featureId !== undefined) { extra.push(`${idCol} = CAST(:fid AS BIGINT)`); p.fid = String(featureId) }
+      if (keyset) { extra.push(`${idCol} > CAST(:cursor AS BIGINT)`); p.cursor = String(cursor) }
+      const query = { resultRecordCount: String(limit || maxRows), resultOffset: String(keyset ? 0 : offset), outFields: '*' }
+      const { geojson } = await runFeatureQuery(session, table, query, { userToken, warehouseId, taskId, extra, params: p, stringifyComplex: false })
+      const features = geojson.features.map(f => ({ type: 'Feature', id: f.properties[idCol], geometry: f.geometry, properties: f.properties }))
+      const out = { features, lastId: features.length ? features[features.length - 1].id : null, spec, idField: idCol }
+      if (count === 'auto') {
+        const n = await countMatched(table, session, taskId, who, filterOnly.extra, filterOnly.params)
+        // (a failed table count comes back as 0; never report fewer matches than this page shows)
+        if (n !== null && n !== undefined && (keyset || n >= offset + features.length)) out.numberMatched = n
+      }
+      return out
+    })
+  } finally {
+    try { await session.close() } catch (e) {}
+  }
+}
+
+// numberMatched: the cached table count when nothing filters, else a COUNT (only for tables small enough
+// that it stays quick). null = unknown.
+async function countMatched (table, session, taskId, who, extra, params) {
+  if (!extra.length) return tableCount(table, session, taskId, who)
+  const total = await tableCount(table, session, taskId, who)
+  if (total > BIG_TABLE_FEATURES) return null
+  const sql = buildCountQuery(table, {}, extra)
+  const key = queryCacheKey(who, '', sql, params)
+  const hit = queryCacheGet(key)
+  if (hit) return Number(hit[0]?.cnt || 0)
+  const rows = await executeAndRecord(session, sql, 'count', taskId, params)
+  queryCachePut(key, rows)
+  return Number(rows[0]?.cnt || 0)
+}
+
+// OGC collection metadata for one table: spec, fields (with SQL types), extent, count and time range
+const temporalCache = new Map()
+async function collectionInfo ({ table, userToken, warehouseId, timeField, taskId = uuidv4() }) {
+  if (!isValidTableName(table)) throw Object.assign(new Error('Invalid table name'), { code: 400 })
+  const session = await connectionManager.getSession(userToken, warehouseId)
+  try {
+    const who = layerSpec.whoOf(userToken)
+    const spec = await layerSpec.resolveSpec(table, (sql, kind) => executeAndRecord(session, sql, kind, taskId), who)
+    if (!spec) throw Object.assign(new Error(`${table} has no usable geometry or id`), { code: 400 })
+    return await layerSpec.store.run(spec, async () => {
+      const fields = await Model.prototype.getFieldMetadata.call({ fieldsCache }, table, session, taskId, who)
+      const extent = await tableExtent(table, session, taskId, who)
+      const count = await tableCount(table, session, taskId, who)
+      let temporal = null
+      if (timeField && validateColumnName(timeField).valid) {
+        const key = `${who}|${table}|${timeField}`
+        const hit = temporalCache.get(key)
+        if (hit && Date.now() - hit.at < cacheTTLMs * 6) {
+          temporal = hit.value
+        } else {
+          try {
+            const rows = await executeAndRecord(session, `SELECT MIN(${timeField}) AS t0, MAX(${timeField}) AS t1 FROM ${S().source || table}`, 'temporal', taskId)
+            const iso = v => (v === null || v === undefined) ? null : new Date(v).toISOString()
+            temporal = [iso(rows[0]?.t0), iso(rows[0]?.t1)]
+            temporalCache.set(key, { value: temporal, at: Date.now() })
+          } catch (e) {
+            logger.warn(`${taskId}> Time range failed for ${table}: ${e.message}`)
+          }
+        }
+      }
+      return { spec, idField: S().objectId, fields, extent, count, temporal }
+    })
+  } finally {
+    try { await session.close() } catch (e) {}
+  }
+}
+
 module.exports = Model
 
 // Recently executed queries (ring buffer) for diagnostics and demo UIs
 Model.recentQueries = recentQueries
 Model.forgetTable = forgetTable
+Model.queryFeatures = queryFeatures
+Model.collectionInfo = collectionInfo
+Model.checkRateLimit = checkRateLimit
 
 // Export internal functions for unit testing only
 Model._internals = {
@@ -1007,5 +1132,13 @@ Model._internals = {
   getAllCoordinates,
   mapDatabricksToEsriFieldType,
   checkRateLimit,
-  executeAndRecord
+  executeAndRecord,
+  isLayerInfoPath,
+  runFeatureQuery,
+  queryCacheKey,
+  queryCacheGet,
+  queryCachePut,
+  queryCacheStats,
+  forgetTable,
+  countMatched
 }
