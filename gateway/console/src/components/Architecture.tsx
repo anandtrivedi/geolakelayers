@@ -79,7 +79,7 @@ export function Architecture () {
         lines={['FeatureServer layer URL', 'with a Databricks OAuth token']} />
       <Box x={40} y={370} w={260} h={74} gray title='OGC API clients'
         lines={['QGIS, GDAL/OGR, OpenLayers, MapLibre,', 'pipelines with an OAuth token']} />
-      <Box x={40} y={460} w={260} h={54} gray title='Viewer' lines={['signs in once per workspace']} />
+      <Box x={40} y={460} w={260} h={54} gray title='Viewer' lines={['signs in once per gateway']} />
 
       <Box x={430} y={82} w={280} h={70} gray title='Databricks Apps front door'
         lines={['Databricks SSO, token per workspace', 'CORS: allow-listed origins']} />

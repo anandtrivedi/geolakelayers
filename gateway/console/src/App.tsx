@@ -191,10 +191,15 @@ function Workspaces ({ info, warehouses }: { info: GatewayInfo, warehouses: Ware
       </section>
       <section className='card'>
         <h2>Adding a workspace</h2>
+        <p><b>On this gateway's metastore:</b> no new gateway. Bind the workspace's catalogs to this gateway's workspace,
+          make sure its people can sign in here and use the warehouse, and add its Experience Builder address to
+          <code>allowed_origins</code>.</p>
+        <p><b>On another metastore</b> (another region, or GovCloud):</p>
         <ol className='steps'>
           <li>Add a target to <code>gateway/databricks.yml</code> with the workspace host, a SQL warehouse and the allowed Portal origins.</li>
           <li>Deploy it: <code>databricks bundle deploy -t &lt;target&gt;</code> and <code>databricks bundle run gateway -t &lt;target&gt;</code>.</li>
           <li>Add the new gateway to <code>directory</code> in every target so it shows up here and in the widget.</li>
+          <li>Grant everyone SELECT on its settings tables; the Health card above shows if that's missing.</li>
         </ol>
       </section>
     </>
@@ -248,7 +253,7 @@ function Health ({ info, warehouses }: { info: GatewayInfo, warehouses: Warehous
         </dl>
         <p className='muted small'>Set in the gateway's bundle (<code>gateway/databricks.yml</code>) and applied on deploy.</p>
         <h3>Can this Experience Builder call the gateway?</h3>
-        <input className='url' value={origin} onChange={e => setOrigin(e.target.value)} placeholder='Paste its address, e.g. https://portal.example.com/portal/apps/experiencebuilder/' aria-label='Experience Builder address' spellCheck={false} />
+        <input className='url origin-test' value={origin} onChange={e => setOrigin(e.target.value)} placeholder='Paste its address, e.g. https://portal.example.com/portal/apps/experiencebuilder/' aria-label='Experience Builder address' spellCheck={false} />
         {tested && <p className={`small ${tested.ok ? '' : 'error'}`}>
           {tested.invalid ? 'That isn\'t a web address.' : tested.ok ? `Yes: ${tested.origin} is allowed.` : `No: add ${tested.origin} to allowed_origins in the bundle and redeploy. Until then its sign-in popup closes and nothing loads.`}
         </p>}

@@ -208,3 +208,4 @@ section.card > .map-preview { margin-top: 14px; }
 .settings-list dt { color: var(--muted, #5f6b70); }
 .settings-list dd { margin: 0; overflow-wrap: anywhere; }
 .copy-token { display: inline; }
+.url.origin-test { width: 100%; box-sizing: border-box; }
