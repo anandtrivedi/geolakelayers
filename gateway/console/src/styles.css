@@ -169,6 +169,13 @@ section.card > .map-preview { margin-top: 14px; }
 .use-what { display: flex; flex-direction: column; gap: 2px; }
 .use-how p { margin: 0 0 6px; }
 .use-how .url-row { margin-bottom: 6px; }
+.use-steps { margin: 0; padding-left: 18px; }
+.use-steps li { margin: 0 0 8px; }
+.use-steps .url-row { margin-top: 6px; }
+.use-row { scroll-margin-top: 16px; }
+.next-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 4px 0 12px; padding: 8px 12px;
+  background: #fff3f0; border-left: 3px solid #ff3621; border-radius: 4px; font-size: 14px; }
+.next-bar button.link { color: #b4231a; font-weight: 600; }
 .use-actions { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .author-tools { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
 .author-tools > summary { cursor: pointer; font-weight: 600; }
