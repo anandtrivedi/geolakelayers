@@ -239,7 +239,10 @@ A map pan sends dozens of small read queries at once, which is the workload Lake
 1. A workspace admin enables the **Lakehouse RT** preview (workspace menu → Previews) and creates a
    **Real-Time** SQL warehouse (Compute → SQL Warehouses → Create → Real-Time). It is in Beta; the account
    may need to be enabled first (the Lakehouse//RT documentation).
-2. Add its id to `realtime_warehouses` in the gateway's bundle target and redeploy. Authors then pick it
+2. Give viewers CAN_USE on it, as on the regular warehouse. Warehouse permissions use workspace groups
+   (`users`, not `account users`):
+   `databricks warehouses update-permissions <id> --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}'`
+3. Add its id to `realtime_warehouses` in the gateway's bundle target and redeploy. Authors then pick it
    in the widget's warehouse list ("Lakehouse//RT, low-latency reads").
 
 Feature, count and extent queries run on Lakehouse//RT, over the Statement Execution API and as the
