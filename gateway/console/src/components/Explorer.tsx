@@ -111,7 +111,7 @@ function TableDetail ({ t, onChanged }: { t: CatalogTable, onChanged: () => void
             <div><dt>Object id</dt><dd>{spec.idSource === 'derived' ? 'derived (read-only)' : <code>{spec.objectId}</code>}</dd></div>
           </dl>
           <div className='url-row'>
-            <code className='url' title={url}>{url}</code>
+            <input className='url' readOnly value={url} title={url} aria-label='Layer URL' spellCheck={false} />
             <button className='button' onClick={copy}>{copied ? 'Copied' : 'Copy layer URL'}</button>
           </div>
           <MapPreview key={version} table={t.table} />

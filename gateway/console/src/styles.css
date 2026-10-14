@@ -78,7 +78,8 @@ h3 { font-size: 1.1rem; margin: 2px 0 0; }
 .facts dt { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
 .facts dd { margin: 4px 0 0; font-weight: 600; }
 .url-row { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
-.url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 7px 10px; }
+.url { flex: 1; min-width: 0; text-overflow: ellipsis; padding: 7px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; color: inherit; background: #eef1f3; border: 1px solid transparent; border-radius: 4px; outline: none; }
+.url:focus { border-color: var(--border); background: #fff; text-overflow: clip; }
 .empty-detail { min-height: 240px; }
 .map-preview { position: relative; height: 440px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
 .map-preview-view { width: 100%; height: 100%; }

@@ -147,7 +147,10 @@ app.use('/api/ogc', ogc.consoleApi(ogcDeps))
 
 koop.register(provider)
 
-app.use(express.static(path.join(__dirname, 'public')))
+// Hashed assets can be cached; the page itself must revalidate so a deploy shows up on reload
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, file) => { if (file.endsWith('.html')) res.set('Cache-Control', 'no-cache') }
+}))
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }))
 

@@ -305,7 +305,7 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
         {rows.map(([label, url]) => (
           <div key={label} className='endpoint'>
             <span className='endpoint-label'>{label}</span>
-            <code className='url' title={url}>{url}</code>
+            <input className='url' readOnly value={url} title={url} aria-label={label} spellCheck={false} />
             <Copy text={url} />
           </div>
         ))}
@@ -315,7 +315,7 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
         {service.collections.map(c => (
           <div key={c.id} className='endpoint'>
             <span className='endpoint-label' title={c.table}>{c.title}{c.timeField && <span className='geom-chip'>time: {c.timeField}</span>}</span>
-            <code className='url' title={`${base}/collections/${c.id}/items`}>{base}/collections/{c.id}/items</code>
+            <input className='url' readOnly value={`${base}/collections/${c.id}/items`} title={`${base}/collections/${c.id}/items`} aria-label={`${c.title} items URL`} spellCheck={false} />
             <Copy text={`${base}/collections/${c.id}/items`} />
             <button className={`button${preview === c.id ? '' : ' ghost'}`} onClick={() => setPreview(c.id)}>Preview</button>
           </div>
