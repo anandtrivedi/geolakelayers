@@ -266,7 +266,8 @@ On real prod tables (October 2026, Lakehouse//RT vs the regular Serverless Start
 a client): an AIS points page (270 MB table, native GEOMETRY) 330–500 ms vs 1.5–2.0 s, and a 24-tile pan
 1.5 s vs 6.3 s; a bbox count 140 ms vs 1.1–1.4 s; the map-optimized Overture places copy 125 ms vs 1.1 s;
 AIS H3 hexes 125–160 ms vs 0.8–1.2 s. Through ArcGateway's FeatureServer query (2,000 features): about
-300 ms vs 1.05–1.15 s.
+300 ms vs 1.05–1.15 s. The smallest Lakehouse//RT size (Small, 12 DBU/hour) matched X-Large on all of these,
+including 24 tiles at once, so start small and let autoscaling handle concurrency.
 
 ## Configuration reference
 
