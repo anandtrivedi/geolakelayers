@@ -4,9 +4,11 @@ import type { GatewayInfo, Warehouse } from './api'
 import { Architecture } from './components/Architecture'
 import { Explorer } from './components/Explorer'
 import { OgcServices } from './components/OgcServices'
+import { Guide } from './components/Guide'
+import { UrlField } from './components/Copy'
 
-type Tab = 'overview' | 'explore' | 'ogc' | 'workspaces'
-const TAB_LABELS: Record<Tab, string> = { overview: 'Overview', explore: 'Explore data', ogc: 'OGC services', workspaces: 'Workspaces' }
+type Tab = 'overview' | 'explore' | 'ogc' | 'guide' | 'workspaces'
+const TAB_LABELS: Record<Tab, string> = { overview: 'Overview', explore: 'Explore data', ogc: 'OGC services', guide: 'Guide', workspaces: 'Admin' }
 
 const Mark = () => (
   <svg width='26' height='29' viewBox='0 0 300 331' aria-hidden='true'>
@@ -19,6 +21,7 @@ export function App () {
   const [info, setInfo] = useState<GatewayInfo | null>(null)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [error, setError] = useState('')
+  const [ogcStart, setOgcStart] = useState<string | undefined>()
 
   useEffect(() => {
     api.info().then(setInfo).catch(e => setError(e.message))
@@ -55,10 +58,11 @@ export function App () {
 
       <main className='content'>
         {error && <div className='card error'>Could not reach the gateway: {error}</div>}
-        {tab === 'overview' && info && <Overview info={info} warehouses={warehouses} />}
-        {tab === 'explore' && <Explorer />}
-        {tab === 'ogc' && info && <OgcServices info={info} />}
-        {tab === 'workspaces' && info && <Workspaces info={info} />}
+        {tab === 'overview' && info && <Overview info={info} warehouses={warehouses} go={setTab} />}
+        {tab === 'explore' && info && <Explorer info={info} onGuide={() => setTab('guide')} onAddToOgc={table => { setOgcStart(table); setTab('ogc') }} />}
+        {tab === 'ogc' && info && <OgcServices info={info} startWith={ogcStart} onStarted={() => setOgcStart(undefined)} />}
+        {tab === 'guide' && <Guide />}
+        {tab === 'workspaces' && info && <Workspaces info={info} warehouses={warehouses} />}
       </main>
 
       <footer className='footer muted small'>
@@ -68,7 +72,7 @@ export function App () {
   )
 }
 
-function Overview ({ info, warehouses }: { info: GatewayInfo, warehouses: Warehouse[] }) {
+function Overview ({ info, warehouses, go }: { info: GatewayInfo, warehouses: Warehouse[], go: (t: Tab) => void }) {
   const wh = (id: string) => warehouses.find(w => w.id === id)
   const def = info.defaultWarehouse ? wh(info.defaultWarehouse) : undefined
   return (
@@ -82,36 +86,48 @@ function Overview ({ info, warehouses }: { info: GatewayInfo, warehouses: Wareho
         </p>
       </section>
 
+      <section className='card gateway-url'>
+        <div>
+          <h2>Gateway URL</h2>
+          <p className='muted small'>Paste this into the Databricks Data widget in Experience Builder. OGC clients and scripts use the URLs on Explore data and OGC services.</p>
+        </div>
+        <UrlField url={info.gatewayUrl} label='Gateway URL' copyLabel='Copy gateway URL' primary />
+      </section>
+
       <section className='stats'>
         <Stat label='Signed in' value={info.user || 'unknown'} sub={info.runAs === 'user' ? 'queries run with your permissions' : 'queries run as the app'} />
         <Stat label='Workspace' value={info.workspaceHost || '—'} sub='this gateway serves this workspace only' />
         <Stat label='Default warehouse' value={def?.name || info.defaultWarehouse || '—'} sub={def ? `${def.serverless ? 'serverless · ' : ''}${def.size} · ${def.state.toLowerCase()}` : ''} />
-        <Stat label='Warehouses apps may use' value={String(info.allowedWarehouses.length)} sub={info.allowedWarehouses.map(id => wh(id)?.name || id).join(', ')} />
+      </section>
+
+
+      <section className='two-col'>
+        <div className='card'>
+          <h2>Where it's used</h2>
+          <table className='guide-table'>
+            <tbody>
+              <tr><td><b>Experience Builder</b></td><td>The Databricks Data widget, with the gateway URL above. Viewers sign in with Databricks.</td></tr>
+              <tr><td><b>QGIS, GDAL, web maps</b></td><td>An OGC service's landing page, with a Databricks OAuth token.</td></tr>
+              <tr><td><b>Scripts and notebooks</b></td><td>OGC endpoints or a table's FeatureServer URL, with a Databricks OAuth token.</td></tr>
+              <tr><td><b>Map Viewer, ArcGIS Pro</b></td><td className='muted'>Not yet: adding a layer by URL doesn't send a Databricks sign-in.</td></tr>
+            </tbody>
+          </table>
+          <p className='small'><button className='link' onClick={() => go('guide')}>Read the guide</button> for what each client needs.</p>
+        </div>
+        <div className='card'>
+          <h2>In Experience Builder</h2>
+          <ol className='steps'>
+            <li>An ArcGIS admin makes the <b>Databricks Data</b> custom widget available.</li>
+            <li>The app author adds it next to the map, pastes the gateway URL and signs in.</li>
+            <li>They pick the SQL warehouse, the catalogs viewers can browse and the layers that load when the app opens.</li>
+            <li>Viewers sign in once. Databricks layers show up in Map Layers, Legend and Table like any other layer.</li>
+          </ol>
+        </div>
       </section>
 
       <section className='card'>
         <h2>How it fits</h2>
         <Architecture />
-      </section>
-
-      <section className='two-col'>
-        <div className='card'>
-          <h2>Use it in Experience Builder</h2>
-          <ol className='steps'>
-            <li>Add the <b>Databricks Data</b> widget, ideally in a Widget Controller on the map.</li>
-            <li>In its settings, add this workspace with the gateway URL <code>{info.gatewayUrl}</code> and sign in.</li>
-            <li>Pick the SQL warehouse, the catalogs viewers can browse and the layers that load when the app opens.</li>
-            <li>Add Map Layers and Legend; Databricks layers show up there like any other layer.</li>
-          </ol>
-        </div>
-        <div className='card'>
-          <h2>Browser access</h2>
-          <p className='muted'>Only these Portal / Experience Builder addresses can call this gateway from a browser:</p>
-          <ul className='plain'>
-            {info.allowedOrigins.length ? info.allowedOrigins.map(o => <li key={o}><code>{o}</code></li>) : <li className='muted'>none configured</li>}
-          </ul>
-          <p className='muted small'>Allowed origins and warehouses are set by a Databricks admin in the gateway's bundle (<code>allowed_origins</code>, <code>allowed_warehouses</code>).</p>
-        </div>
       </section>
     </>
   )
@@ -127,9 +143,27 @@ function Stat ({ label, value, sub }: { label: string, value: string, sub?: stri
   )
 }
 
-function Workspaces ({ info }: { info: GatewayInfo }) {
+function Workspaces ({ info, warehouses }: { info: GatewayInfo, warehouses: Warehouse[] }) {
+  const wh = (id: string) => warehouses.find(w => w.id === id)
   return (
     <>
+      <section className='two-col'>
+        <div className='card'>
+          <h2>Browser access</h2>
+          <p className='muted'>Only these Portal and Experience Builder addresses can call this gateway from a browser:</p>
+          <ul className='plain'>
+            {info.allowedOrigins.length ? info.allowedOrigins.map(o => <li key={o}><code>{o}</code></li>) : <li className='muted'>none configured</li>}
+          </ul>
+          <p className='muted small'>Set in the gateway's bundle (<code>allowed_origins</code>).</p>
+        </div>
+        <div className='card'>
+          <h2>Warehouses apps may use</h2>
+          <ul className='plain'>
+            {info.allowedWarehouses.map(id => <li key={id}>{wh(id)?.name || <code>{id}</code>}{id === info.defaultWarehouse ? <span className='muted small'> (default)</span> : ''}{wh(id)?.realtime ? <span className='chip small rt'>Lakehouse//RT</span> : ''}</li>)}
+          </ul>
+          <p className='muted small'>Set in the gateway's bundle (<code>allowed_warehouses</code>). Users also need CAN USE on each warehouse.</p>
+        </div>
+      </section>
       <section className='card'>
         <h2>Workspace directory</h2>
         <p className='muted'>

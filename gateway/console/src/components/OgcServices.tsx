@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, ApiError } from '../api'
 import type { CatalogTable, GatewayInfo, OgcCollection, OgcColumns, OgcService, Warehouse } from '../api'
 import { CatalogTree } from './CatalogTree'
+import { Copy } from './Copy'
 import { MapPreview } from './MapPreview'
 
 // OGC services: named sets of tables served as OGC API – Features (/ogc/<name>), kept in a Unity Catalog table
@@ -11,7 +12,8 @@ function engineOf (s: OgcService, warehouses: Warehouse[], info: GatewayInfo) {
   return { name: w?.name || (s.warehouse ? s.warehouse : 'bound warehouse'), realtime: !!w?.realtime }
 }
 
-export function OgcServices ({ info }: { info: GatewayInfo }) {
+// startWith: a table from Explore data to open a new service with
+export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo, startWith?: string, onStarted?: () => void }) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   useEffect(() => { api.warehouses().then(d => setWarehouses(d.warehouses)).catch(() => {}) }, [])
   const [services, setServices] = useState<OgcService[] | null>(null)
@@ -19,6 +21,15 @@ export function OgcServices ({ info }: { info: GatewayInfo }) {
   const [needsSetup, setNeedsSetup] = useState(false)
   const [draft, setDraft] = useState<{ service: OgcService, isNew: boolean } | null>(null)
   const [open, setOpen] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!startWith) return
+    const [, , name] = startWith.split('.')
+    api.warehouses().then(d => d.warehouses, () => [] as Warehouse[]).then(ws => {
+      setDraft({ isNew: true, service: { name: '', title: '', description: '', collections: [{ id: name, table: startWith, title: name, timeField: null }], warehouse: ws.find(w => w.realtime)?.id || '' } })
+      onStarted?.()
+    })
+  }, [startWith])
 
   const reload = () => {
     setError('')
@@ -261,11 +272,6 @@ function Editor ({ info, warehouses, draft, isNew, existing, onCancel, onSaved }
       </div>
     </section>
   )
-}
-
-function Copy ({ text, label = 'Copy' }: { text: string, label?: string }) {
-  const [done, setDone] = useState(false)
-  return <button className='button ghost' onClick={async () => { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500) }}>{done ? 'Copied' : label}</button>
 }
 
 function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: OgcService, engine: { name: string, realtime: boolean } }) {

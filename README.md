@@ -7,6 +7,9 @@ lets them see. Nothing is copied into ArcGIS: every pan and zoom is a query on a
 
 ![Published experience with Unity Catalog layers](screenshots/published-app-layers.png)
 
+Which client uses what (Experience Builder, OGC clients like QGIS and GDAL, scripts) is covered in
+[docs/guide.md](docs/guide.md). The same page is the console's **Guide** tab.
+
 ## How it fits
 
 ![Architecture: ArcGIS clients, ArcGateway per workspace, SQL warehouse and Unity Catalog](screenshots/architecture.png)
