@@ -39,6 +39,9 @@ variables:
   ogc_services_table:
     description: Unity Catalog table (catalog.schema.table) holding the OGC API services defined in the console. "-" = OGC API off
     default: "-"
+  widget_source:
+    description: Where ArcGIS admins get the Experience Builder widget (shown in the console). "-" = don't show a link
+    default: https://github.com/anandtrivedi/databricks-arcgis-exb-widget/tree/main/widget/databricks-data
 
 resources:
   apps:
@@ -75,6 +78,8 @@ resources:
             value: ${var.layer_overrides_table}
           - name: OGC_SERVICES_TABLE
             value: ${var.ogc_services_table}
+          - name: WIDGET_SOURCE
+            value: ${var.widget_source}
           - name: RATE_LIMIT_MAX
             value: "2000"
           # Smaller pages draw sooner; big tables only draw when zoomed in (BIG_TABLE_FEATURES)

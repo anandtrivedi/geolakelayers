@@ -13,7 +13,7 @@ function inline (text: string): ReactNode[] {
 
 const cells = (row: string) => row.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim())
 
-export function Guide () {
+export function Guide ({ widgetSource }: { widgetSource?: string | null }) {
   const blocks = guide.trim().split(/\n\s*\n/)
   return (
     <section className='card guide'>
@@ -33,6 +33,7 @@ export function Guide () {
         }
         return <p key={i}>{inline(block.replace(/\n/g, ' '))}</p>
       })}
+      {widgetSource && <p className='small'>The Databricks Data widget's source and install notes: <a href={widgetSource} target='_blank' rel='noreferrer'>{widgetSource.replace(/^https:\/\//, '')}</a></p>}
       <p className='muted small'>This page is <code>docs/guide.md</code> in the ArcGateway repository.</p>
     </section>
   )

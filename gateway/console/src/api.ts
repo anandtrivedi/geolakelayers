@@ -16,6 +16,7 @@ export interface GatewayInfo {
   editing: boolean
   overrides: { enabled: boolean, table: string | null }
   ogc: { enabled: boolean, table: string | null }
+  widgetSource: string | null
 }
 
 export interface Warehouse { id: string, name: string, state: string, size: string, serverless: boolean, realtime?: boolean }

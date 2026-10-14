@@ -177,7 +177,8 @@ app.get('/api/info', (req, res) => {
     directory,
     overrides: { enabled: !!overrideStore, table: overridesTable },
     editing: editingEnabled,
-    ogc: { enabled: !!ogcStore, table: ogcTable }
+    ogc: { enabled: !!ogcStore, table: ogcTable },
+    widgetSource: /^https:\/\//.test(process.env.WIDGET_SOURCE || '') ? process.env.WIDGET_SOURCE : null
   })
 })
 

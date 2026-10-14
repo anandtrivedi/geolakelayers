@@ -61,7 +61,7 @@ export function App () {
         {tab === 'overview' && info && <Overview info={info} warehouses={warehouses} go={setTab} />}
         {tab === 'explore' && info && <Explorer info={info} onGuide={() => setTab('guide')} onAddToOgc={table => { setOgcStart(table); setTab('ogc') }} />}
         {tab === 'ogc' && info && <OgcServices info={info} startWith={ogcStart} onStarted={() => setOgcStart(undefined)} />}
-        {tab === 'guide' && <Guide />}
+        {tab === 'guide' && <Guide widgetSource={info?.widgetSource} />}
         {tab === 'workspaces' && info && <Workspaces info={info} warehouses={warehouses} />}
       </main>
 
@@ -98,7 +98,10 @@ function Overview ({ info, warehouses, go }: { info: GatewayInfo, warehouses: Wa
           <div className='start-num'>2</div>
           <h3>Use it in ArcGIS</h3>
           <p className='muted'>Add the Databricks Data widget to an Experience Builder app and give it the gateway URL below. You pick tables inside the widget.</p>
-          <button className='button ghost' onClick={() => go('guide')}>How it works</button>
+          <div className='card-actions'>
+            <button className='button ghost' onClick={() => go('guide')}>How it works</button>
+            {info.widgetSource && <a className='button ghost' href={info.widgetSource} target='_blank' rel='noreferrer'>Get the widget</a>}
+          </div>
         </div>
         <div className='card start'>
           <div className='start-num'>3</div>
