@@ -42,4 +42,9 @@ function consoleOnly (message) {
   }
 }
 
-module.exports = { PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs, obo, selfOrigin, consoleOnly }
+// Column type names as information_schema.columns spells them (BIGINT is 'long', SMALLINT 'short', ...),
+// plus the DESCRIBE spellings, quoted for a SQL IN list
+const INTEGER_TYPES = "'tinyint','byte','smallint','short','int','integer','bigint','long'"
+const FLOAT_TYPES = "'double','float','real'"
+
+module.exports = { INTEGER_TYPES, FLOAT_TYPES, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs, obo, selfOrigin, consoleOnly }

@@ -30,7 +30,7 @@ const provider = require('./provider')
 const Model = require('./provider/model')
 const connectionManager = require('./provider/connection')
 const layerSpec = require('./provider/spec')
-const { PLAIN, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly } = require('./lib/http')
+const { INTEGER_TYPES, FLOAT_TYPES, PLAIN, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly } = require('./lib/http')
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
 // Catalogs to list: empty means every catalog the signed-in user can see, minus the excluded ones
@@ -225,9 +225,9 @@ async function listTables (req) {
     SELECT cat, sch, tbl,
       max(CASE WHEN (dt LIKE 'geometry%' OR dt LIKE 'geography%') AND col RLIKE '^[a-z_][a-z0-9_]*$' THEN col END) AS native_col,
       max(CASE WHEN col IN (${WKT_NAMES}) AND dt = 'string' THEN col END) AS wkt_col,
-      max(CASE WHEN col IN (${LAT_NAMES}) AND dt IN ('double','float') THEN 1 ELSE 0 END) AS has_lat,
-      max(CASE WHEN col IN (${LON_NAMES}) AND dt IN ('double','float') THEN 1 ELSE 0 END) AS has_lon,
-      max(CASE WHEN col IN (${ID_NAMES}) AND dt IN ('tinyint','smallint','int','bigint') THEN col END) AS id_col,
+      max(CASE WHEN col IN (${LAT_NAMES}) AND dt IN (${FLOAT_TYPES}) THEN 1 ELSE 0 END) AS has_lat,
+      max(CASE WHEN col IN (${LON_NAMES}) AND dt IN (${FLOAT_TYPES}) THEN 1 ELSE 0 END) AS has_lon,
+      max(CASE WHEN col IN (${ID_NAMES}) AND dt IN (${INTEGER_TYPES}) THEN col END) AS id_col,
       max(CASE WHEN col IN (${STRING_ID_NAMES}) AND dt = 'string' THEN col END) AS sid_col
     FROM c GROUP BY cat, sch, tbl
     ORDER BY cat, sch, tbl`
