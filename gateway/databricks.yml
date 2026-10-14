@@ -41,7 +41,7 @@ variables:
     default: "-"
   widget_source:
     description: Where ArcGIS admins get the Experience Builder widget (shown in the console). "-" = don't show a link
-    default: https://github.com/anandtrivedi/databricks-arcgis-exb-widget/tree/main/widget/databricks-data
+    default: https://github.com/anandtrivedi/lakegate/tree/main/widget/databricks-data
 
 resources:
   apps:
