@@ -307,6 +307,13 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
       </div>
       {service.description && <p className='muted'>{service.description}</p>}
       <p className='small muted'>Engine: <b>{engine.name}</b>{engine.realtime ? ' (Lakehouse//RT)' : ''}. Change it with Edit.</p>
+      <div className='next-bar'>
+        <span>
+          Give a client the <b>landing page</b> URL; it finds the collections from there. Every request needs{' '}
+          <code>Authorization: Bearer &lt;Databricks OAuth token&gt;</code>. In QGIS, add a WFS / OGC API – Features
+          connection with an API Header authentication config.
+        </span>
+      </div>
       <div className='endpoint-list'>
         {rows.map(([label, url]) => (
           <div key={label} className='endpoint'>
