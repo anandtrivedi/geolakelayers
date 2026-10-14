@@ -79,7 +79,7 @@ Use the OGC endpoints for GeoJSON, or a table's FeatureServer URL with the Esri 
 
 ## What the Databricks admin sets up
 
-- One gateway per workspace, deployed from the repo's bundle.
+- One gateway per Unity Catalog metastore, deployed from the repo's bundle. Workspaces that share a metastore share one gateway: it can serve any catalog bound to its own workspace, and people sign in to that workspace. A workspace on another metastore (another region, or GovCloud) needs its own gateway; the \`directory\` setting lists the others in each console.
 - Allowed origins: the Experience Builder and Portal addresses that may call the gateway from a browser.
 - Allowed warehouses: the warehouses apps and OGC services may run on. Users also need CAN USE on them.
 - Unity Catalog grants on the data, plus SELECT on the gateway's own settings tables: OGC services and layer overrides.

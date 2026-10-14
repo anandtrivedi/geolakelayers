@@ -1,6 +1,6 @@
 # LakeGate: Databricks geospatial gateway for ArcGIS (Experience Builder "Databricks Data" widget) and OGC API – Features clients.
 #
-# One gateway per workspace (a Databricks sign-in is per workspace). Workspaces that share a metastore
+# One gateway per Unity Catalog metastore (a Databricks sign-in is per workspace). Workspaces that share a metastore
 # see the same Unity Catalog catalogs, so one gateway can serve all of them.
 #
 # Deploy:  databricks bundle deploy -t <target>  &&  databricks bundle run gateway -t <target>
@@ -107,7 +107,6 @@ targets:
       editing: "true"
       ogc_services_table: main.lakegate.ogc_services
       layer_overrides_table: main.lakegate.layer_overrides
-      directory: prod=https://lakegate-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
 
   # gov (GovCloud, separate metastore): second workspace for multi-workspace testing
@@ -116,5 +115,4 @@ targets:
       host: https://your-gov-workspace.cloud.databricks.us
     variables:
       warehouse_id: fedcba9876543210
-      directory: prod=https://lakegate-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
