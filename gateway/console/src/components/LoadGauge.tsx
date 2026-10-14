@@ -17,10 +17,10 @@ export function LoadGauge () {
     return () => window.clearTimeout(timer)
   }, [])
   if (!load) return null
-  const share = Math.max(load.heapUsed / load.heapLimit, load.rss / load.memoryLimit)
+  const share = Math.max(load.heapUsed / load.heapLimit, load.memoryLimit ? load.rss / load.memoryLimit : 0)
   const level = share > 0.85 ? 'high' : share > 0.65 ? 'busy' : 'ok'
   const title = [
-    `Memory: ${gb(load.heapUsed)} of ${gb(load.heapLimit)} heap, ${gb(load.rss)} of ${gb(load.memoryLimit)} for the app`,
+    `Memory: ${gb(load.heapUsed)} of ${gb(load.heapLimit)} heap; ${gb(load.rss)} in use${load.memoryLimit ? ` of ${gb(load.memoryLimit)} for the app` : ''}`,
     `CPU: ${Math.round(load.cpu * 100)}% of ${load.cores} cores`,
     `Requests being answered: ${load.inFlight}`,
     `Up ${Math.round(load.uptime / 60)} min`

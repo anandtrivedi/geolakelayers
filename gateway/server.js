@@ -228,11 +228,15 @@ app.get('/api/health', async (req, res) => {
 
 // Server load for the console header: memory against the limits, requests in flight, CPU since the last call
 let lastCpu = { usage: process.cpuUsage(), at: Date.now() }
+// The container's memory limit (cgroup v2, then v1); null when it can't be read (the host's total would mislead)
 const containerMemory = (() => {
-  try {
-    const max = require('fs').readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim()
-    return /^\d+$/.test(max) ? Number(max) : null
-  } catch (_) { return null }
+  for (const file of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+    try {
+      const v = require('fs').readFileSync(file, 'utf8').trim()
+      if (/^\d+$/.test(v) && Number(v) < os.totalmem()) return Number(v)
+    } catch (_) {}
+  }
+  return null
 })()
 app.get('/api/load', (req, res) => {
   const now = Date.now()
@@ -247,7 +251,7 @@ app.get('/api/load', (req, res) => {
     heapUsed: mem.heapUsed,
     heapLimit: v8.getHeapStatistics().heap_size_limit,
     rss: mem.rss,
-    memoryLimit: containerMemory || os.totalmem(),
+    memoryLimit: containerMemory,
     inFlight,
     cpu,
     cores,

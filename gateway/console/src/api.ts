@@ -121,4 +121,4 @@ export function layerPath (table: string): string {
   return `/databricks/rest/services/${table}/FeatureServer/0`
 }
 
-export interface ServerLoad { heapUsed: number, heapLimit: number, rss: number, memoryLimit: number, inFlight: number, cpu: number, cores: number, uptime: number }
+export interface ServerLoad { heapUsed: number, heapLimit: number, rss: number, memoryLimit: number | null, inFlight: number, cpu: number, cores: number, uptime: number }
