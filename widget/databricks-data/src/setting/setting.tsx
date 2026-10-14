@@ -128,7 +128,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
 
   const signedIn = workspaces.filter(ws => users[ws.gatewayUrl])
   const directoryLeft = directory.filter(d => !rows.some(r => normalizeUrl(r.gatewayUrl) === normalizeUrl(d.url)))
-  const warehouseLabel = (w: WarehouseInfo) => `${w.name} (${w.serverless ? 'serverless, ' : ''}${w.size})`
+  const warehouseLabel = (w: WarehouseInfo) => w.realtime ? `${w.name} (${nls('realtime')})` : `${w.name} (${w.serverless ? 'serverless, ' : ''}${w.size})`
   // "Show selected only": catalogs that hold a selected table, tables filtered in the tree
   const selectedTables = new Set(selected)
   const catalogsWithSelection = (ws: Workspace) => Array.from(new Set(selected

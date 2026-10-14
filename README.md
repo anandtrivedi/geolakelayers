@@ -232,6 +232,27 @@ Queries run as the caller, exactly like the ArcGIS layers, so Unity Catalog gran
 column masks) decide what each client gets. Collections the caller can't read are left out of their
 collection list. The services are read-only.
 
+## Lakehouse//RT (low-latency reads)
+
+A map pan sends dozens of small read queries at once, which is the workload Lakehouse//RT is built for. A gateway can offer a Lakehouse//RT warehouse next to its regular one:
+
+1. A workspace admin enables the **Lakehouse RT** preview (workspace menu → Previews) and creates a
+   **Real-Time** SQL warehouse (Compute → SQL Warehouses → Create → Real-Time). It is in Beta; the account
+   may need to be enabled first (the Lakehouse//RT documentation).
+2. Add its id to `realtime_warehouses` in the gateway's bundle target and redeploy. Authors then pick it
+   in the widget's warehouse list ("Lakehouse//RT, low-latency reads").
+
+Feature, count and extent queries run on Lakehouse//RT, over the Statement Execution API and as the
+viewer. Metadata (DESCRIBE, information_schema), edits, overrides and OGC service changes stay on the bound
+warehouse, which must be a regular SQL warehouse. If Lakehouse//RT refuses a table's query (an unsupported
+function or type, a table with row filters or column masks), that query is retried on the bound warehouse
+and the table is read there for 10 minutes, so layers keep drawing. `/api/realtime` shows how many queries
+it served and what it refused.
+
+Limits while it's in Beta: managed tables only, no row filters or column masks yet, read-only, not in
+GovCloud, and spatial SQL support is still rolling out. Map-optimized copies (bounding-box columns and
+clustering) suit it best.
+
 ## Configuration reference
 
 Gateway (bundle variables → app environment; list settings use `-` for "none" because Databricks Apps
@@ -248,6 +269,7 @@ rejects empty values):
 | `MAX_ROWS` | `4000` | Features per page |
 | `BIG_TABLE_FEATURES` | `250000` | Above this, layers draw only when zoomed in (about zoom 9) |
 | `editing` | `"false"` | Master switch for editing on this gateway |
+| `realtime_warehouses` | `-` | Lakehouse//RT warehouse ids; reads go there when an app picks one |
 | `layer_overrides_table` | `-` | Unity Catalog table holding geometry/id overrides; `-` turns overrides off |
 | `ogc_services_table` | `-` | Unity Catalog table holding OGC API service definitions; `-` turns OGC API off |
 

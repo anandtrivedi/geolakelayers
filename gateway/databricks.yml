@@ -10,6 +10,9 @@ bundle:
   name: arcgateway
 
 variables:
+  realtime_warehouses:
+    description: Comma-separated Lakehouse//RT warehouse ids. Map and OGC reads go there when an app picks one; metadata and writes stay on the bound warehouse. "-" = none
+    default: "-"
   app_name:
     description: Name of the Databricks App
     default: arcgateway
@@ -71,6 +74,8 @@ resources:
             value: ${var.editing}
           - name: EXCLUDE_CATALOGS
             value: ${var.exclude_catalogs}
+          - name: REALTIME_WAREHOUSES
+            value: ${var.realtime_warehouses}
           - name: LAYER_OVERRIDES_TABLE
             value: ${var.layer_overrides_table}
           - name: OGC_SERVICES_TABLE

@@ -22,6 +22,7 @@ export default {
   warehouse: 'SQL warehouse',
   warehouseDefault: 'Gateway default: {name}',
   gatewayDefault: 'bound warehouse',
+  realtime: 'Lakehouse//RT, low-latency reads',
   catalogs: 'Catalogs viewers can browse',
   filterCatalogs: 'Filter catalogs',
   catalogsNone: 'None picked: viewers can\'t browse this workspace.',

@@ -103,7 +103,8 @@ async function getJson (gateway: string, path: string): Promise<any> {
   return d
 }
 
-export interface WarehouseInfo { id: string, name: string, state: string, size: string, serverless: boolean }
+/** realtime: a Lakehouse//RT warehouse (map reads there; metadata and edits stay on the gateway's bound warehouse) */
+export interface WarehouseInfo { id: string, name: string, state: string, size: string, serverless: boolean, realtime?: boolean }
 
 /** Allow-listed warehouses the signed-in user can use, and the gateway's default. */
 export async function fetchWarehouses (gateway: string): Promise<{ default: string | null, warehouses: WarehouseInfo[] }> {

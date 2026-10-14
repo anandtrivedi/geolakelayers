@@ -57,8 +57,12 @@ app.use(cors({
 // Warehouses apps may use. The widget picks one per request (X-Databricks-Warehouse); anything not on
 // this list is refused, so a page can't move queries onto a bigger warehouse. Default: the bound one.
 const defaultWarehouse = process.env.DATABRICKS_WAREHOUSE_ID || ''
-const allowedWarehouses = list(process.env.ALLOWED_WAREHOUSES).concat(defaultWarehouse ? [defaultWarehouse] : [])
+// Lakehouse//RT warehouses are allowed too; reads go there and everything else to the bound warehouse,
+// which therefore has to be a regular one
+const realtime = connectionManager.realtimeWarehouses()
+const allowedWarehouses = list(process.env.ALLOWED_WAREHOUSES).concat(realtime, defaultWarehouse ? [defaultWarehouse] : [])
   .filter((v, i, a) => a.indexOf(v) === i)
+if (realtime.includes(defaultWarehouse)) console.warn('The bound warehouse is listed as Lakehouse//RT; it must be a regular SQL warehouse (metadata and writes run there)')
 
 app.use((req, res, next) => {
   const requested = String(req.headers['x-databricks-warehouse'] || '').trim()
@@ -164,6 +168,7 @@ app.get('/api/info', (req, res) => {
     runAs: obo(req) ? 'user' : 'app',
     defaultWarehouse: defaultWarehouse || null,
     allowedWarehouses,
+    realtimeWarehouses: realtime,
     allowedOrigins,
     catalogCap: catalogs,
     excludeCatalogs,
@@ -173,6 +178,9 @@ app.get('/api/info', (req, res) => {
     ogc: { enabled: !!ogcStore, table: ogcTable }
   })
 })
+
+// Lakehouse//RT activity: queries served, refusals that fell back to the regular warehouse
+app.get('/api/realtime', (req, res) => res.json(connectionManager.realtimeStatus()))
 
 app.get('/api/whoami', (req, res) => {
   res.json({ user: req.headers['x-forwarded-email'] || null, origin: req.headers.origin || null })
@@ -490,7 +498,7 @@ app.get('/api/warehouses', async (req, res) => {
     })
     const warehouses = (d.warehouses || [])
       .filter(w => allowedWarehouses.includes(w.id))
-      .map(w => ({ id: w.id, name: w.name, state: w.state, size: w.cluster_size, serverless: !!w.enable_serverless_compute }))
+      .map(w => ({ id: w.id, name: w.name, state: w.state, size: w.cluster_size, serverless: !!w.enable_serverless_compute, realtime: realtime.includes(w.id) }))
     res.json({ default: defaultWarehouse || null, warehouses })
   } catch (err) {
     res.status(500).json({ error: err.message })

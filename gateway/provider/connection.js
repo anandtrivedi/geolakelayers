@@ -20,6 +20,18 @@ const USER_CLIENT_MAX = 200
 const SESSION_POOL_SIZE = parseInt(process.env.SESSION_POOL_SIZE) || 6
 const SESSION_IDLE_MS = parseInt(process.env.SESSION_IDLE_MS) || 10 * 60 * 1000
 
+// Lakehouse//RT warehouses, reached over the Statement Execution API. '-' = none.
+const realtimeWarehouses = () => (process.env.REALTIME_WAREHOUSES || '').split(',').map(s => s.trim()).filter(s => s && s !== '-')
+// After Lakehouse//RT refuses a table's query (an unsupported function or type), that table is read on the
+// regular warehouse for this long
+const REALTIME_FALLBACK_MS = parseInt(process.env.REALTIME_FALLBACK_MS) || 10 * 60 * 1000
+// Statements Lakehouse//RT can't run: anything but a read, and metadata (DESCRIBE, SHOW, system tables)
+const READ = /^\s*(\(\s*)*(SELECT|WITH)\b/i
+const METADATA = /^\s*(DESCRIBE|SHOW)\b|information_schema|\bsystem\./i
+// Errors that are the caller's (permissions, missing table): retrying elsewhere wouldn't help
+const CALLER_ERROR = /PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS|TABLE_OR_VIEW_NOT_FOUND|UNRESOLVED_COLUMN|PARSE_SYNTAX_ERROR|does not have .* privilege/i
+const tableOf = sql => (/\bFROM\s+(?:\(\s*SELECT\b[\s\S]*?\bFROM\s+)?([A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)/i.exec(sql) || [])[1] || null
+
 // Workspace host and warehouse: explicit settings win; inside Databricks Apps the runtime injects
 // DATABRICKS_HOST (no scheme) and the bundle maps the sql-warehouse resource to DATABRICKS_WAREHOUSE_ID.
 // A specific warehouse id (already checked against the gateway's allow-list) overrides the default.
@@ -120,6 +132,7 @@ class ConnectionManager {
    * @returns {Promise<IDBSQLSession>}
    */
   async getSession (userToken, warehouseId) {
+    if (warehouseId && realtimeWarehouses().includes(warehouseId)) return this.realtimeSession(userToken, warehouseId)
     if (userToken) return this.getUserSession(userToken, warehouseId)
     const client = await this.connect()
     try {
@@ -202,6 +215,61 @@ class ConnectionManager {
     }
   }
 
+  /**
+   * A session on a Lakehouse//RT warehouse: reads go there over the Statement Execution API; metadata and
+   * writes go to the regular (bound) warehouse, and so does any read Lakehouse//RT refuses, for that table,
+   * for REALTIME_FALLBACK_MS. Counters are kept for the console (realtimeStatus).
+   */
+  async realtimeSession (userToken, warehouseId) {
+    if (!userToken) throw new Error('Lakehouse//RT warehouses need the caller\'s token (USE_OBO)')
+    const { host } = connectionTarget()
+    const rt = require('./sea').seaSession({ host, token: userToken, warehouseId })
+    const stats = this.rt || (this.rt = { queries: 0, fallbacks: 0, routed: 0, errors: [], skip: new Map() })
+    let regular = null
+    const onRegular = async (...args) => {
+      if (!regular) regular = await this.getSession(userToken, undefined)
+      return regular.executeStatement(...args)
+    }
+    return {
+      executeStatement: async (sql, opts) => {
+        const table = tableOf(sql)
+        const skipUntil = table && stats.skip.get(table)
+        if (!READ.test(sql) || METADATA.test(sql) || (skipUntil && skipUntil > Date.now())) {
+          stats.routed++
+          return onRegular(sql, opts)
+        }
+        try {
+          const op = await rt.executeStatement(sql, opts)
+          stats.queries++
+          return op
+        } catch (err) {
+          if (CALLER_ERROR.test(err.message)) throw err
+          stats.fallbacks++
+          stats.errors.unshift({ at: new Date().toISOString(), table, error: err.message.split('\n')[0].slice(0, 300) })
+          stats.errors.length = Math.min(stats.errors.length, 20)
+          if (table) stats.skip.set(table, Date.now() + REALTIME_FALLBACK_MS)
+          logger.warn(`Lakehouse//RT refused a query${table ? ` on ${table}` : ''}; using the regular warehouse: ${err.message.split('\n')[0]}`)
+          return onRegular(sql, opts)
+        }
+      },
+      close: async () => { if (regular) await regular.close() }
+    }
+  }
+
+  /** What Lakehouse//RT has done since the gateway started (console diagnostics). */
+  realtimeStatus () {
+    const s = this.rt || { queries: 0, fallbacks: 0, routed: 0, errors: [], skip: new Map() }
+    const now = Date.now()
+    return {
+      warehouses: realtimeWarehouses(),
+      queries: s.queries,
+      fallbacks: s.fallbacks,
+      routedToRegular: s.routed,
+      tablesOnRegular: [...s.skip].filter(([, until]) => until > now).map(([table, until]) => ({ table, until: new Date(until).toISOString() })),
+      recentErrors: s.errors
+    }
+  }
+
   sweepUserClients (evictOldest = false) {
     const now = Date.now()
     let oldest = null
@@ -239,3 +307,5 @@ class ConnectionManager {
 
 module.exports = new ConnectionManager()
 module.exports.ConnectionManager = ConnectionManager
+module.exports.realtimeWarehouses = realtimeWarehouses
+module.exports._routing = { READ, METADATA, CALLER_ERROR, tableOf }
