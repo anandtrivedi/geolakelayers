@@ -25,6 +25,18 @@ function loadSdk (): Promise<void> {
   return sdk
 }
 
+// Keep a zoom target inside what Web Mercator can show: extents that touch the poles or cross the dateline
+// (global H3 grids do) would otherwise send the view off the map and blank the basemap
+function fitExtent (e: any) {
+  const c = e.clone()
+  if (c.spatialReference?.isGeographic) {
+    c.xmin = Math.max(c.xmin, -180); c.xmax = Math.min(c.xmax, 180)
+    c.ymin = Math.max(c.ymin, -85); c.ymax = Math.min(c.ymax, 85)
+    if (!(c.xmax > c.xmin && c.ymax > c.ymin)) return null
+  }
+  return c
+}
+
 // table: a FeatureServer layer; ogc: an OGC API – Features collection (drawn with OGCFeatureLayer)
 export function MapPreview ({ table, ogc }: { table: string, ogc?: { url: string, collectionId: string } }) {
   const el = useRef<HTMLDivElement>(null)
@@ -49,10 +61,27 @@ export function MapPreview ({ table, ogc }: { table: string, ogc?: { url: string
         setStatus('Loading layer…')
         await layer.load()
         if (cancelled) return
-        if (layer.fullExtent) await view.goTo(layer.fullExtent.expand(1.15)).catch(() => {})
+        const ext = layer.fullExtent && fitExtent(layer.fullExtent.clone().expand(1.15))
+        if (ext) await view.goTo(ext).catch(() => {})
+        // Big tables only draw from minScale in; zoom to one real feature so there's something to see
+        if (layer.minScale && view.scale > layer.minScale) {
+          setStatus('Finding features…')
+          // Give up after a few seconds: on some very large tables even one row is slow to find
+          const abort = new AbortController()
+          const timer = setTimeout(() => abort.abort(), 8000)
+          const sample = await layer.queryFeatures({ where: '1=1', num: 1, returnGeometry: true, outFields: [] }, { signal: abort.signal }).catch(() => null)
+          clearTimeout(timer)
+          const geom = sample?.features?.[0]?.geometry
+          if (cancelled) return
+          if (geom) await view.goTo({ target: geom, scale: layer.minScale / 2 }).catch(() => {})
+        }
         const lv = await view.whenLayerView(layer)
         setStatus('Drawing…')
-        const watch = () => { if (!lv.updating) setStatus('') ; else setTimeout(watch, 300) }
+        const watch = () => {
+          if (cancelled) return
+          if (lv.updating) return setTimeout(watch, 300)
+          setStatus(layer.minScale && view.scale > layer.minScale ? 'This table is large, so it draws once you zoom in.' : '')
+        }
         watch()
       } catch (err: any) {
         if (!cancelled) setStatus(`Map failed: ${err.message}`)

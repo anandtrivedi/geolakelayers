@@ -6,11 +6,17 @@ import { MapPreview } from './MapPreview'
 import { CatalogTree } from './CatalogTree'
 import { LayerSettings } from './LayerSettings'
 
+const LAST_TABLE = 'lakegate.explore.lastTable'
+
 // Catalog ▸ schema ▸ table explorer. Picking a table shows how the gateway reads it, its layer URL and a live map.
 export function Explorer ({ info, onAddToOgc, onGuide }: { info: GatewayInfo, onAddToOgc: (table: string) => void, onGuide: () => void }) {
   const [services, setServices] = useState<OgcService[]>([])
   useEffect(() => { if (info.ogc.enabled) api.ogcServices().then(setServices).catch(() => {}) }, [info.ogc.enabled])
-  const [selected, setSelected] = useState<CatalogTable | null>(null)
+  // Reopen the last table picked here, so the page starts with a map
+  const [selected, setSelectedState] = useState<CatalogTable | null>(() => {
+    try { const t = JSON.parse(localStorage.getItem(LAST_TABLE) || 'null'); return t && typeof t.table === 'string' ? t : null } catch (_) { return null }
+  })
+  const setSelected = (t: CatalogTable | null) => { setSelectedState(t); try { if (t) localStorage.setItem(LAST_TABLE, JSON.stringify(t)) } catch (_) {} }
   const [reloadKey, setReloadKey] = useState(0)
   const [byName, setByName] = useState('')
   const [scanSchema, setScanSchema] = useState('')
