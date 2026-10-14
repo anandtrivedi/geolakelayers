@@ -12,6 +12,8 @@ function engineOf (s: OgcService, warehouses: Warehouse[], info: GatewayInfo) {
   return { name: w?.name || (s.warehouse ? s.warehouse : 'bound warehouse'), realtime: !!w?.realtime }
 }
 
+const LAST_OPEN = 'lakegate.ogc.lastOpen'
+
 // startWith: a table from Explore data to open a new service with
 export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo, startWith?: string, onStarted?: () => void }) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
@@ -20,7 +22,9 @@ export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo
   const [error, setError] = useState('')
   const [needsSetup, setNeedsSetup] = useState(false)
   const [draft, setDraft] = useState<{ service: OgcService, isNew: boolean } | null>(null)
-  const [open, setOpen] = useState<string | null>(null)
+  // The open service shows its endpoints and a map; start with the last one opened here, else the first
+  const [open, setOpenState] = useState<string | null>(null)
+  const setOpen = (name: string | null) => { setOpenState(name); if (name) try { localStorage.setItem(LAST_OPEN, name) } catch (_) {} }
 
   useEffect(() => {
     if (!startWith) return
@@ -34,7 +38,16 @@ export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo
   const reload = () => {
     setError('')
     api.ogcServices()
-      .then(s => { setServices(s); setNeedsSetup(false) })
+      .then(s => {
+        setServices(s)
+        setNeedsSetup(false)
+        setOpenState(cur => {
+          if (cur && s.some(x => x.name === cur)) return cur
+          let last: string | null = null
+          try { last = localStorage.getItem(LAST_OPEN) } catch (_) {}
+          return (s.find(x => x.name === last) || s[0])?.name || null
+        })
+      })
       .catch((e: ApiError) => { setServices([]); if (e.setup) setNeedsSetup(true); else setError(e.message) })
   }
   useEffect(() => { if (info.ogc.enabled) reload() }, [info.ogc.enabled])
@@ -335,6 +348,7 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
           </div>
         ))}
       </div>
+      {shown && <MapPreview key={shown.id} table={shown.table} ogc={{ url: base, collectionId: shown.id }} />}
       <h4 className='picked-head'>From a script or pipeline</h4>
       <div className='snippet-wrap'>
         <pre className='snippet'>{snippet}</pre>
@@ -344,7 +358,6 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
         Browser maps on an allowed origin ({info.allowedOrigins.join(', ') || 'none configured'}) sign in the same way as the
         Experience Builder widget and send the token as a Bearer header. Pages are capped per request; follow the <code>next</code> links.
       </p>
-      {shown && <MapPreview key={shown.id} table={shown.table} ogc={{ url: base, collectionId: shown.id }} />}
     </section>
   )
 }
