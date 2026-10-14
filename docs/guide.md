@@ -49,4 +49,5 @@ Use the OGC endpoints for GeoJSON, or a table's FeatureServer URL with the Esri 
 - **The sign-in popup closes and nothing loads.** The page's address probably isn't in the gateway's allowed origins.
 - **A table is missing or a layer is empty.** The user needs USE CATALOG, USE SCHEMA and SELECT on it, and CAN USE on the warehouse.
 - **401 from a script.** The token is missing, expired, or a personal access token.
-- **Slow maps on a big table.** Use a Lakehouse//RT warehouse, or create a map-optimized copy from Explore data.
+- **Slow maps on a big table.** Use a Lakehouse//RT warehouse, or create a map-optimized copy from Explore data. Lines and polygons are simplified to the map's zoom level on regular warehouses; Lakehouse//RT can't simplify, so those tile queries run on the bound warehouse.
+- **The gateway is busy or restarts.** The Server gauge in the console's top bar shows its memory and the requests it is answering. Long line layers at full detail use the most; the app runs on Large compute with an 8 GB Node heap.

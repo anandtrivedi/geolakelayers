@@ -209,3 +209,13 @@ section.card > .map-preview { margin-top: 14px; }
 .settings-list dd { margin: 0; overflow-wrap: anywhere; }
 .copy-token { display: inline; }
 .url.origin-test { width: 100%; box-sizing: border-box; }
+
+/* Server load gauge in the top bar */
+.load-gauge { display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; color: #c6d1d6; cursor: default; }
+.load-label { text-transform: uppercase; letter-spacing: 0.04em; }
+.load-bar { width: 54px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.18); overflow: hidden; }
+.load-bar span { display: block; height: 100%; background: #4cc38a; transition: width 0.4s; }
+.load-gauge.busy .load-bar span { background: #f5b942; }
+.load-gauge.high .load-bar span { background: #ff3621; }
+.load-gauge.high .load-pct { color: #ffb3a8; }
+.load-num { white-space: nowrap; }

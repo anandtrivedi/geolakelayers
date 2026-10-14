@@ -49,6 +49,8 @@ resources:
       name: ${var.app_name}
       description: LakeGate - Databricks geospatial gateway for ArcGIS and OGC (Unity Catalog tables as FeatureServer layers and OGC API - Features)
       source_code_path: .
+      # Large = up to 4 vCPU and 12 GB; drawing long line layers holds a lot of geometry in memory
+      compute_size: LARGE
       # Queries run as the signed-in user, so Unity Catalog decides what each person sees
       user_api_scopes:
         - sql
@@ -58,8 +60,8 @@ resources:
             id: ${var.warehouse_id}
             permission: CAN_USE
       config:
-        # Node caps its heap near 1.5 GB by default; big line layers (long tracks) need more headroom
-        command: ["node", "--max-old-space-size=3072", "server.js"]
+        # Node caps its heap near 1.5 GB by default; 8 GB leaves Large's other 4 GB for buffers and the driver
+        command: ["node", "--max-old-space-size=8192", "server.js"]
         env:
           - name: DATABRICKS_WAREHOUSE_ID
             value_from: sql-warehouse

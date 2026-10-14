@@ -21,6 +21,8 @@
 */
 
 const path = require('path')
+const os = require('os')
+const v8 = require('v8')
 const express = require('express')
 const crypto = require('crypto')
 const cors = require('cors')
@@ -70,6 +72,15 @@ app.use((req, res, next) => {
     return res.status(403).json({ error: { code: 403, message: `Warehouse ${requested.slice(0, 32)} is not allowed on this gateway` } })
   }
   req.warehouseId = requested
+  next()
+})
+
+// Requests being answered right now, for the console's load gauge
+let inFlight = 0
+app.use((req, res, next) => {
+  if (req.path === '/api/load') return next()
+  inFlight++
+  res.once('close', () => { inFlight-- })
   next()
 })
 
@@ -213,6 +224,35 @@ app.get('/api/health', async (req, res) => {
     }
   }))
   res.json({ checks })
+})
+
+// Server load for the console header: memory against the limits, requests in flight, CPU since the last call
+let lastCpu = { usage: process.cpuUsage(), at: Date.now() }
+const containerMemory = (() => {
+  try {
+    const max = require('fs').readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim()
+    return /^\d+$/.test(max) ? Number(max) : null
+  } catch (_) { return null }
+})()
+app.get('/api/load', (req, res) => {
+  const now = Date.now()
+  const usage = process.cpuUsage()
+  const cores = os.availableParallelism ? os.availableParallelism() : os.cpus().length
+  const cpuMs = (usage.user - lastCpu.usage.user + usage.system - lastCpu.usage.system) / 1000
+  const cpu = now > lastCpu.at ? Math.min(1, cpuMs / ((now - lastCpu.at) * cores)) : 0
+  lastCpu = { usage, at: now }
+  const mem = process.memoryUsage()
+  res.set('Cache-Control', 'no-store')
+  res.json({
+    heapUsed: mem.heapUsed,
+    heapLimit: v8.getHeapStatistics().heap_size_limit,
+    rss: mem.rss,
+    memoryLimit: containerMemory || os.totalmem(),
+    inFlight,
+    cpu,
+    cores,
+    uptime: Math.round(process.uptime())
+  })
 })
 
 async function runSql (req, sql, timeout = 60, namedParameters) {

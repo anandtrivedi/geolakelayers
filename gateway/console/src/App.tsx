@@ -6,6 +6,7 @@ import { Explorer } from './components/Explorer'
 import { OgcServices } from './components/OgcServices'
 import { Guide } from './components/Guide'
 import { UrlField } from './components/Copy'
+import { LoadGauge } from './components/LoadGauge'
 
 type Tab = 'overview' | 'explore' | 'ogc' | 'guide' | 'workspaces'
 const TAB_LABELS: Record<Tab, string> = { overview: 'Overview', explore: 'Explore data', ogc: 'OGC services', guide: 'Guide', workspaces: 'Admin' }
@@ -43,6 +44,7 @@ export function App () {
         </div>
         <div className='topbar-meta'>
           {info && <span className='chip'><span className='dot' />{here?.name || info.workspaceHost}</span>}
+          <LoadGauge />
           {info && <span className='muted small'>{info.user}</span>}
           <span className='built-by'>Built on Databricks Apps by Anand Trivedi</span>
         </div>

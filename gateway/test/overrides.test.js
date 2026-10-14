@@ -162,3 +162,12 @@ test('/api/health reads each settings table as the caller', async () => {
   for (const c of r.body.checks) assert.equal(typeof c.ok, 'boolean')
   assert.ok(r.body.checks.some(c => c.name === 'Layer overrides table'))
 })
+
+test('/api/load reports memory against its limits, requests in flight and CPU, uncached', async () => {
+  const r = await call('/api/load')
+  assert.equal(r.status, 200)
+  for (const k of ['heapUsed', 'heapLimit', 'rss', 'memoryLimit', 'inFlight', 'cpu', 'cores', 'uptime']) assert.equal(typeof r.body[k], 'number', k)
+  assert.ok(r.body.heapUsed < r.body.heapLimit)
+  assert.ok(r.body.cpu >= 0 && r.body.cpu <= 1)
+  assert.equal(r.body.inFlight, 0)
+})

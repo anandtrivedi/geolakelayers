@@ -88,6 +88,7 @@ async function send<T> (method: string, path: string, body?: unknown): Promise<T
 export const api = {
   info: () => get<GatewayInfo>('/api/info'),
   token: () => send<{ token: string, expiresAt: number | null }>('POST', '/api/token'),
+  load: () => get<ServerLoad>('/api/load'),
   health: () => get<{ checks: { name: string, table: string, ok: boolean, detail?: string }[] }>('/api/health').then(d => d.checks),
   warehouses: () => get<{ default: string | null, warehouses: Warehouse[] }>('/api/warehouses'),
   catalogs: () => get<{ catalogs: string[] }>('/api/catalogs').then(d => d.catalogs),
@@ -119,3 +120,5 @@ export const api = {
 export function layerPath (table: string): string {
   return `/databricks/rest/services/${table}/FeatureServer/0`
 }
+
+export interface ServerLoad { heapUsed: number, heapLimit: number, rss: number, memoryLimit: number, inFlight: number, cpu: number, cores: number, uptime: number }
