@@ -250,8 +250,14 @@ and the table is read there for 10 minutes, so layers keep drawing. `/api/realti
 it served and what it refused.
 
 Limits while it's in Beta: managed tables only, no row filters or column masks yet, read-only, not in
-GovCloud, and spatial SQL support is still rolling out. Map-optimized copies (bounding-box columns and
-clustering) suit it best.
+GovCloud. Spatial SQL works (tested on a Lakehouse//RT warehouse in October 2026: ST_AsGeoJSON,
+ST_Intersects, ST_GeomFromText/WKB, try_to_geometry, ST_Transform, H3), although the public docs still list
+it as unsupported. Map-optimized copies (bounding-box columns and clustering) suit it best.
+
+Measured on 1M generated points (one 2,000-feature page in a bounding box): about 15–65 ms of warehouse
+time on Lakehouse//RT against about 1.2 s on a regular serverless warehouse; seen from a client, about
+160 ms against 600 ms per page, and a 24-tile map pan finishing in 1.0 s against 1.8 s. Real tables add
+file reads, so expect less of a gap on big unclustered tables.
 
 ## Configuration reference
 
