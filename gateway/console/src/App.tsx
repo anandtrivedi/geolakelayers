@@ -78,18 +78,40 @@ function Overview ({ info, warehouses, go }: { info: GatewayInfo, warehouses: Wa
   return (
     <>
       <section className='hero card'>
-        <h1>Unity Catalog tables, live on ArcGIS maps</h1>
+        <h1>Databricks tables on ArcGIS and OGC maps</h1>
         <p>
-          ArcGateway serves any Unity Catalog table with geometry as an ArcGIS FeatureServer layer. Every
-          query runs on a Databricks SQL warehouse as the person viewing the map, so Unity Catalog decides
-          what they see. Nothing is copied into ArcGIS.
+          ArcGateway connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, through the
+          Databricks Data widget, and anything that speaks OGC API – Features, such as QGIS, GDAL, OpenLayers, Leaflet
+          and Python. The data stays in Databricks: maps query it live, and each person sees only what Unity Catalog
+          lets them see.
         </p>
+      </section>
+
+      <section className='start-grid'>
+        <div className='card start'>
+          <div className='start-num'>1</div>
+          <h3>Preview a table</h3>
+          <p className='muted'>See a table on a map the way ArcGIS and OGC clients will get it, check that its geometry is read correctly, and copy its URLs.</p>
+          <button className='button' onClick={() => go('explore')}>Explore data</button>
+        </div>
+        <div className='card start'>
+          <div className='start-num'>2</div>
+          <h3>Use it in ArcGIS</h3>
+          <p className='muted'>Add the Databricks Data widget to an Experience Builder app and give it the gateway URL below. You pick tables inside the widget.</p>
+          <button className='button ghost' onClick={() => go('guide')}>How it works</button>
+        </div>
+        <div className='card start'>
+          <div className='start-num'>3</div>
+          <h3>Use it in OGC clients</h3>
+          <p className='muted'>Group tables into an OGC service and give its URL to QGIS, GDAL, web maps or scripts.</p>
+          <button className='button ghost' onClick={() => go('ogc')}>OGC services</button>
+        </div>
       </section>
 
       <section className='card gateway-url'>
         <div>
           <h2>Gateway URL</h2>
-          <p className='muted small'>Paste this into the Databricks Data widget in Experience Builder. OGC clients and scripts use the URLs on Explore data and OGC services.</p>
+          <p className='muted small'>The address of this gateway. The Databricks Data widget in Experience Builder asks for it; OGC service URLs start with it.</p>
         </div>
         <UrlField url={info.gatewayUrl} label='Gateway URL' copyLabel='Copy gateway URL' primary />
       </section>
@@ -101,27 +123,18 @@ function Overview ({ info, warehouses, go }: { info: GatewayInfo, warehouses: Wa
       </section>
 
 
-      <section className='two-col'>
+      <section>
         <div className='card'>
-          <h2>Where it's used</h2>
+          <h2>Where the data can go</h2>
           <table className='guide-table'>
             <tbody>
-              <tr><td><b>Experience Builder</b></td><td>The Databricks Data widget, with the gateway URL above. Viewers sign in with Databricks.</td></tr>
+              <tr><td><b>ArcGIS Experience Builder</b></td><td>The Databricks Data widget, with the gateway URL above. Viewers sign in with Databricks once, and Databricks layers work with Map Layers, Legend, Table and pop-ups like any other layer.</td></tr>
               <tr><td><b>QGIS, GDAL, web maps</b></td><td>An OGC service's landing page, with a Databricks OAuth token.</td></tr>
               <tr><td><b>Scripts and notebooks</b></td><td>OGC endpoints or a table's FeatureServer URL, with a Databricks OAuth token.</td></tr>
               <tr><td><b>Map Viewer, ArcGIS Pro</b></td><td className='muted'>Not yet: adding a layer by URL doesn't send a Databricks sign-in.</td></tr>
             </tbody>
           </table>
           <p className='small'><button className='link' onClick={() => go('guide')}>Read the guide</button> for what each client needs.</p>
-        </div>
-        <div className='card'>
-          <h2>In Experience Builder</h2>
-          <ol className='steps'>
-            <li>An ArcGIS admin makes the <b>Databricks Data</b> custom widget available.</li>
-            <li>The app author adds it next to the map, pastes the gateway URL and signs in.</li>
-            <li>They pick the SQL warehouse, the catalogs viewers can browse and the layers that load when the app opens.</li>
-            <li>Viewers sign in once. Databricks layers show up in Map Layers, Legend and Table like any other layer.</li>
-          </ol>
         </div>
       </section>
 

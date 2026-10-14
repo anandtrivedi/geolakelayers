@@ -32,6 +32,12 @@ export function Explorer ({ info, onAddToOgc, onGuide }: { info: GatewayInfo, on
   }
 
   return (
+    <>
+    <p className='page-intro'>
+      Preview Databricks tables the way they will look in ArcGIS Experience Builder and OGC clients. Pick a table on the left to see
+      it on a map, check how its geometry and id are read, and copy the URLs for Experience Builder, OGC clients and
+      scripts. Only tables you can read in Unity Catalog are listed.
+    </p>
     <div className='explorer'>
       <div className='explorer-tree card'>
         <CatalogTree isActive={t => selected?.table === t.table} onPick={setSelected} reloadKey={reloadKey} />
@@ -66,6 +72,7 @@ export function Explorer ({ info, onAddToOgc, onGuide }: { info: GatewayInfo, on
         )}
       </div>
     </div>
+    </>
   )
 }
 

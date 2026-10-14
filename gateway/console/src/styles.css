@@ -181,3 +181,12 @@ section.card > .map-preview { margin-top: 14px; }
 @media (max-width: 900px) {
   .gateway-url, .use-row { grid-template-columns: 1fr; gap: 6px; }
 }
+
+.start-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.start { display: flex; flex-direction: column; gap: 6px; }
+.start h3 { margin: 0; }
+.start p { flex: 1; margin: 0 0 6px; }
+.start .button { align-self: flex-start; }
+.start-num { width: 26px; height: 26px; border-radius: 50%; background: var(--red-soft); color: var(--red); font-weight: 700; display: grid; place-items: center; font-size: 0.85rem; }
+.page-intro { margin: 0 0 14px; color: var(--muted); max-width: 900px; }
+@media (max-width: 900px) { .start-grid { grid-template-columns: 1fr; } }

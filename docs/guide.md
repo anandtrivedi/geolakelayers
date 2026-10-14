@@ -1,6 +1,6 @@
 # Using ArcGateway
 
-ArcGateway puts Unity Catalog tables on maps without copying them anywhere. Every request runs on a Databricks SQL warehouse as the person (or service principal) making it, so Unity Catalog grants decide what each user sees. This guide covers where ArcGateway fits and what each client needs. It doesn't walk through clicks in Experience Builder or other tools, because those screens change between releases.
+ArcGateway connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, and clients that speak OGC API – Features. The data isn't copied anywhere. Every request runs on a Databricks SQL warehouse as the person (or service principal) making it, so Unity Catalog grants decide what each user sees. This guide covers where ArcGateway fits and what each client needs. It doesn't walk through clicks in Experience Builder or other tools, because those screens change between releases.
 
 ## Pick the path for your client
 
