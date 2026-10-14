@@ -14,7 +14,8 @@ class OgcError extends Error {
 }
 const bad = description => new OgcError(400, 'InvalidParameterValue', description)
 
-const ITEM_PARAMS = ['bbox', 'bbox-crs', 'crs', 'limit', 'offset', 'cursor', 'datetime', 'f']
+// properties: which fields to return (sent by some clients; the geometry and id always come back)
+const ITEM_PARAMS = ['bbox', 'bbox-crs', 'crs', 'limit', 'offset', 'cursor', 'datetime', 'properties', 'f']
 const MAX_PROPERTY_FILTERS = 10
 
 function one (query, name) {
@@ -37,20 +38,28 @@ function parseCrs (value, name) {
   return uri
 }
 
-// bbox: 4 numbers (or 6 with z, which is ignored). Returned as one or two boxes in CRS84: a box whose
-// west edge is east of its east edge crosses the antimeridian and is split in two.
+// bbox: 4 numbers. Returned as one or two boxes in CRS84: in CRS84 a box whose west edge is east of its
+// east edge crosses the antimeridian and is split in two. (The data is 2D, so a 6-number box with heights
+// is refused rather than silently ignoring its heights.)
+const MERCATOR_MAX = 20037508.342789244
 function parseBbox (value, bboxCrs) {
   if (value === undefined) return []
   const n = value.split(',').map(s => s.trim()).map(s => s === '' ? NaN : Number(s))
-  if (!(n.length === 4 || n.length === 6) || n.some(x => !Number.isFinite(x))) throw bad('bbox must be 4 (or 6) numbers: minx,miny,maxx,maxy')
-  let [x0, y0, x1, y1] = n.length === 6 ? [n[0], n[1], n[3], n[4]] : n
+  if (n.length === 6) throw bad('bbox with heights (6 numbers) is not supported; the data is 2D')
+  if (n.length !== 4 || n.some(x => !Number.isFinite(x))) throw bad('bbox must be 4 numbers: minx,miny,maxx,maxy')
+  let [x0, y0, x1, y1] = n
+  if (y0 > y1) throw bad('bbox miny is greater than maxy')
   if (bboxCrs === EPSG3857) {
-    ;[x0, y0] = toWgs84([x0, y0])
-    ;[x1, y1] = toWgs84([x1, y1])
-  } else if (x0 < -180 || x0 > 180 || x1 < -180 || x1 > 180 || y0 < -90 || y0 > 90 || y1 < -90 || y1 > 90) {
+    // Web Mercator has no wrap-around: an inverted box is an error, and coordinates stay in the projection's range
+    if (x0 > x1) throw bad('bbox minx is greater than maxx')
+    const clamp = v => Math.max(-MERCATOR_MAX, Math.min(MERCATOR_MAX, v))
+    ;[x0, y0] = toWgs84([clamp(x0), clamp(y0)])
+    ;[x1, y1] = toWgs84([clamp(x1), clamp(y1)])
+    return [[x0, y0, x1, y1]]
+  }
+  if (x0 < -180 || x0 > 180 || x1 < -180 || x1 > 180 || y0 < -90 || y0 > 90 || y1 < -90 || y1 > 90) {
     throw bad('bbox is outside -180,-90,180,90')
   }
-  if (y0 > y1) throw bad('bbox miny is greater than maxy')
   if (x0 > x1) return [[x0, y0, 180, y1], [-180, y0, x1, y1]]
   return [[x0, y0, x1, y1]]
 }
@@ -70,15 +79,22 @@ function parseLimit (value, { defaultLimit, maxLimit }) {
 }
 
 // RFC 3339 date-time or full date; returns epoch ms of its start and (for a date) its end
+// A calendar date that exists (Date.parse rolls 2025-02-30 over into March instead of failing)
+function realDate (y, m, d) {
+  const t = new Date(Date.UTC(+y, +m - 1, +d))
+  return t.getUTCFullYear() === +y && t.getUTCMonth() === +m - 1 && t.getUTCDate() === +d
+}
 function parseInstant (s, name) {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    const t = Date.parse(`${s}T00:00:00Z`)
-    if (Number.isNaN(t)) throw bad(`${name} ${s} is not a date`)
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (date) {
+    if (!realDate(date[1], date[2], date[3])) throw bad(`${name} ${s} is not a date`)
+    const t = Date.UTC(+date[1], +date[2] - 1, +date[3])
     return { start: t, end: t + 86400000 - 1 }
   }
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/i.test(s)) throw bad(`${name} ${s} is not an RFC 3339 date-time`)
+  const dt = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/i.exec(s)
+  if (!dt) throw bad(`${name} ${s} is not an RFC 3339 date-time`)
   const t = Date.parse(s)
-  if (Number.isNaN(t)) throw bad(`${name} ${s} is not a date-time`)
+  if (Number.isNaN(t) || !realDate(dt[1], dt[2], dt[3]) || +dt[4] > 23 || +dt[5] > 59 || +dt[6] > 60) throw bad(`${name} ${s} is not a date-time`)
   return { start: t, end: t }
 }
 
@@ -115,6 +131,10 @@ function parseItemsQuery (query, { queryables = [], hasTime = false, defaultLimi
   const datetimeValue = one(query, 'datetime')
   if (datetimeValue !== undefined && !hasTime) throw bad('This collection has no time field, so datetime is not supported')
   const datetime = parseDatetime(datetimeValue)
+  const propertiesValue = one(query, 'properties')
+  const properties = propertiesValue === undefined ? null : propertiesValue.split(',').map(s => s.trim()).filter(Boolean)
+  // (any field may be asked for, not only queryables, so check the shape of the names)
+  if (properties && properties.some(p => !PLAIN.test(p))) throw bad('properties must be a comma-separated list of field names')
 
   const filters = []
   const params = {}
@@ -124,9 +144,10 @@ function parseItemsQuery (query, { queryables = [], hasTime = false, defaultLimi
     if (filters.length >= MAX_PROPERTY_FILTERS) throw bad(`At most ${MAX_PROPERTY_FILTERS} property filters`)
     const p = `p${filters.length}`
     params[p] = v
-    filters.push({ column: q.name, clause: `${q.name} = CAST(:${p} AS ${q.sqlType.toUpperCase()})` })
+    // Quoted, so columns named like SQL keywords (group, order, ...) work; names are plain identifiers
+    filters.push({ column: q.name, clause: `\`${q.name}\` = CAST(:${p} AS ${q.sqlType.toUpperCase()})` })
   }
-  return { bbox, crs, limit, offset, cursor, datetime, filters, params }
+  return { bbox, crs, limit, offset, cursor, datetime, properties, filters, params }
 }
 
 // Columns usable as ?name=value filters: plain names with scalar types

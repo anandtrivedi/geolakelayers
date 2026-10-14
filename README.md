@@ -178,7 +178,8 @@ a map preview.
 
 Items accept `bbox` (and `bbox-crs`), `crs` (CRS84 or `http://www.opengis.net/def/crs/EPSG/0/3857`),
 `limit` (default 100, at most `MAX_ROWS`), `offset`, `datetime` (instant or interval, for collections with
-a time field) and `field=value` filters on queryable fields. Unknown parameters are refused with a 400, as
+a time field), `properties` (fields to return) and `field=value` filters on queryable fields. Bounding boxes
+are 2D (four numbers). Unknown parameters are refused with a 400, as
 the standard requires, so a typo never returns the whole table.
 
 Who can call it: everything still goes through the Databricks Apps front door, so clients need a

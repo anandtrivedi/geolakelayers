@@ -221,9 +221,11 @@ function ogcRouter (deps) {
       count: 'auto'
     })
     const itemsUrl = `${base(req, s.name)}/collections/${c.id}/items`
+    const pick = q.properties && new Set(q.properties)
     const features = result.features.map(f => ({
       ...f,
       geometry: reproject(f.geometry, q.crs),
+      properties: pick ? Object.fromEntries(Object.entries(f.properties || {}).filter(([k]) => pick.has(k))) : f.properties,
       links: [link(`${itemsUrl}/${f.id}`, 'self', GEOJSON_TYPE)]
     }))
     const links = [

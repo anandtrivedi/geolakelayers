@@ -88,7 +88,12 @@ const demo = { name: 'demo', title: 'Demo', collections: [{ table: 'c.s.places',
 
 test('params: bbox, crs, limit, offset, datetime, unknown and repeated parameters', () => {
   assert.deepEqual(params.parseBbox('1,2,3,4', crs.CRS84), [[1, 2, 3, 4]])
-  assert.deepEqual(params.parseBbox('1,2,0,3,4,9', crs.CRS84), [[1, 2, 3, 4]])
+  assert.throws(() => params.parseBbox('1,2,0,3,4,9', crs.CRS84), /heights/)
+  // Web Mercator: no antimeridian split, inverted boxes refused, out-of-range values clamped
+  assert.throws(() => params.parseBbox('1000,-1000,-1000,1000', crs.EPSG3857), /minx is greater/)
+  const world = params.parseBbox('-40000000,-40000000,40000000,40000000', crs.EPSG3857)
+  assert.equal(world.length, 1)
+  assert.ok(Math.abs(world[0][0] + 180) < 1e-9 && Math.abs(world[0][2] - 180) < 1e-9 && world[0][3] < 85.06)
   assert.deepEqual(params.parseBbox('170,-10,-170,10', crs.CRS84), [[170, -10, 180, 10], [-180, -10, -170, 10]])
   const [[x0, y0]] = params.parseBbox('-8571600,4705800,-8562000,4710000', crs.EPSG3857)
   assert.ok(Math.abs(x0 - -77.0) < 0.01 && Math.abs(y0 - 38.9) < 0.05)
@@ -104,6 +109,8 @@ test('params: bbox, crs, limit, offset, datetime, unknown and repeated parameter
   assert.deepEqual(params.parseDatetime('2024-01-01'), { startMs: Date.UTC(2024, 0, 1), endMs: Date.UTC(2024, 0, 2) - 1 })
   assert.deepEqual(params.parseDatetime('../2024-01-01T00:00:00Z'), { startMs: null, endMs: Date.UTC(2024, 0, 1) })
   assert.deepEqual(params.parseDatetime('2024-01-01T00:00:00+05:00/'), { startMs: Date.UTC(2023, 11, 31, 19), endMs: null })
+  for (const d of ['2025-02-30', '2025-02-29T10:00:00Z', '2024-01-01T25:00:00Z', '2024-01-01T10:61:00Z']) assert.throws(() => params.parseDatetime(d), /datetime/, d)
+  assert.ok(params.parseDatetime('2024-02-29'), 'leap day is a real date')
   for (const d of ['../..', '2024-13-01T00:00:00Z/..', 'yesterday', '2024-02-01/2024-01-01', 'a/b/c', '2024-01-01T00:00:00']) assert.throws(() => params.parseDatetime(d), /datetime/)
   assert.throws(() => params.parseItemsQuery({ foo: '1' }), /Unknown parameter foo/)
   assert.throws(() => params.parseItemsQuery({ limit: ['1', '2'] }), /more than once/)
@@ -114,7 +121,11 @@ test('params: bbox, crs, limit, offset, datetime, unknown and repeated parameter
 
 test('params: property filters become typed named parameters, never SQL text', () => {
   const q = params.parseItemsQuery({ kind: "a' OR 1=1 --", score: '2.5' }, { queryables: params.queryablesOf(FIELDS) })
-  assert.deepEqual(q.filters.map(f => f.clause), ['kind = CAST(:p0 AS STRING)', 'score = CAST(:p1 AS DOUBLE)'])
+  assert.deepEqual(q.filters.map(f => f.clause), ['`kind` = CAST(:p0 AS STRING)', '`score` = CAST(:p1 AS DOUBLE)'])
+  // A column named like a SQL keyword is quoted
+  assert.equal(params.parseItemsQuery({ group: '3' }, { queryables: [{ name: 'group', sqlType: 'int' }] }).filters[0].clause, '`group` = CAST(:p0 AS INT)')
+  assert.deepEqual(params.parseItemsQuery({ properties: 'kind, score' }).properties, ['kind', 'score'])
+  assert.throws(() => params.parseItemsQuery({ properties: 'a,b c' }), /properties/)
   assert.deepEqual(q.params, { p0: "a' OR 1=1 --", p1: '2.5' })
   assert.deepEqual(params.queryablesOf(FIELDS).map(f => f.name), ['objectid', 'kind', 'score', 'seen_at'])
   assert.deepEqual(params.queryablesOf([{ name: 'bad name', sqlType: 'string' }, { name: 'limit', sqlType: 'int' }, { name: 'd', sqlType: 'decimal(10,2)' }]).map(f => f.name), ['d'])
@@ -320,6 +331,10 @@ test('OGC items: GeoJSON, paging links with cursor, limit clamp, filters, CRS, e
     assert.equal(q.time.field, 'seen_at')
     assert.equal(q.time.startMs, Date.UTC(2024, 0, 1))
     assert.equal(q.userToken, 'tok')
+
+    r = await s.call('/ogc/demo/collections/places/items?properties=kind&limit=2')
+    assert.deepEqual(Object.keys(r.body.features[0].properties), ['kind'])
+    assert.ok(r.body.features[0].geometry && r.body.features[0].id)
 
     r = await s.call(`/ogc/demo/collections/places/items?crs=${encodeURIComponent(crs.EPSG3857)}&limit=1`)
     assert.equal(r.headers.get('content-crs'), `<${crs.EPSG3857}>`)

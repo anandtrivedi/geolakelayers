@@ -205,9 +205,17 @@ test('queryFeatures: a table without geometry is a 400', withDb({ describe: [{ c
   await assert.rejects(Model.queryFeatures({ table, userToken: 'tok' }), e => e.code === 400 && /no usable geometry/.test(e.message))
 }))
 
-test('queryFeatures: big tables skip filtered counts; a failed count never undercounts the page', withDb({ count: 5000 }, async (db, table) => {
+test('queryFeatures: big tables skip filtered counts', withDb({ count: 5000 }, async (db, table) => {
   const r = await Model.queryFeatures({ table, userToken: 'tok', limit: 10, propertyFilters: [{ clause: 'kind = CAST(:p0 AS STRING)' }], params: { p0: 'a' }, count: 'auto' })
   assert.equal(r.numberMatched, undefined)
+}))
+
+test('queryFeatures: a count that comes back lower than the page (failed count = 0) is not reported', withDb({ count: 0 }, async (db, table) => {
+  const first = await Model.queryFeatures({ table, userToken: 'tok', limit: 10, count: 'auto' })
+  assert.equal(first.features.length, 10)
+  assert.equal(first.numberMatched, undefined)
+  const keyset = await Model.queryFeatures({ table, userToken: 'tok', limit: 10, cursor: 10, offset: 10, count: 'auto' })
+  assert.equal(keyset.numberMatched, undefined, 'keyset pages are guarded too')
 }))
 
 test('queryFeatures: results are cached per user, and a different user queries again', withDb({}, async (db, table) => {

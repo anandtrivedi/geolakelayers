@@ -1038,7 +1038,7 @@ async function queryFeatures ({ table, userToken, warehouseId, bbox = [], proper
       if (count === 'auto') {
         const n = await countMatched(table, session, taskId, who, filterOnly.extra, filterOnly.params)
         // (a failed table count comes back as 0; never report fewer matches than this page shows)
-        if (n !== null && n !== undefined && (keyset || n >= offset + features.length)) out.numberMatched = n
+        if (n !== null && n !== undefined && n >= (keyset ? features.length : offset + features.length)) out.numberMatched = n
       }
       return out
     })
