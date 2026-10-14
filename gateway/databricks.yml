@@ -107,6 +107,7 @@ targets:
       editing: "true"
       ogc_services_table: main.lakegate.ogc_services
       layer_overrides_table: main.lakegate.layer_overrides
+      directory: prod=https://lakegate-1234567890123456.aws.databricksapps.com;gov=https://lakegate-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
 
   # gov (GovCloud, separate metastore): second workspace for multi-workspace testing
@@ -115,4 +116,5 @@ targets:
       host: https://your-gov-workspace.cloud.databricks.us
     variables:
       warehouse_id: fedcba9876543210
+      directory: prod=https://lakegate-1234567890123456.aws.databricksapps.com;gov=https://lakegate-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
