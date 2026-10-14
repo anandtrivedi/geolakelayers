@@ -9,7 +9,8 @@ as live map layers, in two forms:
   LakeGate, no widget.
 
 Viewers sign in with Databricks and see only what Unity Catalog lets them see. Nothing is copied: every pan and
-zoom is a query on a Databricks SQL warehouse.
+zoom is a query on a Databricks SQL warehouse. (The one exception is **Optimize for maps**, which writes a
+map-friendly copy of a table when you ask for it.)
 
 ![Published experience with Unity Catalog layers](screenshots/published-app-layers.png)
 
@@ -18,21 +19,23 @@ Which client uses what (Experience Builder, OGC clients like QGIS and GDAL, scri
 
 ## How it fits
 
-![Architecture: ArcGIS clients, LakeGate per workspace, SQL warehouse and Unity Catalog](screenshots/architecture.png)
+![Architecture: map clients, LakeGate (one per metastore), SQL warehouse and Unity Catalog](screenshots/architecture.png)
 
 - **Databricks Data widget** (`widget/databricks-data/`): signs the user in to each workspace, lists the
   tables they can use, and adds them to the map as Experience Builder data sources, so Map Layers, Legend,
   Table and Filter treat them like any other layer.
-- **LakeGate** (`gateway/`): a Databricks App, one per workspace. It turns ArcGIS FeatureServer requests
-  (extent, paging, filters, counts) into SQL and runs them **as the signed-in user**. Map Viewer, ArcGIS Pro
-  and SDK apps can use its layer URLs too. It also publishes sets of tables as **OGC API – Features**
+- **LakeGate** (`gateway/`): a Databricks App, one per Unity Catalog metastore. It turns ArcGIS FeatureServer
+  requests (extent, paging, filters, counts) into SQL and runs them **as the signed-in user**. Scripts and
+  ArcGIS Maps SDK apps can use its layer URLs when they send a Databricks OAuth token; ArcGIS Map Viewer and
+  ArcGIS Pro can't add them by URL yet, because they can't send a Databricks sign-in. It also publishes sets of tables as **OGC API – Features**
   services for QGIS, GDAL, OpenLayers, MapLibre and pipelines (see [OGC API – Features](#ogc-api--features)).
 - **Your data stays in Unity Catalog.** Any table with geometry can be a layer: a GEOMETRY/GEOGRAPHY
   column, WKT, WKB or GeoJSON in a text or binary column, or longitude/latitude columns (see
   [How tables are read](#how-tables-are-read)).
 
-A Databricks sign-in belongs to one workspace, so each workspace runs its own LakeGate gateway (same code, one
-bundle). Workspaces that share a metastore see the same catalogs and can share one gateway.
+One gateway per Unity Catalog metastore is enough. People sign in to the workspace that hosts it, and it can
+serve any catalog bound to that workspace, so workspaces that share a metastore share one gateway. A
+workspace on another metastore (another region, or GovCloud) gets its own gateway from the same bundle.
 
 ## Deployment
 
@@ -40,7 +43,10 @@ You need: a recent Databricks CLI (built with v1.17) with a profile for each wor
 with user authorization, a serverless SQL warehouse, and ArcGIS Enterprise 11.0 or later (this project is
 built and tested against 12.1).
 
-### 1. Deploy LakeGate to a workspace
+There are two paths. **OGC clients only** (QGIS, GDAL, web maps, scripts): step 1 is all you need. **Experience
+Builder**: step 1, then install the widget (step 2, and step 3 if you use Portal's own Experience Builder).
+
+### 1. Deploy LakeGate (both paths)
 
 LakeGate is a Databricks Asset Bundle in `gateway/`. Each workspace is a target in
 `gateway/databricks.yml`:
@@ -81,10 +87,16 @@ What users need in Databricks: `CAN_USE` on the app (the bundle grants it to acc
 warehouse, and `USE CATALOG` / `USE SCHEMA` / `SELECT` on the tables. Queries run as the user, so the app's
 service principal needs no data grants.
 
-To add a workspace later: add a target, deploy it, and add the new gateway to `directory` in every target so
-authors can pick it from a list.
+You're done with the OGC path when the console opens and an OGC service's landing page answers a request
+that carries `Authorization: Bearer <token>`.
 
-### 2. Set up Experience Builder Developer Edition
+To add a workspace on the same metastore: bind its catalogs to the gateway's workspace and add its Experience
+Builder address to `allowed_origins`. For a workspace on another metastore: add a target, deploy it, and add
+the new gateway to `directory` in every target so authors can pick it from a list.
+
+### 2. Install the widget in Experience Builder Developer Edition (Experience Builder path)
+
+The widget's own install notes are in [widget/databricks-data/README.md](widget/databricks-data/README.md).
 
 Custom widgets are built with Developer Edition. Pick the version that matches your Portal: Enterprise 12.1
 pairs with Developer Edition **1.20** (ArcGIS Maps SDK 5.0). Download it from Esri's Developer Edition
@@ -149,6 +161,8 @@ switches have to agree:
 2. **App (author):** **Allow editing Databricks layers** in the widget's settings (Viewers section). Each
    workspace card says whether its gateway allows editing.
 3. **Unity Catalog (per person):** edits run as the person editing, so they need `MODIFY` on the table.
+
+The gateway switch and `MODIFY` are what enforce editing; the widget's switch only shows or hides editing in an app.
 
 Editable tables have a real integer id: a single-column primary key, or an id column picked as an override.
 Tables with a derived id and map-optimized copies stay read-only. Each save is SQL on the Delta table (`INSERT` / `UPDATE` / `DELETE`), so
@@ -318,6 +332,8 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
 - The browser never sends SQL. Table, column and catalog names are checked as plain identifiers; `where`
   clauses are validated; bounding boxes are built from numbers.
 - Caches are per user. "Optimize for maps" only replaces tables LakeGate wrote itself.
+- The app is open to all account users on purpose: what anyone can read or change is decided by Unity Catalog.
+  The catalog cap limits what the widget lists, not what people can access.
 
 ## Performance
 

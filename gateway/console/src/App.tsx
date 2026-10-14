@@ -97,9 +97,9 @@ function Overview ({ info, warehouses, go }: { info: GatewayInfo, warehouses: Wa
         <div className='card start'>
           <div className='start-num'>2</div>
           <h3>Use it in ArcGIS</h3>
-          <p className='muted'>Add the Databricks Data widget to an Experience Builder app and give it the gateway URL below. You pick tables inside the widget.</p>
+          <p className='muted'>Add the Databricks Data widget to an Experience Builder app and give it the gateway URL below. You pick tables inside the widget. Map Viewer and ArcGIS Pro can't add these layers by URL yet.</p>
           <div className='card-actions'>
-            <button className='button ghost' onClick={() => go('guide')}>How it works</button>
+            <button className='button ghost' onClick={() => go('guide')}>Read the guide</button>
             {info.widgetSource && <a className='button ghost' href={info.widgetSource} target='_blank' rel='noreferrer'>Get the widget</a>}
           </div>
         </div>
@@ -121,25 +121,11 @@ function Overview ({ info, warehouses, go }: { info: GatewayInfo, warehouses: Wa
 
       <section className='stats'>
         <Stat label='Signed in' value={info.user || 'unknown'} sub={info.runAs === 'user' ? 'queries run with your permissions' : 'queries run as the app'} />
-        <Stat label='Workspace' value={info.workspaceHost || '—'} sub='this gateway serves this workspace only' />
+        <Stat label='Workspace' value={info.workspaceHost || '—'} sub='hosts this gateway; workspaces on its metastore can use it' />
         <Stat label='Default warehouse' value={def?.name || info.defaultWarehouse || '—'} sub={def ? `${def.serverless ? 'serverless · ' : ''}${def.size} · ${def.state.toLowerCase()}` : ''} />
       </section>
 
 
-      <section>
-        <div className='card'>
-          <h2>Where the data can go</h2>
-          <table className='guide-table'>
-            <tbody>
-              <tr><td><b>ArcGIS Experience Builder</b></td><td>The Databricks Data widget, with the gateway URL above. Viewers sign in with Databricks once, and Databricks layers work with Map Layers, Legend, Table and pop-ups like any other layer.</td></tr>
-              <tr><td><b>QGIS, GDAL, web maps</b></td><td>An OGC service's landing page, with a Databricks OAuth token.</td></tr>
-              <tr><td><b>Scripts and notebooks</b></td><td>OGC endpoints or a table's FeatureServer URL, with a Databricks OAuth token.</td></tr>
-              <tr><td><b>Map Viewer, ArcGIS Pro</b></td><td className='muted'>Not yet: adding a layer by URL doesn't send a Databricks sign-in.</td></tr>
-            </tbody>
-          </table>
-          <p className='small'><button className='link' onClick={() => go('guide')}>Read the guide</button> for what each client needs.</p>
-        </div>
-      </section>
 
       <section className='card'>
         <h2>How it fits</h2>
@@ -183,9 +169,10 @@ function Workspaces ({ info, warehouses }: { info: GatewayInfo, warehouses: Ware
       <section className='card'>
         <h2>Workspace directory</h2>
         <p className='muted'>
-          A Databricks sign-in belongs to one workspace, so each workspace runs its own LakeGate gateway (the same
-          code, deployed from one bundle). Workspaces that share a metastore see the same catalogs and can
-          share a gateway. The Databricks Data widget offers this list when an author adds a workspace.
+          One gateway per Unity Catalog metastore is enough: workspaces that share a metastore use this one, as long
+          as their catalogs are bound to this gateway's workspace. A workspace on another metastore (another region,
+          or GovCloud) runs its own gateway from the same bundle. These are the gateways this one knows about; the
+          Databricks Data widget offers the same list when an author adds a workspace.
         </p>
         <div className='ws-grid'>
           {info.directory.map(d => {

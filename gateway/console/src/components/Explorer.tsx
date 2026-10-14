@@ -44,7 +44,7 @@ export function Explorer ({ info, onAddToOgc, onGuide }: { info: GatewayInfo, on
         <div className='tree-tools'>
           <p className='muted small'>
             Listed: tables with a GEOMETRY or GEOGRAPHY column, and tables with an override. Geometry stored as
-            text or binary (WKT, WKB, GeoJSON) is found by scanning a schema.
+            text or binary (WKT, WKB, GeoJSON) is found by scanning a schema; tables it finds are added to this list for you.
           </p>
           <div className='inline-form'>
             <input value={scanSchema} onChange={e => setScanSchema(e.target.value)} placeholder='catalog.schema' aria-label='Schema to scan' />
@@ -121,7 +121,7 @@ function TableDetail ({ t, info, services, onAddToOgc, onGuide, onChanged }: {
           <dl className='facts'>
             <div><dt>Features</dt><dd>{count === null ? '…' : count.toLocaleString()}</dd></div>
             <div><dt>Geometry</dt><dd>{spec.geometryType.replace('esriGeometry', '')} <span className='muted'>from {spec.geometrySource}</span></dd></div>
-            <div><dt>Object id</dt><dd>{spec.idSource === 'derived' ? 'derived (read-only)' : <code>{spec.objectId}</code>}</dd></div>
+            <div><dt>Object id</dt><dd title={spec.idSource === 'derived' ? 'No integer id column, so an id is computed from each row. The layer is read-only; pick an id column under How this table is read to allow editing.' : undefined}>{spec.idSource === 'derived' ? 'derived (read-only)' : <code>{spec.objectId}</code>}</dd></div>
           </dl>
           <div className='next-bar'>
             <span>This is how the table will draw. To use it, add it to</span>

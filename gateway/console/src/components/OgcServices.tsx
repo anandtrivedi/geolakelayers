@@ -311,7 +311,8 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
         <span>
           Give a client the <b>landing page</b> URL; it finds the collections from there. Every request needs{' '}
           <code>Authorization: Bearer &lt;Databricks OAuth token&gt;</code>. In QGIS, add a WFS / OGC API – Features
-          connection with an API Header authentication config.
+          connection with an API Header authentication config. Get a token with <code>databricks auth token</code>; it lasts
+          about an hour, so paste a new one when it expires.
         </span>
       </div>
       <div className='endpoint-list'>
