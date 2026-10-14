@@ -71,7 +71,7 @@ Several workspaces can feed one app. Each has its own gateway and its own sign-i
 
 An OGC service is a named set of tables. Create one in the **OGC services** tab; each table becomes a collection. The service's landing page URL is what you give a client, and the client follows the links from there. Each service has an engine, the warehouse its queries run on. Lakehouse//RT warehouses suit interactive maps best.
 
-Anything that speaks OGC API – Features and can send an \`Authorization\` header works. Responses are GeoJSON in CRS84 by default, or EPSG:3857 on request. Results come in pages; clients follow the \`next\` link.
+Anything that speaks OGC API – Features and can send an \`Authorization\` header works. In QGIS, that's a WFS / OGC API – Features connection to the service's landing page, with an **API Header** authentication configuration that sends \`Authorization: Bearer <token>\`. Tested with QGIS 4.2. Responses are GeoJSON in CRS84 by default, or EPSG:3857 on request. Results come in pages; clients follow the \`next\` link.
 
 ## Scripts and notebooks
 
