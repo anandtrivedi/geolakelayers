@@ -7,10 +7,12 @@ import type { CatalogTable } from '../api'
 // (pick one table) and the OGC service editor (tick several).
 type Loaded = { state: 'loading' | 'ready' | 'failed', tables: CatalogTable[], error?: string }
 
-export function CatalogTree ({ isActive, onPick, leafStart }: {
+export function CatalogTree ({ isActive, onPick, leafStart, reloadKey = 0 }: {
   isActive: (t: CatalogTable) => boolean
   onPick: (t: CatalogTable) => void
   leafStart?: (t: CatalogTable) => ReactNode
+  /** Change to reload the open catalogs (after a scan or an override) */
+  reloadKey?: number
 }) {
   const [catalogs, setCatalogs] = useState<string[] | null>(null)
   const [error, setError] = useState('')
@@ -19,6 +21,11 @@ export function CatalogTree ({ isActive, onPick, leafStart }: {
   const [filter, setFilter] = useState('')
 
   useEffect(() => { api.catalogs().then(setCatalogs).catch(e => setError(e.message)) }, [])
+  useEffect(() => {
+    if (!reloadKey) return
+    for (const c of Object.keys(loaded)) if (open.has(c)) load(c)
+    setLoaded(l => Object.fromEntries(Object.entries(l).filter(([c]) => open.has(c))))
+  }, [reloadKey])
 
   const load = (catalog: string) => {
     setLoaded(l => ({ ...l, [catalog]: { state: 'loading', tables: [] } }))
@@ -79,7 +86,7 @@ export function CatalogTree ({ isActive, onPick, leafStart }: {
                               <button key={t.table} role='treeitem' aria-selected={isActive(t)} className={`node table${isActive(t) ? ' active' : ''}`} onClick={() => onPick(t)}>
                                 {leafStart?.(t)}
                                 <span className='node-name'>{t.name}</span>
-                                <span className='geom-chip'>{t.geometry}</span>
+                                <span className={`geom-chip${t.detectedBy === 'override' ? ' override' : ''}`} title={t.detectedBy === 'override' ? 'set by an author' : t.detectedBy === 'content' ? 'found by sampling values' : 'GEOMETRY/GEOGRAPHY column'}>{t.geometry}</span>
                               </button>
                             ))}
                           </div>

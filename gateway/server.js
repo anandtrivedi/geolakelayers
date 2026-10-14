@@ -30,7 +30,8 @@ const provider = require('./provider')
 const Model = require('./provider/model')
 const connectionManager = require('./provider/connection')
 const layerSpec = require('./provider/spec')
-const { INTEGER_TYPES, FLOAT_TYPES, PLAIN, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly } = require('./lib/http')
+const { createOverrideStore, validateOverride, OverrideError } = require('./lib/overrides')
+const { PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly } = require('./lib/http')
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
 // Catalogs to list: empty means every catalog the signed-in user can see, minus the excluded ones
@@ -41,7 +42,10 @@ const catalogScope = catalogs.length ? catalogs.join(', ') : 'all catalogs you c
 const koop = new Koop({ logLevel: process.env.LOG_LEVEL || 'info', disableCors: true })
 const app = koop.server
 
+// Console-only routes: refuse CORS preflights before the cors middleware below answers them
 app.use('/api/optimize', consoleOnly('Optimize can only be started from the ArcGateway console'))
+app.use('/api/overrides', consoleOnly('Layer overrides can only be changed from the ArcGateway console'))
+app.use('/api/ogc', consoleOnly('OGC services can only be changed from the ArcGateway console'))
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
   methods: ['GET', 'POST'],
@@ -135,7 +139,7 @@ const ogcDeps = {
   maxLimit: Math.min(parseInt(process.env.OGC_MAX_LIMIT) || Infinity, parseInt(process.env.MAX_ROWS) || 10000)
 }
 app.use('/ogc', ogc.ogcRouter(ogcDeps))
-app.use('/api/ogc', consoleOnly('OGC services can only be changed from the ArcGateway console'), ogc.consoleApi(ogcDeps))
+app.use('/api/ogc', ogc.consoleApi(ogcDeps))
 
 koop.register(provider)
 
@@ -164,6 +168,7 @@ app.get('/api/info', (req, res) => {
     catalogCap: catalogs,
     excludeCatalogs,
     directory,
+    overrides: { enabled: !!overrideStore, table: overridesTable },
     editing: editingEnabled,
     ogc: { enabled: !!ogcStore, table: ogcTable }
   })
@@ -187,16 +192,26 @@ async function runSql (req, sql, timeout = 60, namedParameters) {
 
 const requestedCatalogs = req => scopedCatalogs(req, catalogs)
 
-const ID_NAMES = "'objectid','oid','fid','bigid','id','object_id'"
-const STRING_ID_NAMES = "'id','gers_id','uuid','guid','globalid','feature_id','fid','objectid'"
-const WKT_NAMES = "'geometry_wkt','geom_wkt','wkt','shape_wkt','geometry','geom','shape'"
-const LAT_NAMES = "'latitude','lat','y'"
-const LON_NAMES = "'longitude','lon','lng','long','x'"
-
 const catalogCache = new Map() // sha256(user token) or 'app' -> { tables, at }
 const CATALOG_TTL_MS = 300000
+// Tables a "Scan schema" found (text/binary geometry), per caller: who -> Map(table -> entry)
+const scanned = new Map()
+const SCAN_TTL_MS = 3600000
+const whoKey = req => layerSpec.whoOf(obo(req))
 
-// Tables with an integer id and some geometry source, using the same rules as spec.js
+// Layer overrides (authors' geometry/id choices) in a Unity Catalog table; '-' = none
+const overridesTable = list(process.env.LAYER_OVERRIDES_TABLE)[0] || null
+const overrideStore = overridesTable ? createOverrideStore({ table: overridesTable }) : null
+layerSpec.setOverrideSource(async (table, exec) => overrideStore ? overrideStore.get(sql => exec(sql, 'overrides'), table) : null)
+
+const entryOf = (table, extra) => {
+  const [catalog, schema, name] = table.split('.')
+  return { table, catalog, schema, name, ...extra }
+}
+
+// Tables the caller can map, found from metadata only (a metastore-wide scan can't read values):
+// every table with a GEOMETRY/GEOGRAPHY column (by type, whatever it's called), with its primary key as the
+// id when it has a single-column integer one; plus tables with an override, and tables a schema scan found
 async function listTables (req) {
   const userToken = obo(req)
   const scoped = requestedCatalogs(req)
@@ -207,43 +222,150 @@ async function listTables (req) {
   if (hit && Date.now() - hit.at < CATALOG_TTL_MS) return hit.tables
   for (const [k, v] of catalogCache) if (Date.now() - v.at >= CATALOG_TTL_MS) catalogCache.delete(k)
   const quote = names => names.map(c => `'${c.replace(/'/g, '')}'`).join(',')
-  const scope = [
-    scoped.length ? `table_catalog IN (${quote(scoped)})` : null,
-    excludeCatalogs.length ? `table_catalog NOT IN (${quote(excludeCatalogs)})` : null
+  const where = col => [
+    scoped.length ? `${col} IN (${quote(scoped)})` : null,
+    excludeCatalogs.length ? `${col} NOT IN (${quote(excludeCatalogs)})` : null
   ].filter(Boolean).join(' AND ') || 'TRUE'
-  // Only the columns that can matter (geometry types or the known id/geometry/lat/lon names), so a
-  // metastore-wide scan stays small
   const sql = `
-    WITH c AS (
-      SELECT table_catalog cat, table_schema sch, table_name tbl, lower(column_name) col, lower(data_type) dt
+    WITH g AS (
+      SELECT table_catalog cat, table_schema sch, table_name tbl, min(column_name) geom, min(lower(data_type)) dt
       FROM system.information_schema.columns
-      WHERE ${scope} AND table_schema <> 'information_schema'
-        AND table_name NOT LIKE '\\_\\_%'
-        AND (lower(data_type) LIKE 'geometry%' OR lower(data_type) LIKE 'geography%'
-          OR lower(column_name) IN (${ID_NAMES}, ${STRING_ID_NAMES}, ${WKT_NAMES}, ${LAT_NAMES}, ${LON_NAMES}))
+      WHERE ${where('table_catalog')} AND table_schema <> 'information_schema' AND table_name NOT LIKE '\\_\\_%'
+        AND (lower(data_type) LIKE 'geometry%' OR lower(data_type) LIKE 'geography%')
+      GROUP BY 1, 2, 3
+    ),
+    pk AS (
+      SELECT t.table_catalog cat, t.table_schema sch, t.table_name tbl, min(k.column_name) col, count(*) n
+      FROM system.information_schema.table_constraints t
+      JOIN system.information_schema.key_column_usage k
+        ON k.constraint_catalog = t.constraint_catalog AND k.constraint_schema = t.constraint_schema AND k.constraint_name = t.constraint_name
+      WHERE ${where('t.table_catalog')} AND t.constraint_type = 'PRIMARY KEY'
+      GROUP BY 1, 2, 3
     )
-    SELECT cat, sch, tbl,
-      max(CASE WHEN (dt LIKE 'geometry%' OR dt LIKE 'geography%') AND col RLIKE '^[a-z_][a-z0-9_]*$' THEN col END) AS native_col,
-      max(CASE WHEN col IN (${WKT_NAMES}) AND dt = 'string' THEN col END) AS wkt_col,
-      max(CASE WHEN col IN (${LAT_NAMES}) AND dt IN (${FLOAT_TYPES}) THEN 1 ELSE 0 END) AS has_lat,
-      max(CASE WHEN col IN (${LON_NAMES}) AND dt IN (${FLOAT_TYPES}) THEN 1 ELSE 0 END) AS has_lon,
-      max(CASE WHEN col IN (${ID_NAMES}) AND dt IN (${INTEGER_TYPES}) THEN col END) AS id_col,
-      max(CASE WHEN col IN (${STRING_ID_NAMES}) AND dt = 'string' THEN col END) AS sid_col
-    FROM c GROUP BY cat, sch, tbl
-    ORDER BY cat, sch, tbl`
-  const rows = await runSql(req, sql)
-  const tables = rows
-    .filter(r => (r.id_col || r.sid_col) && (r.native_col || r.wkt_col || (r.has_lat && r.has_lon)))
-    .map(r => ({
-      table: `${r.cat}.${r.sch}.${r.tbl}`,
-      catalog: r.cat,
-      schema: r.sch,
-      name: r.tbl,
-      idField: r.id_col || `${r.sid_col} (hashed)`,
-      geometry: r.native_col || r.wkt_col || 'lon/lat'
+    SELECT g.cat, g.sch, g.tbl, g.geom, g.dt, CASE WHEN pk.n = 1 THEN pk.col END AS pk
+    FROM g LEFT JOIN pk ON pk.cat = g.cat AND pk.sch = g.sch AND pk.tbl = g.tbl
+    ORDER BY 1, 2, 3`
+  const inScope = t => {
+    const cat = t.split('.')[0]
+    return (!scoped.length || scoped.includes(cat)) && !excludeCatalogs.includes(cat)
+  }
+  const [rows, overrides] = await Promise.all([
+    runSql(req, sql),
+    overrideStore ? overrideStore.all(q => runSql(req, q)).catch(() => new Map()) : new Map()
+  ])
+  const byTable = new Map()
+  for (const r of rows) {
+    if (!layerSpec.PLAIN_IDENTIFIER.test(r.geom)) continue
+    byTable.set(`${r.cat}.${r.sch}.${r.tbl}`, entryOf(`${r.cat}.${r.sch}.${r.tbl}`, { idField: r.pk || 'derived', geometry: r.geom, detectedBy: 'type' }))
+  }
+  for (const [t, e] of scanned.get(whoKey(req)) || []) if (inScope(t) && Date.now() - e.at < SCAN_TTL_MS) byTable.set(t, e.entry)
+  for (const [t, o] of overrides) {
+    if (!inScope(t)) continue
+    const prev = byTable.get(t)
+    byTable.set(t, entryOf(t, {
+      idField: o.idColumn || prev?.idField || 'derived',
+      geometry: o.geometryColumn || (o.lonColumn ? `${o.lonColumn}/${o.latColumn}` : prev?.geometry || '?'),
+      detectedBy: 'override'
     }))
+  }
+  const tables = Array.from(byTable.values()).sort((a, b) => a.table.localeCompare(b.table))
   catalogCache.set(key, { tables, at: Date.now() })
   return tables
+}
+
+const forgetListings = () => catalogCache.clear()
+
+// "Scan schema": sample the STRING/BINARY columns of a schema's tables that have no native geometry, to
+// find WKT/WKB/GeoJSON stored as text. Runs as the caller; capped per request.
+const SCAN_MAX_TABLES = parseInt(process.env.SCAN_MAX_TABLES) || 40
+app.get('/api/scan', async (req, res) => {
+  const schema = String(req.query.schema || '')
+  if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(schema)) return res.status(400).json({ error: 'schema must be catalog.schema' })
+  const [cat, sch] = schema.split('.')
+  try {
+    const rows = await runSql(req, `
+      SELECT table_name tbl,
+        max(CASE WHEN lower(data_type) LIKE 'geometry%' OR lower(data_type) LIKE 'geography%' THEN 1 ELSE 0 END) AS native,
+        max(CASE WHEN lower(data_type) IN ('string', 'binary') OR lower(data_type) LIKE 'varchar%' THEN 1 ELSE 0 END) AS text
+      FROM ${cat}.information_schema.columns WHERE table_schema = '${sch}' GROUP BY table_name ORDER BY table_name`, 60)
+    const candidates = rows.filter(r => !Number(r.native) && Number(r.text) && layerSpec.PLAIN_IDENTIFIER.test(r.tbl)).map(r => `${schema}.${r.tbl}`)
+    const batch = candidates.slice(0, SCAN_MAX_TABLES)
+    const found = []
+    const failed = []
+    const mine = scanned.get(whoKey(req)) || new Map()
+    // A few at a time: each is a DESCRIBE plus a 200-row sample
+    for (let i = 0; i < batch.length; i += 4) {
+      await Promise.all(batch.slice(i, i + 4).map(async table => {
+        try {
+          const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), whoKey(req))
+          if (!spec) return
+          const entry = entryOf(table, { idField: spec.idSource === 'derived' ? 'derived' : spec.objectId, geometry: spec.geometryColumn || spec.geometrySource, detectedBy: spec.geometryDetectedBy })
+          mine.set(table, { entry, at: Date.now() })
+          found.push({ ...entry, geometrySource: spec.geometrySource })
+        } catch (err) {
+          failed.push({ table, error: err.message.split('\n')[0].slice(0, 200) })
+        }
+      }))
+    }
+    scanned.set(whoKey(req), mine)
+    if (scanned.size > 2000) scanned.delete(scanned.keys().next().value)
+    forgetListings()
+    res.json({ schema, checked: batch.length, skipped: candidates.length - batch.length, found, failed })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Layer overrides for one table (console): read, set (needs MODIFY on the overrides table), clear
+app.use('/api/overrides', express.json())
+app.get('/api/overrides', (req, res) => res.json({ enabled: !!overrideStore, table: overridesTable, missing: overrideStore?.missing || false }))
+app.post('/api/overrides/setup', async (req, res) => {
+  if (!overrideStore) return res.status(404).json({ error: 'Layer overrides are off (bundle variable layer_overrides_table)' })
+  try { await overrideStore.setup(q => runSql(req, q)); res.json({ ready: true }) } catch (err) { res.status(500).json({ error: err.message }) }
+})
+app.put('/api/overrides/:table', async (req, res) => {
+  const table = req.params.table
+  if (!overrideStore) return res.status(404).json({ error: 'Layer overrides are off (bundle variable layer_overrides_table)' })
+  if (!THREE_PART.test(table)) return res.status(400).json({ error: 'catalog.schema.table expected' })
+  try {
+    const o = validateOverride(req.body)
+    // The columns must exist and fit their role, for the person saving
+    const cols = layerSpec.describeColumns(await runSql(req, `DESCRIBE ${table}`))
+    const check = (name, ok, what) => {
+      if (!name) return
+      const c = cols.find(x => x.lname === name.toLowerCase())
+      if (!c) throw new OverrideError(400, `${table} has no column ${name}`)
+      if (!ok(c.type)) throw new OverrideError(400, `${name} (${c.type}) can't be ${what}`)
+    }
+    check(o.geometryColumn, t => /^(geometry|geography|string|binary|varchar)/.test(t), 'a geometry column')
+    check(o.lonColumn, t => /^(double|float|decimal|int|bigint|smallint)/.test(t), 'longitude')
+    check(o.latColumn, t => /^(double|float|decimal|int|bigint|smallint)/.test(t), 'latitude')
+    check(o.idColumn, t => /^(tinyint|smallint|int|integer|bigint|string)$/.test(t), 'the object id (integer or string)')
+    await overrideStore.put((q, p) => runSql(req, q, 60, p), table, o)
+    afterOverrideChange(table)
+    const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), whoKey(req))
+    res.json({ override: o, spec })
+  } catch (err) {
+    res.status(err.status || (/PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS/.test(err.message) ? 403 : 500)).json({ error: err.message.split('\n')[0] })
+  }
+})
+app.delete('/api/overrides/:table', async (req, res) => {
+  if (!overrideStore) return res.status(404).json({ error: 'Layer overrides are off' })
+  try {
+    await overrideStore.remove((q, p) => runSql(req, q, 60, p), req.params.table)
+    afterOverrideChange(req.params.table)
+    res.status(204).end()
+  } catch (err) {
+    res.status(err.status || (/PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS/.test(err.message) ? 403 : 500)).json({ error: err.message.split('\n')[0] })
+  }
+})
+
+// An override changes how a table draws for everyone: drop every cached spec, page and listing for it
+function afterOverrideChange (table) {
+  overrideStore?.forget()
+  Model.forgetTable(table)
+  for (const m of scanned.values()) m.delete(table)
+  forgetListings()
 }
 
 app.get('/api/catalog', async (req, res) => {
@@ -260,7 +382,10 @@ app.get('/api/spec/:table', async (req, res) => {
   if (!/^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+){2}$/.test(table)) return res.status(400).json({ error: 'catalog.schema.table expected' })
   try {
     const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), layerSpec.whoOf(obo(req)))
-    res.json({ table, spec, url: `/databricks/rest/services/${table}/FeatureServer/0` })
+    // No geometry found: still list the columns, so an author can pick them as an override
+    const columns = spec ? spec.columns : layerSpec.describeColumns(await runSql(req, `DESCRIBE ${table}`)).map(c => ({ name: c.name, type: c.type }))
+    const override = overrideStore ? await overrideStore.get(q => runSql(req, q), table).catch(() => null) : null
+    res.json({ table, spec, columns, override, url: `/databricks/rest/services/${table}/FeatureServer/0` })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -294,8 +419,7 @@ app.post('/api/optimize', express.json(), async (req, res) => {
     return res.status(500).json({ error: err.message })
   }
   if (!spec) return res.status(400).json({ error: `${table} has no usable geometry or id` })
-  const geomExpr = { wkt: `ST_GeomFromText(${spec.geometryColumn}, 4326)`, wkb: `ST_GeomFromWKB(${spec.geometryColumn}, 4326)` }[spec.geometryFormat] ||
-    (spec.geometryFormat === 'geometry' ? spec.geometryColumn : spec.geometryExpr)
+  const geomExpr = spec.geometryExpr
   const out = `${target}.${name}`
   const except = spec.geometryColumn ? ` EXCEPT (${spec.geometryColumn})` : ''
   const sql = `

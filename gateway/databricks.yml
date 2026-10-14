@@ -33,6 +33,9 @@ variables:
   exclude_catalogs:
     description: Catalogs never listed
     default: system,samples,hive_metastore,__databricks_internal
+  layer_overrides_table:
+    description: Unity Catalog table (catalog.schema.table) holding authors' geometry/id overrides for tables that aren't detected automatically. "-" = overrides off
+    default: "-"
   ogc_services_table:
     description: Unity Catalog table (catalog.schema.table) holding the OGC API services defined in the console. "-" = OGC API off
     default: "-"
@@ -68,6 +71,8 @@ resources:
             value: ${var.editing}
           - name: EXCLUDE_CATALOGS
             value: ${var.exclude_catalogs}
+          - name: LAYER_OVERRIDES_TABLE
+            value: ${var.layer_overrides_table}
           - name: OGC_SERVICES_TABLE
             value: ${var.ogc_services_table}
           - name: RATE_LIMIT_MAX
@@ -95,6 +100,7 @@ targets:
       allowed_warehouses: abcdef1234567890
       editing: "true"
       ogc_services_table: main.arcgateway.ogc_services
+      layer_overrides_table: main.arcgateway.layer_overrides
       directory: prod=https://arcgateway-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
 

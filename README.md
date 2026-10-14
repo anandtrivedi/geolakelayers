@@ -18,8 +18,9 @@ lets them see. Nothing is copied into ArcGIS: every pan and zoom is a query on a
   (extent, paging, filters, counts) into SQL and runs them **as the signed-in user**. Map Viewer, ArcGIS Pro
   and SDK apps can use its layer URLs too. It also publishes sets of tables as **OGC API – Features**
   services for QGIS, GDAL, OpenLayers, MapLibre and pipelines (see [OGC API – Features](#ogc-api--features)).
-- **Your data stays in Unity Catalog.** A table is map-ready if it has an id column and geometry stored as
-  GEOMETRY/GEOGRAPHY, WKT, WKB or longitude/latitude columns.
+- **Your data stays in Unity Catalog.** Any table with geometry can be a layer: a GEOMETRY/GEOGRAPHY
+  column, WKT, WKB or GeoJSON in a text or binary column, or longitude/latitude columns (see
+  [How tables are read](#how-tables-are-read)).
 
 A Databricks sign-in belongs to one workspace, so each workspace runs its own ArcGateway (same code, one
 bundle). Workspaces that share a metastore see the same catalogs and can share one gateway.
@@ -140,14 +141,41 @@ switches have to agree:
    workspace card says whether its gateway allows editing.
 3. **Unity Catalog (per person):** edits run as the person editing, so they need `MODIFY` on the table.
 
-Editable tables have a real integer id column; tables with a derived id (string ids such as Overture's) and
-map-optimized copies stay read-only. Each save is SQL on the Delta table (`INSERT` / `UPDATE` / `DELETE`), so
+Editable tables have a real integer id: a single-column primary key, or an id column picked as an override.
+Tables with a derived id and map-optimized copies stay read-only. Each save is SQL on the Delta table (`INSERT` / `UPDATE` / `DELETE`), so
 it takes a second or two: right for corrections, reviews and batch attribute updates, not for high-volume
 capture. New features get the next id after the table's current maximum, and there is no row versioning
 (the last save wins). For heavy transactional editing, a Lakebase-backed feature service is the better fit.
 
 Edits are accepted only from origins in `allowed_origins` (and the gateway's own pages); values are sent as
 SQL parameters and column names are checked against the table.
+
+## How tables are read
+
+ArcGateway works out each table's geometry and object id from column types and values, never from
+column names.
+
+- Geometry: a GEOMETRY or GEOGRAPHY column is used by its type (another SRID is reprojected to 4326).
+  Otherwise ArcGateway samples the table's text and binary columns with `try_to_geometry`; a column whose
+  values parse as WKT, EWKT, GeoJSON or WKB (95% of 200 sampled values) is the geometry, in the SRID the
+  values carry, else 4326.
+- Object id: the table's Unity Catalog primary key when it is a single integer column. Otherwise an id
+  derived from a hash of the whole row: stable while the row doesn't change, fine for viewing, but those
+  layers are read-only.
+- Listing: the catalog tree lists tables with a GEOMETRY/GEOGRAPHY column straight from metadata. Geometry
+  stored as text or binary needs the values, so it is found when a table is opened, or for a whole schema
+  with **Scan schema** in the console's Explore tab. **Open table** opens any table by name.
+
+When that isn't right (geometry in two longitude/latitude columns, a mostly empty geometry column, the
+wrong one of two geometry columns, or a real id column without a declared primary key), set an override:
+Explore → a table → **How it's read → Change**. Overrides are kept in a Unity Catalog table
+(`layer_overrides_table` in the bundle) and apply to everyone who uses the table through this gateway.
+**Create overrides table** makes it once and grants SELECT to account users; grant MODIFY on it to the
+people who should set overrides. Pick an id column only if its values are unique and never change:
+ArcGIS selects, pages and edits by it.
+
+To make a table editable without an override, declare its primary key:
+`ALTER TABLE c.s.t ALTER COLUMN id SET NOT NULL; ALTER TABLE c.s.t ADD CONSTRAINT t_pk PRIMARY KEY (id)`.
 
 ## OGC API – Features
 
@@ -218,6 +246,7 @@ rejects empty values):
 | `MAX_ROWS` | `4000` | Features per page |
 | `BIG_TABLE_FEATURES` | `250000` | Above this, layers draw only when zoomed in (about zoom 9) |
 | `editing` | `"false"` | Master switch for editing on this gateway |
+| `layer_overrides_table` | `-` | Unity Catalog table holding geometry/id overrides; `-` turns overrides off |
 | `ogc_services_table` | `-` | Unity Catalog table holding OGC API service definitions; `-` turns OGC API off |
 
 Widget (set in the builder): workspaces (name, gateway URL, warehouse, catalogs viewers can browse), whether
@@ -250,7 +279,8 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
 | Layer doesn't appear in Map Layers | Its row says "not shown in Map Layers": the data source couldn't be created and a plain layer was added. Check the browser console. |
 | Layer disappears when zooming out | It has more than 250,000 features; zoom in, or optimize the table. |
 | Requests fail with CORS errors | The page's origin isn't in the gateway's `allowed_origins`. |
-| A catalog shows "No map-ready tables" | Its tables lack an id column or a geometry the gateway recognizes. |
+| A catalog shows "No map-ready tables" | None of its tables has a GEOMETRY/GEOGRAPHY column. Use **Scan schema** for geometry stored as text or binary, or open a table and set its geometry under **How it's read**. |
+| A layer can't be edited | Its id is derived. Declare a primary key, or pick its id column under **How it's read**. |
 
 ## Development
 

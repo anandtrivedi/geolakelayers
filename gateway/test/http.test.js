@@ -286,11 +286,3 @@ test('http.consoleOnly: allows same-origin POST', async t => {
   assert.ok(nextCalled)
 })
 
-test('catalog scan type lists use information_schema spellings (BIGINT is "long")', () => {
-  const { INTEGER_TYPES, FLOAT_TYPES } = require('../lib/http')
-  const ints = INTEGER_TYPES.split(',').map(s => s.replace(/'/g, ''))
-  for (const t of ['long', 'int', 'short', 'byte', 'bigint']) assert.ok(ints.includes(t), t)
-  assert.ok(FLOAT_TYPES.includes("'double'") && FLOAT_TYPES.includes("'float'"))
-  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8')
-  assert.ok(src.includes('dt IN (${INTEGER_TYPES})'), 'listTables uses the shared list')
-})

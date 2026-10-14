@@ -1,229 +1,172 @@
-/*
-  spec.test.js — Tests for spec.js (table geometry/id detection)
-*/
+// provider/spec.js: geometry and id detection by type and content (never by column name), overrides,
+// the primary key, derived ids, and resolveSpec's caching
+process.env.LOG_LEVEL = 'ERROR'
 const test = require('node:test')
 const assert = require('node:assert/strict')
-
-// Load spec functions
 const spec = require('../provider/spec')
 
-test('spec.detect: GEOMETRY(4326) column', async t => {
-  // Note: spec.detect requires lname (lowercase name) field; test here documents the issue
-  const cols = [
-    { name: 'id', lname: 'id', type: 'bigint' },
-    { name: 'geometry', lname: 'geometry', type: 'geometry(4326)' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result, 'should detect spec')
-  assert.equal(result.objectId, 'id')
-  assert.equal(result.geometryColumn, 'geometry')
-  assert.equal(result.geometryFormat, 'expr')
-  assert.equal(result.spatialReference, 4326)
-  assert.ok(result.geometryExpr.includes('geometry'))
-})
+const cols = list => list.map(([name, type]) => ({ name, lname: name.toLowerCase(), type }))
+const parsedFor = (table, columns, rowByColumn) => {
+  const sample = spec.sampleSql(table, columns)
+  const row = {}
+  sample.cands.forEach((c, i) => Object.assign(row, { [`n${i}`]: 0, [`g${i}`]: 0, [`j${i}`]: 0, [`s${i}`]: 0 }, rowByColumn[c.name] ? Object.fromEntries(Object.entries(rowByColumn[c.name]).map(([k, v]) => [`${k}${i}`, v])) : {}))
+  return spec.readSample(sample, row)
+}
 
-test('spec.detect: GEOGRAPHY column (lon/lat)', async t => {
-  const cols = [
-    { name: 'objectid', lname: 'objectid', type: 'bigint' },
-    { name: 'shape', lname: 'shape', type: 'geography' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result, 'should detect spec')
-  assert.equal(result.objectId, 'objectid')
-  assert.ok(result.geometryExpr.includes('ST_GeomFromWKB'))
-})
-
-test('spec.detect: WKT string geometry', async t => {
-  const cols = [
-    { name: 'oid', lname: 'oid', type: 'bigint' },
-    { name: 'geometry_wkt', lname: 'geometry_wkt', type: 'string' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result)
-  assert.equal(result.objectId, 'oid')
-  assert.equal(result.geometryColumn, 'geometry_wkt')
-  assert.equal(result.geometryFormat, 'wkt')
-})
-
-test('spec.detect: WKB binary geometry', async t => {
-  const cols = [
-    { name: 'fid', lname: 'fid', type: 'bigint' },
-    { name: 'geom_wkb', lname: 'geom_wkb', type: 'binary' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result)
-  assert.equal(result.geometryColumn, 'geom_wkb')
-  assert.equal(result.geometryFormat, 'wkb')
-})
-
-test('spec.detect: lon/lat double columns', async t => {
-  const cols = [
-    { name: 'bigid', lname: 'bigid', type: 'bigint' },
-    { name: 'lon', lname: 'lon', type: 'double' },
-    { name: 'lat', lname: 'lat', type: 'double' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result)
-  assert.ok(result.geometryExpr.includes('ST_Point'))
-  assert.ok(result.geometryExpr.includes('lon'))
-  assert.ok(result.geometryExpr.includes('lat'))
-})
-
-test('spec.detect: missing geometry returns null', async t => {
-  const cols = [
-    { name: 'id', lname: 'id', type: 'bigint' },
-    { name: 'name', lname: 'name', type: 'string' }
-  ]
-  const result = spec.detect(cols)
-  assert.equal(result, null)
-})
-
-test('spec.detect: missing id returns null', async t => {
-  const cols = [
-    { name: 'name', lname: 'name', type: 'string' },
-    { name: 'geometry_wkt', lname: 'geometry_wkt', type: 'string' }
-  ]
-  const result = spec.detect(cols)
-  assert.equal(result, null)
-})
-
-test('spec.detect: string id (Overture) creates synthetic id', async t => {
-  const cols = [
-    { name: 'id', lname: 'id', type: 'string' },
-    { name: 'geometry_wkt', lname: 'geometry_wkt', type: 'string' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result)
-  assert.ok(result.syntheticIdFrom)
-  assert.equal(result.syntheticIdFrom, 'id')
-  assert.ok(result.objectIdExpr.includes('xxhash64'))
-})
-
-test('spec.detect: GEOMETRY without SRID (assumed 4326)', async t => {
-  const cols = [
-    { name: 'id', lname: 'id', type: 'bigint' },
-    { name: 'geom', lname: 'geom', type: 'geometry' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result)
-  assert.ok(result.geometryExpr.includes('ST_SetSRID'))
-})
-
-test('spec.detect: GEOMETRY(3857) reprojected to 4326', async t => {
-  const cols = [
-    { name: 'id', lname: 'id', type: 'bigint' },
-    { name: 'geom', lname: 'geom', type: 'geometry(3857)' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result)
-  assert.ok(result.geometryExpr.includes('ST_Transform'))
-})
-
-test('spec.detect: non-plain identifier column ignored', async t => {
-  const cols = [
-    { name: 'id', lname: 'id', type: 'bigint' },
-    { name: '"quoted name"', lname: '"quoted name"', type: 'string' },
-    { name: 'geometry_wkt', lname: 'geometry_wkt', type: 'string' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result)
-  // Should detect despite the quoted column
-  assert.equal(result.geometryColumn, 'geometry_wkt')
-})
-
-test('spec.detect: bbox columns detected', async t => {
-  const cols = [
-    { name: 'id', lname: 'id', type: 'bigint' },
-    { name: 'geometry', lname: 'geometry', type: 'geometry(4326)' },
-    { name: '_xmin', lname: '_xmin', type: 'double' },
-    { name: '_ymin', lname: '_ymin', type: 'double' },
-    { name: '_xmax', lname: '_xmax', type: 'double' },
-    { name: '_ymax', lname: '_ymax', type: 'double' }
-  ]
-  const result = spec.detect(cols)
-  assert.ok(result)
-  assert.equal(result.bboxColumns, true)
-})
-
-test('spec.describeColumns: stops at metadata section', async t => {
-  const rows = [
-    { col_name: 'id', data_type: 'BIGINT' },
-    { col_name: 'name', data_type: 'STRING' },
-    { col_name: '# Partition Information', data_type: '# col_name' },
-    { col_name: 'date', data_type: 'DATE' }
-  ]
-  const cols = spec.describeColumns(rows)
-  assert.equal(cols.length, 2)
-  assert.equal(cols[0].name, 'id')
-  assert.equal(cols[1].name, 'name')
-})
-
-test('spec.sourceFor: without synthetic id', async t => {
-  const specWithoutSynth = { objectId: 'id' }
-  const result = spec.sourceFor('catalog.schema.table', specWithoutSynth)
-  assert.equal(result, 'catalog.schema.table')
-})
-
-test('spec.sourceFor: with synthetic id', async t => {
-  const specWithSynth = {
-    objectId: 'objectid',
-    objectIdExpr: 'CAST(pmod(xxhash64(id), 9007199254740881) AS BIGINT)',
-    syntheticIdFrom: 'id'
+test('native GEOMETRY / GEOGRAPHY are found by type whatever they are called', () => {
+  for (const [type, expr] of [
+    ['geometry(4326)', 'footprint'],
+    ['geometry(3857)', 'ST_Transform(footprint, 4326)'],
+    ['geometry', 'ST_SetSRID(footprint, 4326)'],
+    ['geography', 'ST_GeomFromWKB(ST_AsBinary(footprint), 4326)']
+  ]) {
+    const s = spec.detect(cols([['k', 'bigint'], ['footprint', type]]))
+    assert.equal(s.geometryColumn, 'footprint', type)
+    assert.equal(s.geometryExpr, expr, type)
+    assert.equal(s.geometryDetectedBy, 'type')
+    assert.equal(s.geometryStorage, 'native')
   }
-  const result = spec.sourceFor('catalog.schema.table', specWithSynth)
-  assert.ok(result.includes('AS __src'))
-  assert.ok(result.includes('CAST(pmod(xxhash64(id)'))
 })
 
-test('spec.whoOf: token creates hash', async t => {
-  const token = 'dapi123456abcdef'
-  const who = spec.whoOf(token)
-  assert.equal(typeof who, 'string')
-  assert.equal(who.length, 32) // SHA256 hex-truncated
-  const who2 = spec.whoOf(token)
-  assert.equal(who, who2) // deterministic
+test('names mean nothing: a lat/lon pair or a column called geometry_wkt is not geometry without content', () => {
+  assert.equal(spec.detect(cols([['objectid', 'bigint'], ['lat', 'double'], ['lon', 'double']])), null)
+  assert.equal(spec.detect(cols([['objectid', 'bigint'], ['geometry_wkt', 'string']])), null, 'not sampled = not geometry')
 })
 
-test('spec.whoOf: no token returns app', async t => {
-  const who = spec.whoOf(null)
-  assert.equal(who, 'app')
-  const who2 = spec.whoOf(undefined)
-  assert.equal(who2, 'app')
+test('text/binary geometry is found by sampling: WKT, GeoJSON, WKB; best parse rate wins; SRID from the data', () => {
+  const c = cols([['a', 'string'], ['footprint', 'string'], ['shape_b', 'binary'], ['n', 'bigint']])
+  let p = parsedFor('x.y.z', c, { footprint: { n: 200, g: 200, j: 0, s: 0 }, a: { n: 200, g: 3 } })
+  assert.deepEqual(p.map(x => x.column), ['footprint'], '1.5% parse rate is not geometry')
+  let s = spec.detect(c, { parsed: p })
+  assert.equal(s.geometryColumn, 'footprint')
+  assert.equal(s.geometryExpr, 'ST_SetSRID(try_to_geometry(footprint), 4326)')
+  assert.equal(s.geometryStorage, 'wkt')
+  assert.equal(s.geometryDetectedBy, 'content')
+
+  p = parsedFor('x.y.z', c, { footprint: { n: 100, g: 100, j: 100 } })
+  assert.equal(p[0].storage, 'geojson')
+  p = parsedFor('x.y.z', c, { shape_b: { n: 10, g: 10 } })
+  assert.equal(p[0].storage, 'wkb')
+  p = parsedFor('x.y.z', c, { footprint: { n: 50, g: 50, s: 3857 } })
+  assert.equal(spec.detect(c, { parsed: p }).geometryExpr, 'ST_Transform(ST_SetSRID(try_to_geometry(footprint), 3857), 4326)')
+  // Both parse: the higher rate (then more values) wins, the other stays a candidate
+  p = parsedFor('x.y.z', c, { footprint: { n: 100, g: 96 }, a: { n: 100, g: 100 } })
+  s = spec.detect(c, { parsed: p })
+  assert.equal(s.geometryColumn, 'a')
+  assert.deepEqual(s.geometryCandidates, ['a', 'footprint'])
+  assert.deepEqual(parsedFor('x.y.z', c, { footprint: { n: 0, g: 0 } }), [], 'empty columns are not geometry')
 })
 
-test('spec.forgetTable: clears cache entries', async t => {
-  // This is a direct cache operation; simulate it
-  // Since cache is module-scoped, we can't directly test clearing without mocking
-  // So we'll document the expected behavior
-  assert.ok(typeof spec.forgetTable === 'function')
+test('sampleSql: plain-named STRING/BINARY columns only, one bounded query', () => {
+  const s = spec.sampleSql('c.s.t', cols([['a', 'string'], ['b', 'binary'], ['n', 'int'], ['bad name', 'string'], ['v', 'varchar(20)']]))
+  assert.deepEqual(s.cands.map(c => c.name), ['a', 'b', 'v'])
+  assert.match(s.sql, /^SELECT count\(a\) AS n0, count\(try_to_geometry\(a\)\) AS g0, count_if\(ltrim\(a\) LIKE '\{%'\) AS j0, mode\(ST_SRID\(try_to_geometry\(a\)\)\) AS s0, /)
+  assert.match(s.sql, /0 AS j1/, 'binary columns are never GeoJSON')
+  assert.match(s.sql, /FROM \(SELECT a, b, v FROM c\.s\.t LIMIT 200\) AS sample$/)
+  assert.equal(spec.sampleSql('c.s.t', cols([['n', 'int']])), null)
 })
 
-test('spec.resolveSpec: caches per user', async t => {
-  const execCalls = []
+test('object id: override, then single-column integer primary key, then a hash of the whole row', () => {
+  const c = cols([['objectid', 'string'], ['k', 'bigint'], ['code', 'string'], ['g', 'geometry(4326)'], ['tags', 'map<string,string>'], ['v', 'variant']])
+  let s = spec.detect(c, { override: { idColumn: 'k' } })
+  assert.deepEqual([s.objectId, s.idSource, s.objectIdExpr], ['k', 'override', undefined])
+  s = spec.detect(c, { override: { idColumn: 'code' } })
+  assert.equal(s.idSource, 'override')
+  assert.equal(s.syntheticIdFrom, 'code')
+  assert.equal(s.objectId, '__objectid', 'a column called objectid already exists')
+  assert.equal(s.objectIdExpr, `CAST(pmod(xxhash64(code), ${spec.SYNTHETIC_ID_MODULUS}) AS BIGINT)`)
+  s = spec.detect(c, { primaryKey: ['k'] })
+  assert.deepEqual([s.objectId, s.idSource], ['k', 'primary key'])
+  s = spec.detect(c, { primaryKey: ['k', 'code'] })
+  assert.equal(s.idSource, 'derived', 'composite keys are not used')
+  s = spec.detect(c, { primaryKey: ['code'] })
+  assert.equal(s.idSource, 'derived', 'string keys are not used as-is')
+  assert.equal(s.objectIdExpr, `CAST(pmod(xxhash64(objectid, k, code, ST_AsBinary(g), to_json(tags), to_json(v)), ${spec.SYNTHETIC_ID_MODULUS}) AS BIGINT)`)
+  // An id override pointing at a missing or unsuitable column falls through
+  assert.equal(spec.detect(c, { override: { idColumn: 'nope' }, primaryKey: ['k'] }).idSource, 'primary key')
+  assert.equal(spec.detect(c, { override: { idColumn: 'g' } }).idSource, 'derived')
+})
+
+test('derived ids skip the bounding-box helper columns of map-optimized copies', () => {
+  const s = spec.detect(cols([['g', 'geometry(4326)'], ['x', 'int'], ['_xmin', 'double'], ['_ymin', 'double'], ['_xmax', 'double'], ['_ymax', 'double']]))
+  assert.equal(s.bboxColumns, true)
+  assert.match(s.objectIdExpr, /xxhash64\(ST_AsBinary\(g\), x\)/)
+})
+
+test('geometry overrides: a column (with SRID), or lon/lat; bad overrides are ignored', () => {
+  const c = cols([['k', 'bigint'], ['x1', 'double'], ['y1', 'double'], ['shape', 'string'], ['g', 'geometry(4326)'], ['g2', 'geography']])
+  let s = spec.detect(c, { override: { lonColumn: 'x1', latColumn: 'y1' } })
+  assert.equal(s.geometryExpr, 'ST_Point(x1, y1, 4326)')
+  assert.equal(s.geometryColumn, null)
+  assert.equal(s.geometryStorage, 'lonlat')
+  assert.equal(s.geometryDetectedBy, 'override')
+  s = spec.detect(c, { override: { geometryColumn: 'shape', srid: 2263 } })
+  assert.equal(s.geometryExpr, 'ST_Transform(ST_SetSRID(try_to_geometry(shape), 2263), 4326)')
+  s = spec.detect(c, { override: { geometryColumn: 'g2' } })
+  assert.equal(s.geometryColumn, 'g2', 'override picks the second native column')
+  assert.equal(spec.detect(c, { override: { geometryColumn: 'k' } }).geometryColumn, 'g', 'an integer column cannot be geometry')
+  assert.equal(spec.detect(c, { override: { lonColumn: 'x1', latColumn: 'nope' } }).geometryColumn, 'g')
+})
+
+test('columns with non-plain names are never used (they would be SQL text)', () => {
+  assert.equal(spec.detect(cols([['bad name', 'geometry(4326)']])), null)
+  const s = spec.detect(cols([['g; DROP', 'geometry'], ['g', 'geometry(4326)']]), { override: { idColumn: 'x`y' } })
+  assert.equal(s.geometryColumn, 'g')
+  assert.ok(!s.objectIdExpr.includes('DROP'))
+})
+
+test('describeColumns stops at the metadata sections', () => {
+  const c = spec.describeColumns([{ col_name: 'a', data_type: 'INT' }, { col_name: 'B', data_type: 'String' }, { col_name: '', data_type: '' }, { col_name: 'a', data_type: 'int' }])
+  assert.deepEqual(c, [{ name: 'a', lname: 'a', type: 'int' }, { name: 'B', lname: 'b', type: 'string' }])
+  assert.equal(spec.describeColumns([{ col_name: 'x', data_type: 'int' }, { col_name: '# Partition Information', data_type: '' }]).length, 1)
+})
+
+test('sourceFor wraps only derived ids; whoOf never holds the token', () => {
+  assert.equal(spec.sourceFor('c.s.t', { objectId: 'k' }), 'c.s.t')
+  assert.equal(spec.sourceFor('c.s.t', { objectId: 'objectid', objectIdExpr: 'E' }), '(SELECT *, E AS objectid FROM c.s.t) AS __src')
+  assert.equal(spec.whoOf(null), 'app')
+  assert.equal(spec.whoOf('secret-token'), spec.whoOf('secret-token'))
+  assert.notEqual(spec.whoOf('a'), spec.whoOf('b'))
+  assert.ok(!spec.whoOf('secret-token').includes('secret'))
+  assert.match(spec.primaryKeySql('c.s.t'), /FROM c\.information_schema\.table_constraints[\s\S]*table_schema = 's' AND t\.table_name = 't' AND t\.constraint_type = 'PRIMARY KEY'/)
+})
+
+test('resolveSpec: describe, override, primary key, sample only when needed, geometry type; cached per user', async () => {
+  const seen = []
+  let override = null
+  spec.setOverrideSource(async () => override)
   const exec = async (sql, kind) => {
-    execCalls.push({ sql, kind })
-    if (kind === 'describe') {
-      return [
-        { col_name: 'id', data_type: 'BIGINT' },
-        { col_name: 'geometry', data_type: 'GEOMETRY(4326)' }
-      ]
-    }
-    if (kind === 'geomtype') {
-      return [{ t: 'st_point' }]
-    }
+    seen.push(kind)
+    if (kind === 'describe') return [{ col_name: 'k', data_type: 'bigint' }, { col_name: 'wkt_text', data_type: 'string' }]
+    if (kind === 'primary key') return [{ c: 'k' }]
+    if (kind === 'sample') return [{ n0: 10, g0: 10, j0: 0, s0: 0 }]
+    if (kind === 'geomtype') return [{ t: 'st_polygon' }]
     return []
   }
-
-  const s1 = await spec.resolveSpec('mytable', exec, 'user1')
-  const s2 = await spec.resolveSpec('mytable', exec, 'user1')
-
-  assert.equal(s1, s2) // same spec object
-  assert.equal(execCalls.filter(c => c.kind === 'describe').length, 1) // exec called once per user
-})
-
-test('spec.current: returns store value or default', async t => {
-  const defaults = { objectId: 'id', geometryColumn: 'geom' }
-  // Without AsyncLocalStorage context, should return defaults
-  const result = spec.current(defaults)
-  assert.deepEqual(result, defaults)
+  const s = await spec.resolveSpec('c.s.t1', exec, 'u1')
+  assert.deepEqual(seen, ['describe', 'primary key', 'sample', 'geomtype'])
+  assert.equal(s.geometryColumn, 'wkt_text')
+  assert.equal(s.objectId, 'k')
+  assert.equal(s.geometryType, 'esriGeometryPolygon')
+  assert.equal(s.source, 'c.s.t1')
+  assert.deepEqual(s.columns, [{ name: 'k', type: 'bigint' }, { name: 'wkt_text', type: 'string' }])
+  await spec.resolveSpec('c.s.t1', exec, 'u1')
+  assert.equal(seen.length, 4, 'cached')
+  await spec.resolveSpec('c.s.t1', exec, 'u2')
+  assert.equal(seen.length, 8, 'per user')
+  spec.forgetTable('c.s.t1')
+  override = { lonColumn: 'k', latColumn: 'k' }
+  await spec.resolveSpec('c.s.t1', exec, 'u1')
+  assert.equal(seen.length, 12, 'forgotten after forgetTable')
+  // Native geometry: no sample needed
+  seen.length = 0
+  override = null
+  await spec.resolveSpec('c.s.t2', async (sql, kind) => { seen.push(kind); return kind === 'describe' ? [{ col_name: 'g', data_type: 'geometry(4326)' }] : [] }, 'u1')
+  assert.deepEqual(seen, ['describe', 'primary key', 'geomtype'])
+  // A failing primary-key lookup or override read doesn't break detection
+  spec.setOverrideSource(async () => { throw new Error('no table') })
+  const s3 = await spec.resolveSpec('c.s.t3', async (sql, kind) => { if (kind === 'primary key') throw new Error('denied'); return kind === 'describe' ? [{ col_name: 'g', data_type: 'geometry(4326)' }] : [] }, 'u1')
+  assert.equal(s3.idSource, 'derived')
+  spec.setOverrideSource(async () => null)
+  assert.equal(await spec.resolveSpec('c.s.t4', async (sql, kind) => kind === 'describe' ? [{ col_name: 'n', data_type: 'int' }] : [], 'u1'), null)
 })

@@ -111,7 +111,7 @@ test('query cache: per user and warehouse, params change the key, TTL-free hit, 
 })
 
 // Fake DBSQL session answering by SQL shape, recording every statement and its named parameters
-function fakeDb ({ rows = 30, count = 30, describe } = {}) {
+function fakeDb ({ rows = 30, count = 30, describe, pk = ['objectid'] } = {}) {
   const log = []
   const cols = describe || [
     { col_name: 'objectid', data_type: 'bigint' },
@@ -122,6 +122,14 @@ function fakeDb ({ rows = 30, count = 30, describe } = {}) {
   ]
   const answer = sql => {
     if (/^DESCRIBE/.test(sql)) return cols
+    // Primary key: objectid; content sample: geometry_wkt parses as WKT, other text columns don't
+    if (/PRIMARY KEY/.test(sql)) return pk.map(c => ({ c }))
+    if (/AS sample$/.test(sql)) {
+      const texts = [...sql.matchAll(/count\((\w+)\) AS n(\d+)/g)].map(m => m[1])
+      const row = {}
+      texts.forEach((c, i) => Object.assign(row, { [`n${i}`]: 50, [`g${i}`]: c === 'geometry_wkt' ? 50 : 0, [`j${i}`]: 0, [`s${i}`]: 0 }))
+      return [row]
+    }
     if (/MIN\(seen_at\)/.test(sql)) return [{ t0: '2024-01-01T00:00:00Z', t1: '2024-02-01T00:00:00Z' }]
     if (/MIN\(ST_XMin/.test(sql)) return [{ xmin: -77, ymin: 38, xmax: -76, ymax: 39 }]
     if (/COUNT\(\*\)/i.test(sql)) return [{ cnt: count }]
@@ -251,9 +259,17 @@ test('getData (Esri path): layer info fetches one row; a query fetches a page; s
   assert.equal(page.features.length, 7)
   assert.equal(page.features[0].properties.names, '{"primary":"n8"}', 'Esri attributes stay scalar')
   const q = features(db).at(-1)
-  assert.equal(q.sql, `SELECT *, ST_AsGeoJSON(ST_GeomFromText(geometry_wkt, 4326)) as __geojson__ FROM ${table}  ORDER BY objectid LIMIT 7 OFFSET 7`, "unchanged from before (empty WHERE leaves two spaces)")
+  assert.equal(q.sql, `SELECT *, ST_AsGeoJSON(ST_SetSRID(try_to_geometry(geometry_wkt), 4326)) as __geojson__ FROM ${table}  ORDER BY objectid LIMIT 7 OFFSET 7`, "same shape as before (empty WHERE leaves two spaces)")
   assert.equal(q.params, undefined, 'no named parameters on the Esri path')
   const count = await call({ url: `/x/FeatureServer/0/query`, query: { returnCountOnly: 'true' } })
   assert.deepEqual(count, { count: 30 })
   await assert.rejects(call({ url: '/x', params: { id: 'bad; name' }, query: {} }), /Invalid table name/)
+}))
+
+test('queryFeatures: a table without a primary key gets a derived id through a wrapped source', withDb({ pk: [] }, async (db, table) => {
+  const r = await Model.queryFeatures({ table, userToken: 'tok', limit: 3 })
+  assert.equal(r.idField, '__objectid', 'objectid is taken, so the derived id gets another name')
+  const q = features(db)[0]
+  assert.match(q.sql, /FROM \(SELECT \*, CAST\(pmod\(xxhash64\(objectid, kind, names, seen_at, geometry_wkt\), 9007199254740881\) AS BIGINT\) AS __objectid FROM c\.s\.t\d+\) AS __src/)
+  assert.match(q.sql, /ORDER BY __objectid/)
 }))

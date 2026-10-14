@@ -1,20 +1,61 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, layerPath } from '../api'
-import type { CatalogTable, LayerSpec, OptimizeJob } from '../api'
+import type { CatalogTable, LayerSpec, OptimizeJob, ScanResult } from '../api'
 import { MapPreview } from './MapPreview'
 import { CatalogTree } from './CatalogTree'
+import { LayerSettings } from './LayerSettings'
 
 // Catalog ▸ schema ▸ table explorer. Picking a table shows how the gateway reads it, its layer URL and a live map.
 export function Explorer () {
   const [selected, setSelected] = useState<CatalogTable | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [byName, setByName] = useState('')
+  const [scanSchema, setScanSchema] = useState('')
+  const [scan, setScan] = useState<{ busy: boolean, result?: ScanResult, error?: string }>({ busy: false })
+
+  const open = () => {
+    const name = byName.trim()
+    if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(name)) return
+    const [catalog, schema, n] = name.split('.')
+    setSelected({ table: name, catalog, schema, name: n, idField: '', geometry: '' })
+  }
+  const runScan = async () => {
+    setScan({ busy: true })
+    try {
+      const result = await api.scan(scanSchema.trim())
+      setScan({ busy: false, result })
+      setReloadKey(k => k + 1)
+    } catch (e: any) { setScan({ busy: false, error: e.message }) }
+  }
 
   return (
     <div className='explorer'>
       <div className='explorer-tree card'>
-        <CatalogTree isActive={t => selected?.table === t.table} onPick={setSelected} />
+        <CatalogTree isActive={t => selected?.table === t.table} onPick={setSelected} reloadKey={reloadKey} />
+        <div className='tree-tools'>
+          <p className='muted small'>
+            Listed: tables with a GEOMETRY or GEOGRAPHY column, and tables with an override. Geometry stored as
+            text or binary (WKT, WKB, GeoJSON) is found by scanning a schema.
+          </p>
+          <div className='inline-form'>
+            <input value={scanSchema} onChange={e => setScanSchema(e.target.value)} placeholder='catalog.schema' aria-label='Schema to scan' />
+            <button className='button ghost' disabled={scan.busy || !/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(scanSchema.trim())} onClick={runScan}>{scan.busy ? 'Scanning…' : 'Scan schema'}</button>
+          </div>
+          {scan.error && <p className='error small'>{scan.error}</p>}
+          {scan.result && (
+            <p className='small'>
+              Checked {scan.result.checked} tables{scan.result.skipped ? ` (${scan.result.skipped} more not checked)` : ''}: {scan.result.found.length ? scan.result.found.map(f => f.name).join(', ') : 'no text or binary geometry found'}.
+              {scan.result.failed.length > 0 && <span className='muted'> {scan.result.failed.length} could not be read.</span>}
+            </p>
+          )}
+          <div className='inline-form'>
+            <input value={byName} onChange={e => setByName(e.target.value)} onKeyDown={e => e.key === 'Enter' && open()} placeholder='catalog.schema.table' aria-label='Open a table by name' />
+            <button className='button ghost' onClick={open}>Open table</button>
+          </div>
+        </div>
       </div>
       <div className='explorer-detail'>
-        {selected ? <TableDetail key={selected.table} t={selected} /> : (
+        {selected ? <TableDetail key={selected.table} t={selected} onChanged={() => setReloadKey(k => k + 1)} /> : (
           <div className='card empty-detail'>
             <h3>Pick a table</h3>
             <p className='muted'>Open a catalog on the left. Tables with geometry (GEOMETRY, GEOGRAPHY, WKT, WKB or longitude/latitude columns) and an id are listed. Each one is a FeatureServer layer you can add in Experience Builder, Map Viewer or ArcGIS Pro.</p>
@@ -25,16 +66,23 @@ export function Explorer () {
   )
 }
 
-function TableDetail ({ t }: { t: CatalogTable }) {
-  const [spec, setSpec] = useState<LayerSpec | null | undefined>(undefined)
+function TableDetail ({ t, onChanged }: { t: CatalogTable, onChanged: () => void }) {
+  const [detail, setDetail] = useState<Awaited<ReturnType<typeof api.specDetail>> | null>(null)
+  const [error, setError] = useState('')
   const [count, setCount] = useState<number | null>(null)
   const [copied, setCopied] = useState(false)
+  const [version, setVersion] = useState(0)
   const url = useMemo(() => `${location.origin}${layerPath(t.table)}`, [t.table])
+  const spec = detail ? detail.spec : undefined
 
   useEffect(() => {
-    api.spec(t.table).then(setSpec).catch(() => setSpec(null))
-    api.count(t.table).then(setCount).catch(() => setCount(null))
-  }, [t.table])
+    setError('')
+    api.specDetail(t.table).then(d => {
+      setDetail(d)
+      if (d.spec) api.count(t.table).then(setCount).catch(() => setCount(null))
+    }).catch(e => { setError(e.message); setDetail({ spec: null, columns: [], override: null }) })
+  }, [t.table, version])
+  const changed = () => { setVersion(v => v + 1); onChanged() }
 
   const copy = async () => {
     await navigator.clipboard.writeText(url)
@@ -51,16 +99,25 @@ function TableDetail ({ t }: { t: CatalogTable }) {
         </div>
         <a className='button ghost' href={`${layerPath(t.table)}?f=pjson`} target='_blank' rel='noreferrer'>Layer JSON</a>
       </div>
-      <dl className='facts'>
-        <div><dt>Features</dt><dd>{count === null ? '…' : count.toLocaleString()}</dd></div>
-        <div><dt>Geometry</dt><dd>{spec?.geometryType?.replace('esriGeometry', '') || '…'} <span className='muted'>from {spec?.geometrySource || t.geometry}</span></dd></div>
-        <div><dt>Object id</dt><dd>{spec?.syntheticIdFrom ? <>derived from <code>{spec.syntheticIdFrom}</code></> : <code>{spec?.objectId || t.idField}</code>}</dd></div>
-      </dl>
-      <div className='url-row'>
-        <code className='url' title={url}>{url}</code>
-        <button className='button' onClick={copy}>{copied ? 'Copied' : 'Copy layer URL'}</button>
-      </div>
-      <MapPreview table={t.table} />
+      {error && <p className='error'>{error}</p>}
+      {spec === null && !error && (
+        <p className='muted'>No geometry found in this table: it has no GEOMETRY or GEOGRAPHY column, and none of its text or binary columns hold WKT, WKB or GeoJSON. If its geometry is in two longitude/latitude columns, or in a column that is mostly empty, pick it below.</p>
+      )}
+      {spec && (
+        <>
+          <dl className='facts'>
+            <div><dt>Features</dt><dd>{count === null ? '…' : count.toLocaleString()}</dd></div>
+            <div><dt>Geometry</dt><dd>{spec.geometryType.replace('esriGeometry', '')} <span className='muted'>from {spec.geometrySource}</span></dd></div>
+            <div><dt>Object id</dt><dd>{spec.idSource === 'derived' ? 'derived (read-only)' : <code>{spec.objectId}</code>}</dd></div>
+          </dl>
+          <div className='url-row'>
+            <code className='url' title={url}>{url}</code>
+            <button className='button' onClick={copy}>{copied ? 'Copied' : 'Copy layer URL'}</button>
+          </div>
+          <MapPreview key={version} table={t.table} />
+        </>
+      )}
+      {detail && <LayerSettings key={version} table={t.table} spec={spec || null} columns={detail.columns} override={detail.override} onChanged={changed} />}
       {spec && (spec.bboxColumns
         ? <p className='optimized-note'><span className='chip small'>Map-optimized</span> Tile queries skip files outside the map view.</p>
         : <Optimize t={t} spec={spec} count={count} />)}

@@ -14,6 +14,7 @@ export interface GatewayInfo {
   excludeCatalogs: string[]
   directory: { name: string, url: string }[]
   editing: boolean
+  overrides: { enabled: boolean, table: string | null }
   ogc: { enabled: boolean, table: string | null }
 }
 
@@ -26,15 +27,24 @@ export interface CatalogTable {
   name: string
   idField: string
   geometry: string
+  detectedBy?: 'type' | 'content' | 'override'
 }
 
 export interface LayerSpec {
   objectId: string
+  idSource: 'override' | 'primary key' | 'derived'
+  geometryColumn: string | null
   geometrySource: string
   geometryType: string
+  geometryDetectedBy: 'type' | 'content' | 'override'
+  geometryCandidates: string[]
   syntheticIdFrom?: string
   bboxColumns?: boolean
+  columns: { name: string, type: string }[]
 }
+
+export interface LayerOverride { geometryColumn: string | null, srid: number | null, lonColumn: string | null, latColumn: string | null, idColumn: string | null }
+export interface ScanResult { schema: string, checked: number, skipped: number, found: (CatalogTable & { geometrySource: string })[], failed: { table: string, error: string }[] }
 
 export interface OgcCollection { id: string, table: string, title: string, description?: string, timeField: string | null }
 export interface OgcService {
@@ -78,6 +88,7 @@ export const api = {
   catalogs: () => get<{ catalogs: string[] }>('/api/catalogs').then(d => d.catalogs),
   tables: (catalog: string) => get<{ tables: CatalogTable[] }>(`/api/catalog?catalogs=${encodeURIComponent(catalog)}`).then(d => d.tables),
   spec: (table: string) => get<{ spec: LayerSpec | null }>(`/api/spec/${encodeURIComponent(table)}`).then(d => d.spec),
+  specDetail: (table: string) => get<{ spec: LayerSpec | null, columns: { name: string, type: string }[], override: (LayerOverride & { updatedBy?: string }) | null }>(`/api/spec/${encodeURIComponent(table)}`),
   optimize: async (table: string, target: string, name: string): Promise<OptimizeJob> => {
     const r = await fetch('/api/optimize', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ table, target, name }) })
     const d = await r.json().catch(() => ({}))
@@ -92,6 +103,11 @@ export const api = {
   ogcDelete: (name: string) => send<void>('DELETE', `/api/ogc/services/${encodeURIComponent(name)}`),
   ogcSetup: () => send<{ ready: boolean }>('POST', '/api/ogc/setup'),
   ogcColumns: (table: string) => get<OgcColumns>(`/api/ogc/columns/${encodeURIComponent(table)}`),
+  overridesInfo: () => get<{ enabled: boolean, table: string | null, missing: boolean }>('/api/overrides'),
+  overridesSetup: () => send<{ ready: boolean }>('POST', '/api/overrides/setup'),
+  saveOverride: (table: string, o: LayerOverride) => send<{ spec: LayerSpec | null }>('PUT', `/api/overrides/${encodeURIComponent(table)}`, o),
+  clearOverride: (table: string) => send<void>('DELETE', `/api/overrides/${encodeURIComponent(table)}`),
+  scan: (schema: string) => get<ScanResult>(`/api/scan?schema=${encodeURIComponent(schema)}`),
   count: (table: string) => get<{ count: number }>(`${layerPath(table)}/query?f=json&where=1%3D1&returnCountOnly=true`).then(d => d.count)
 }
 

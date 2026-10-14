@@ -5,8 +5,8 @@
   Edit widget, editable Table) sends them. Each edit is SQL on the Delta table, run as the editor, so Unity
   Catalog's MODIFY grant decides who can edit what.
 
-  Editable tables: a real integer id column (not a derived one) and not a map-optimized copy (its bounding
-  box columns would go stale). Column names are checked against the table's own columns; values are SQL
+  Editable tables: a real integer id column (a primary key or one an author picked; not a derived id) and
+  not a map-optimized copy (its bounding box columns would go stale). Column names are checked against the table's own columns; values are SQL
   parameters, never part of the SQL text.
 */
 
@@ -64,9 +64,10 @@ function planEdits ({ table, spec, columns, adds, updates, deletes }) {
   const id = spec.objectId
   const helpers = new Set(['_xmin', '_ymin', '_xmax', '_ymax'])
   const geomCol = spec.geometryColumn
-  const lonLat = spec.geometryFormat === 'expr' && !geomCol && /^ST_Point\((\w+), (\w+), 4326\)$/.exec(spec.geometryExpr || '')
+  const lonLat = !geomCol && /^ST_Point\((\w+), (\w+), 4326\)$/.exec(spec.geometryExpr || '')
 
-  // Geometry assignment for this table's storage: native GEOMETRY, WKT/WKB column, or lon/lat columns
+  // Geometry assignment in the table's own storage: native GEOMETRY/GEOGRAPHY, WKT, GeoJSON or WKB in a
+  // text/binary column, or lon/lat columns
   const geometryAssignments = (wkt, params) => {
     if (!wkt) return []
     params.g = wkt
@@ -76,7 +77,8 @@ function planEdits ({ table, spec, columns, adds, updates, deletes }) {
     const type = byName.get(geomCol.toLowerCase())?.type || ''
     if (type.startsWith('geometry')) return [[geomCol, 'ST_GeomFromText(:g, 4326)']]
     if (type.startsWith('geography')) return [[geomCol, 'ST_GeogFromText(:g)']]
-    if (spec.geometryFormat === 'wkb') return [[geomCol, 'ST_AsBinary(ST_GeomFromText(:g, 4326))']]
+    if (spec.geometryStorage === 'wkb' || type === 'binary') return [[geomCol, 'ST_AsBinary(ST_GeomFromText(:g, 4326))']]
+    if (spec.geometryStorage === 'geojson') return [[geomCol, 'ST_AsGeoJSON(ST_GeomFromText(:g, 4326))']]
     return [[geomCol, ':g']]
   }
 

@@ -141,3 +141,16 @@ input.invalid { border-color: #b3261e; }
 .snippet { background: #1b3139; color: #e8eef0; border-radius: 8px; padding: 14px 16px; font-size: 0.8rem; line-height: 1.55; overflow: auto; margin: 0 0 10px; white-space: pre; }
 .endpoint-list + .picked-head, .snippet-wrap + p { margin-top: 14px; }
 section.card > .map-preview { margin-top: 14px; }
+
+/* Explore: scan / open by name, layer settings */
+.tree-tools { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.tree-tools p { margin: 0; line-height: 1.45; }
+.inline-form { display: flex; gap: 6px; }
+.inline-form input { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 0.85rem; }
+.geom-chip.override { color: #9a4b00; background: #fff1e0; }
+.settings-head { display: flex; justify-content: space-between; align-items: center; }
+.how { margin: 6px 0 0; line-height: 1.7; }
+.override-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 8px; }
+.override-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
+.override-form select, .override-form input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text); background: #fff; min-width: 180px; }
+.override-note { flex-basis: 100%; margin: 0; }
