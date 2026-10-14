@@ -13,6 +13,12 @@ const browser = await puppeteer.launch({ executablePath: '/Applications/Google C
 const page = await browser.newPage()
 await page.setViewport({ width: 1440, height: 900 })
 await page.setRequestInterception(true)
+// LOG_QUERIES=1 prints the parameters of the first few layer queries the map sends
+let logged = 0
+page.on('request', req => {
+  const u = new URL(req.url())
+  if (process.env.LOG_QUERIES && /\/query$/.test(u.pathname) && logged++ < 3) console.log('query:', [...u.searchParams].map(([k, v]) => `${k}=${v.slice(0, 120)}`).join(' & '))
+})
 page.on('request', req => new URL(req.url()).origin === origin ? req.continue({ headers: { ...req.headers(), authorization: `Bearer ${token}` } }) : req.continue())
 const logs = []
 page.on('console', m => { if (['error', 'warn'].includes(m.type())) logs.push(`${m.type()}: ${m.text().slice(0, 200)}`) })

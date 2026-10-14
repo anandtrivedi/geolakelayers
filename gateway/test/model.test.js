@@ -273,3 +273,29 @@ test('queryFeatures: a table without a primary key gets a derived id through a w
   assert.match(q.sql, /FROM \(SELECT \*, CAST\(pmod\(xxhash64\(objectid, kind, names, seen_at, geometry_wkt\), 9007199254740881\) AS BIGINT\) AS __objectid FROM c\.s\.t\d+\) AS __src/)
   assert.match(q.sql, /ORDER BY __objectid/)
 }))
+
+test('simplifyTolerance: maxAllowableOffset in degrees for lines and polygons only, Mercator scaled by latitude', () => {
+  const LINE = { ...WKT_SPEC, geometryType: 'esriGeometryPolyline' }
+  inSpec(WKT_SPEC, () => assert.equal(I.simplifyTolerance({ maxAllowableOffset: '1000', outSR: '102100' }), 0))
+  inSpec(LINE, () => {
+    assert.equal(I.simplifyTolerance({}), 0)
+    assert.equal(I.simplifyTolerance({ maxAllowableOffset: '0' }), 0)
+    assert.equal(I.simplifyTolerance({ maxAllowableOffset: '0.01' }), 0.01)
+    assert.equal(I.simplifyTolerance({ maxAllowableOffset: '0.01', outSR: '4326' }), 0.01)
+    // About 1 degree of longitude at the equator, half that at 60°N
+    assert.equal(I.simplifyTolerance({ maxAllowableOffset: '111319.49', outSR: '{"wkid":102100}' }), 1)
+    const north = I.simplifyTolerance({ maxAllowableOffset: '111319.49', outSR: { wkid: 102100 }, geometry: '-10,59,10,61', inSR: '4326' })
+    assert.ok(Math.abs(north - 0.5) < 0.01, String(north))
+    assert.equal(I.simplifyTolerance({ maxAllowableOffset: '1e9', outSR: '4326' }), 5)
+    assert.equal(I.simplifyTolerance({ maxAllowableOffset: '10', outSR: '2263' }), 0)
+    assert.equal(I.simplifyTolerance({ maxAllowableOffset: '10', outSR: '{bad' }), 0)
+  })
+})
+
+test('buildSelectClause: wraps the geometry in ST_Simplify only when there is a tolerance', () => {
+  inSpec(WKT_SPEC, () => {
+    assert.equal(I.buildSelectClause('*', true), '*, ST_AsGeoJSON(ST_GeomFromText(geometry_wkt, 4326)) as __geojson__')
+    assert.equal(I.buildSelectClause('*', true, 0.02), '*, ST_AsGeoJSON(ST_Simplify(ST_GeomFromText(geometry_wkt, 4326), 0.02)) as __geojson__')
+    assert.equal(I.buildSelectClause('*', false, 0.02), '*')
+  })
+})

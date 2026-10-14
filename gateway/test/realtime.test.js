@@ -119,6 +119,8 @@ test('realtime session: reads on Lakehouse//RT, metadata and writes on the regul
     assert.equal(regularCalls.length, checks, 'the policy check is cached per table')
     assert.equal(await run('DESCRIBE a.b.c'), 'regular')
     assert.equal(await run('INSERT INTO a.b.c VALUES (1)'), 'regular')
+    assert.equal(await run('SELECT ST_AsGeoJSON(ST_Simplify(g, 0.1)) FROM a.b.c'), 'regular', 'simplified tiles: no ST_Simplify on Lakehouse//RT')
+    assert.equal(await run('SELECT * FROM a.b.c LIMIT 5'), 'rt', 'without pinning the table')
     assert.equal(regularOpened, 1, 'one regular session per request, reused')
     assert.deepEqual(regularWarehouses, [undefined], 'the bound warehouse')
     // A table with a row filter or column mask never goes to Lakehouse//RT

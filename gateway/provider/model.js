@@ -538,7 +538,7 @@ function buildQuery (table, query, taskId, extra = []) {
   const limit = parseResultRecordCount(query.resultRecordCount)
 
   // Build SELECT clause
-  const selectFields = buildSelectClause(query.outFields, returnGeometry)
+  const selectFields = buildSelectClause(query.outFields, returnGeometry, simplifyTolerance(query))
 
   const whereClauses = buildWhereClauses(query, extra)
   const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
@@ -564,8 +564,33 @@ function buildQuery (table, query, taskId, extra = []) {
   return sql
 }
 
+// How far, in degrees, lines and polygons may be simplified for this request: the client's maxAllowableOffset
+// (in outSR units; the ArcGIS Maps SDK sends one per zoom level) converted to the data's lon/lat. 0 = full
+// detail. Points are never simplified. Sending every vertex of long tracks at world zoom is what fills memory.
+function simplifyTolerance (query) {
+  if (!/Polyline|Polygon/.test(S().geometryType || '')) return 0
+  const offset = Number(query.maxAllowableOffset)
+  if (!(offset > 0)) return 0
+  let sr = query.outSR
+  if (typeof sr === 'string' && sr.trim().startsWith('{')) { try { sr = JSON.parse(sr) } catch (_) { return 0 } }
+  const wkid = sr ? parseInt(typeof sr === 'object' ? (sr.latestWkid || sr.wkid) : sr) : 4326
+  let degrees
+  if (wkid === 4326) {
+    degrees = offset
+  } else if (wkid === 102100 || wkid === 3857 || wkid === 900913) {
+    // Mercator meters span fewer degrees of latitude away from the equator; use the view's middle latitude
+    const box = query.geometry ? parseBbox(query.geometry, query.inSR) : null
+    const lat = box ? Math.max(-80, Math.min(80, (box[1] + box[3]) / 2)) : 0
+    degrees = offset / 111319.49 * Math.cos(lat * Math.PI / 180)
+  } else {
+    return 0
+  }
+  // Rounded so tiles at one zoom level share a query (and a cache entry)
+  return degrees > 0 ? Number(Math.min(degrees, 5).toPrecision(2)) : 0
+}
+
 // Build SELECT clause with ST_AsGeoJSON for geometry
-function buildSelectClause (outFields, returnGeometry) {
+function buildSelectClause (outFields, returnGeometry, tolerance = 0) {
   let fields
 
   if (outFields === '*' || !outFields) {
@@ -585,7 +610,8 @@ function buildSelectClause (outFields, returnGeometry) {
     // This is much more efficient than parsing geometry on the client
     // Supports WKT, WKB, and native GEOMETRY types
     const geomExpr = buildGeometryExpression()
-    return `${fields}, ST_AsGeoJSON(${geomExpr}) as __geojson__`
+    const shape = tolerance > 0 ? `ST_Simplify(${geomExpr}, ${tolerance})` : geomExpr
+    return `${fields}, ST_AsGeoJSON(${shape}) as __geojson__`
   }
 
   return fields
@@ -1118,6 +1144,7 @@ Model._internals = {
   buildExtentQuery,
   buildQuery,
   buildSelectClause,
+  simplifyTolerance,
   buildWhereClauses,
   buildBboxFilter,
   parseBbox,

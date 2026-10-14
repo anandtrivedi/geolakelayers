@@ -42,6 +42,8 @@ const INCOMPATIBLE = /UNSUPPORTED|NOT_SUPPORTED|not supported|ROW_FILTER|COLUMN_
 const READ = /^\s*(\(\s*)*(SELECT|WITH)\b/i
 const METADATA = /^\s*(DESCRIBE|SHOW)\b|information_schema|\bsystem\./i
 // Errors that are the caller's (permissions, missing table): retrying elsewhere wouldn't help
+// Lakehouse//RT has no ST_Simplify; simplified line and polygon tiles go to the regular warehouse
+const SIMPLIFY = /\bST_Simplify\s*\(/i
 const CALLER_ERROR = /PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS|TABLE_OR_VIEW_NOT_FOUND|UNRESOLVED_COLUMN|PARSE_SYNTAX_ERROR|does not have .* privilege/i
 const tableOf = sql => (/\bFROM\s+(?:\(\s*SELECT\b[\s\S]*?\bFROM\s+)?([A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)/i.exec(sql) || [])[1] || null
 
@@ -284,7 +286,7 @@ class ConnectionManager {
       executeStatement: async (sql, opts) => {
         const table = tableOf(sql)
         const pinned = table && stats.skip.get(table)
-        if (!READ.test(sql) || METADATA.test(sql) || (pinned && pinned.until > Date.now()) || (table && await governed(table))) {
+        if (!READ.test(sql) || METADATA.test(sql) || SIMPLIFY.test(sql) || (pinned && pinned.until > Date.now()) || (table && await governed(table))) {
           stats.routed++
           return onRegular(sql, opts)
         }
