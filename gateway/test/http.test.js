@@ -286,3 +286,10 @@ test('http.consoleOnly: allows same-origin POST', async t => {
   assert.ok(nextCalled)
 })
 
+
+test('http.isTransientNetworkError: dropped downloads are transient, bugs are not', () => {
+  assert.ok(http.isTransientNetworkError(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })))
+  assert.ok(http.isTransientNetworkError(Object.assign(new Error('request to https://bucket/x failed, reason: socket hang up'), { name: 'FetchError' })))
+  assert.ok(!http.isTransientNetworkError(new TypeError('Cannot read properties of undefined')))
+  assert.ok(!http.isTransientNetworkError(null))
+})

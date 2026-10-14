@@ -42,4 +42,12 @@ function consoleOnly (message) {
   }
 }
 
-module.exports = { PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs, obo, selfOrigin, consoleOnly }
+// Network failures the SQL driver can leak as uncaught exceptions (a results download from cloud storage
+// dropping mid-transfer). The query that owned it has already failed; the process is fine.
+function isTransientNetworkError (err) {
+  const code = err && (err.code || err.errno)
+  return ['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'UND_ERR_SOCKET'].includes(code) ||
+    (err && err.name === 'FetchError' && /socket hang up|network timeout|ECONNRESET/i.test(err.message || ''))
+}
+
+module.exports = { isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs, obo, selfOrigin, consoleOnly }

@@ -8,6 +8,11 @@
 
 // Looked up on each connect (not destructured) so tests can swap in a fake client
 const dbsql = require('@databricks/sql')
+
+// The driver's default logger (winston with handleExceptions) logs any uncaught exception and then exits the
+// process. A dropped results download inside the driver surfaces as one, so a single bad request took the
+// whole gateway down. Route the driver's logging through ours instead; server.js decides what is fatal.
+const driverLogger = { log: (level, message) => (logger[level] || logger.info).call(logger, message) }
 const logger = require('./logger')
 const crypto = require('crypto')
 const { version } = require('../package.json')
@@ -118,7 +123,7 @@ class ConnectionManager {
       )
     }
 
-    this.client = new dbsql.DBSQLClient()
+    this.client = new dbsql.DBSQLClient({ logger: driverLogger })
     await this.client.connect(connectOptions)
 
     // Register cleanup handlers once
@@ -167,7 +172,7 @@ class ConnectionManager {
     let entry = this.userClients.get(key)
     if (!entry) {
       if (this.userClients.size >= USER_CLIENT_MAX) this.sweepUserClients(true)
-      const client = new dbsql.DBSQLClient()
+      const client = new dbsql.DBSQLClient({ logger: driverLogger })
       const connected = client.connect({
         ...connectionTarget(warehouseId),
         token: userToken,

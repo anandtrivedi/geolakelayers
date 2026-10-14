@@ -58,7 +58,8 @@ resources:
             id: ${var.warehouse_id}
             permission: CAN_USE
       config:
-        command: ["node", "server.js"]
+        # Node caps its heap near 1.5 GB by default; big line layers (long tracks) need more headroom
+        command: ["node", "--max-old-space-size=3072", "server.js"]
         env:
           - name: DATABRICKS_WAREHOUSE_ID
             value_from: sql-warehouse

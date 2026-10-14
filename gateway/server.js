@@ -31,7 +31,7 @@ const Model = require('./provider/model')
 const connectionManager = require('./provider/connection')
 const layerSpec = require('./provider/spec')
 const { createOverrideStore, validateOverride, OverrideError } = require('./lib/overrides')
-const { PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly } = require('./lib/http')
+const { isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly } = require('./lib/http')
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
 // Catalogs to list: empty means every catalog the signed-in user can see, minus the excluded ones
@@ -561,6 +561,14 @@ app.get('/auth/handoff', (req, res) => {
 <script>
   if (window.opener) { window.opener.postMessage(${payload}, ${JSON.stringify(origin)}); window.close() }
 </script>`)
+})
+
+// Log and keep serving on stray network errors from the SQL driver; anything else is a real bug, so exit and
+// let Databricks Apps restart the app
+process.on('uncaughtException', err => {
+  if (isTransientNetworkError(err)) return console.error(`Ignored a dropped connection in the SQL driver: ${err.message.split('?')[0]}`)
+  console.error(err)
+  process.exit(1)
 })
 
 function start (port = process.env.DATABRICKS_APP_PORT || process.env.PORT || 8080) {
