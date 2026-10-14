@@ -49,9 +49,12 @@ export function MapPreview ({ table, ogc }: { table: string, ogc?: { url: string
     ;(async () => {
       try {
         await loadSdk()
-        const [ArcMap, MapView, FeatureLayer, OGCFeatureLayer] = await window.$arcgis!.import([
-          '@arcgis/core/Map.js', '@arcgis/core/views/MapView.js', '@arcgis/core/layers/FeatureLayer.js', '@arcgis/core/layers/OGCFeatureLayer.js'
+        const [ArcMap, MapView, FeatureLayer, OGCFeatureLayer, esriConfig] = await window.$arcgis!.import([
+          '@arcgis/core/Map.js', '@arcgis/core/views/MapView.js', '@arcgis/core/layers/FeatureLayer.js', '@arcgis/core/layers/OGCFeatureLayer.js', '@arcgis/core/config.js'
         ])
+        // The first look at a very large table computes its extent and count, which can take minutes;
+        // the SDK's default 60 s would give up first
+        esriConfig.request.timeout = Math.max(esriConfig.request.timeout || 0, 300000)
         if (cancelled || !el.current) return
         const popupTemplate = { title: table.split('.').pop(), content: [{ type: 'fields' }] }
         const layer = ogc
@@ -59,7 +62,8 @@ export function MapPreview ({ table, ogc }: { table: string, ogc?: { url: string
           : new FeatureLayer({ url: `${location.origin}${layerPath(table)}`, outFields: ['*'], popupTemplate })
         view = new MapView({ container: el.current, map: new ArcMap({ basemap: 'gray-vector', layers: [layer] }), center: [-98, 38], zoom: 3 })
         setStatus('Loading layer…')
-        await layer.load()
+        const slow = setTimeout(() => { if (!cancelled) setStatus('Working out this table\'s extent and size. On a very large table the first look can take a few minutes; after that it\'s quick.') }, 8000)
+        await layer.load().finally(() => clearTimeout(slow))
         if (cancelled) return
         const ext = layer.fullExtent && fitExtent(layer.fullExtent.clone().expand(1.15))
         if (ext) await view.goTo(ext).catch(() => {})
