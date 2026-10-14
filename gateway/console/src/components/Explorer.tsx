@@ -46,7 +46,7 @@ export function Explorer ({ info, onAddToOgc, onGuide }: { info: GatewayInfo, on
     </p>
     <div className='explorer'>
       <div className='explorer-tree card'>
-        <CatalogTree isActive={t => selected?.table === t.table} onPick={setSelected} reloadKey={reloadKey} />
+        <CatalogTree isActive={t => selected?.table === t.table} onPick={setSelected} reloadKey={reloadKey} reveal={selected?.table} />
         <div className='tree-tools'>
           <p className='muted small'>
             Listed: tables with a GEOMETRY or GEOGRAPHY column, and tables with an override. Geometry stored as

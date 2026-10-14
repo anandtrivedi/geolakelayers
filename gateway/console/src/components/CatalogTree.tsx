@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '../api'
 import type { CatalogTable } from '../api'
@@ -7,12 +7,14 @@ import type { CatalogTable } from '../api'
 // (pick one table) and the OGC service editor (tick several).
 type Loaded = { state: 'loading' | 'ready' | 'failed', tables: CatalogTable[], error?: string }
 
-export function CatalogTree ({ isActive, onPick, leafStart, reloadKey = 0 }: {
+export function CatalogTree ({ isActive, onPick, leafStart, reloadKey = 0, reveal }: {
   isActive: (t: CatalogTable) => boolean
   onPick: (t: CatalogTable) => void
   leafStart?: (t: CatalogTable) => ReactNode
   /** Change to reload the open catalogs (after a scan or an override) */
   reloadKey?: number
+  /** A table (catalog.schema.table) to open the tree to when it first loads, e.g. the one Explore reopened */
+  reveal?: string
 }) {
   const [catalogs, setCatalogs] = useState<string[] | null>(null)
   const [error, setError] = useState('')
@@ -21,6 +23,22 @@ export function CatalogTree ({ isActive, onPick, leafStart, reloadKey = 0 }: {
   const [filter, setFilter] = useState('')
 
   useEffect(() => { api.catalogs().then(setCatalogs).catch(e => setError(e.message)) }, [])
+  // Open the revealed table's catalog and schema once, then scroll it into view when its catalog has loaded
+  const revealed = useRef<'no' | 'opened' | 'done'>('no')
+  const treeRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!reveal || !catalogs || revealed.current !== 'no') return
+    const [c, s] = reveal.split('.')
+    if (!catalogs.includes(c)) { revealed.current = 'done'; return }
+    revealed.current = 'opened'
+    setOpen(prev => new Set([...prev, c, `${c}.${s}`]))
+    if (!loaded[c]) load(c)
+  }, [reveal, catalogs])
+  useEffect(() => {
+    if (revealed.current !== 'opened' || !reveal || loaded[reveal.split('.')[0]]?.state !== 'ready') return
+    revealed.current = 'done'
+    requestAnimationFrame(() => treeRef.current?.querySelector<HTMLElement>('.node.table.active')?.scrollIntoView({ block: 'nearest' }))
+  }, [loaded, reveal])
   useEffect(() => {
     if (!reloadKey) return
     for (const c of Object.keys(loaded)) if (open.has(c)) load(c)
@@ -52,7 +70,7 @@ export function CatalogTree ({ isActive, onPick, leafStart, reloadKey = 0 }: {
       <input className='search' placeholder='Filter catalogs and loaded tables' value={filter} onChange={e => setFilter(e.target.value)} aria-label='Filter catalogs and tables' />
       {error && <p className='error'>Could not list catalogs: {error}</p>}
       {!catalogs && !error && <p className='muted'>Loading catalogs…</p>}
-      <div role='tree' aria-label='Unity Catalog'>
+      <div role='tree' aria-label='Unity Catalog' ref={treeRef}>
         {shownCatalogs.map(c => {
           const cOpen = open.has(c)
           const st = loaded[c]
