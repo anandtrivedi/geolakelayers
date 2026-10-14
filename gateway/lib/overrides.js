@@ -55,7 +55,7 @@ function createTableSql (table) {
   geometry_column STRING, geometry_srid INT, lon_column STRING, lat_column STRING, id_column STRING,
   updated_by STRING, updated_at TIMESTAMP
 ) COMMENT 'LakeGate layer overrides: geometry and id columns for tables that are not detected automatically'
-TBLPROPERTIES ('arcgateway.layer_overrides' = 'true')`
+TBLPROPERTIES ('lakegate.layer_overrides' = 'true')`
 }
 
 const notSetUp = err => /TABLE_OR_VIEW_NOT_FOUND|cannot be found|does not exist/i.test(err?.message || '')

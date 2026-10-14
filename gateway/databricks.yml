@@ -1,4 +1,4 @@
-# LakeGate: Databricks feature gateway for ArcGIS (Experience Builder "Databricks Data" widget, Map Viewer, Pro).
+# LakeGate: Databricks geospatial gateway for ArcGIS (Experience Builder "Databricks Data" widget) and OGC API – Features clients.
 #
 # One gateway per workspace (a Databricks sign-in is per workspace). Workspaces that share a metastore
 # see the same Unity Catalog catalogs, so one gateway can serve all of them.
@@ -7,12 +7,12 @@
 # New workspace: copy a target, set its host, warehouse_id and allowed_origins.
 
 bundle:
-  name: arcgateway
+  name: lakegate
 
 variables:
   app_name:
     description: Name of the Databricks App
-    default: arcgateway
+    default: lakegate
   warehouse_id:
     description: SQL warehouse the gateway queries (serverless recommended)
   allowed_origins:
@@ -47,7 +47,7 @@ resources:
   apps:
     gateway:
       name: ${var.app_name}
-      description: LakeGate - serves Unity Catalog tables as ArcGIS FeatureServer layers (Experience Builder Databricks Data widget, Map Viewer, ArcGIS Pro)
+      description: LakeGate - Databricks geospatial gateway for ArcGIS and OGC (Unity Catalog tables as FeatureServer layers and OGC API - Features)
       source_code_path: .
       # Queries run as the signed-in user, so Unity Catalog decides what each person sees
       user_api_scopes:
@@ -105,9 +105,9 @@ targets:
       # fff7454b: Large serverless; 0000000000000a01: Lakehouse//RT (Small), recognized by its type
       allowed_warehouses: abcdef1234567890,0000000000000a01
       editing: "true"
-      ogc_services_table: main.arcgateway.ogc_services
-      layer_overrides_table: main.arcgateway.layer_overrides
-      directory: prod=https://arcgateway-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
+      ogc_services_table: main.lakegate.ogc_services
+      layer_overrides_table: main.lakegate.layer_overrides
+      directory: prod=https://lakegate-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199
 
   # gov (GovCloud, separate metastore): second workspace for multi-workspace testing
@@ -116,5 +116,5 @@ targets:
       host: https://your-gov-workspace.cloud.databricks.us
     variables:
       warehouse_id: fedcba9876543210
-      directory: prod=https://arcgateway-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
+      directory: prod=https://lakegate-1234567890123456.aws.databricksapps.com;gov=https://arcgateway-6543210987654321.aws-gov.databricksapps.us
       allowed_origins: https://portal.example.com,https://localhost:3001,http://localhost:5199

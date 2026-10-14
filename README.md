@@ -42,9 +42,6 @@ built and tested against 12.1).
 
 ### 1. Deploy LakeGate to a workspace
 
-The Databricks app and bundle are still named `arcgateway` (LakeGate was called ArcGateway), so its URL is
-`https://arcgateway-<workspace id>.<region>.databricksapps.com`.
-
 LakeGate is a Databricks Asset Bundle in `gateway/`. Each workspace is a target in
 `gateway/databricks.yml`:
 
@@ -59,7 +56,7 @@ targets:
       # optional:
       allowed_warehouses: <id>,<id>                    # extra warehouses authors may pick
       catalogs: "-"                                    # cap on listable catalogs; "-" = none
-      directory: prod=https://arcgateway-....databricksapps.com;gov=https://arcgateway-....databricksapps.us
+      directory: prod=https://lakegate-....databricksapps.com;gov=https://lakegate-....databricksapps.us
 ```
 
 Then deploy and start it:
@@ -70,15 +67,15 @@ databricks bundle deploy -t myworkspace --profile <profile>
 databricks bundle run gateway -t myworkspace --profile <profile>
 ```
 
-The app is created as `arcgateway`, open to account users (`CAN_USE`), with user authorization for SQL, and
+The app is created as `lakegate`, open to account users (`CAN_USE`), with user authorization for SQL, and
 the warehouse bound as an app resource. Its URL is printed at the end
-(`https://arcgateway-<workspace-id>.<region>.databricksapps.com`). Open it in a browser to check it: the
+(`https://lakegate-<workspace-id>.<region>.databricksapps.com`). Open it in a browser to check it: the
 console shows who you are, the workspace, warehouse and allowed origins, and lets you browse tables and
 preview them on a map.
 
-![LakeGate console](screenshots/arcgateway-overview.png)
+![LakeGate console](screenshots/lakegate-overview.png)
 
-![Exploring a catalog in the console](screenshots/arcgateway-explore.png)
+![Exploring a catalog in the console](screenshots/lakegate-explore.png)
 
 What users need in Databricks: `CAN_USE` on the app (the bundle grants it to account users), `CAN_USE` on the
 warehouse, and `USE CATALOG` / `USE SCHEMA` / `SELECT` on the tables. Queries run as the user, so the app's
@@ -199,7 +196,7 @@ them under a name, and each table becomes a collection at
 Part 1 (Core, GeoJSON, OpenAPI 3.0) and Part 2 (CRS84 and EPSG:3857).
 
 Turning it on (Databricks admin): set `ogc_services_table` in the bundle target to a Unity Catalog table
-name, for example `main.arcgateway.ogc_services`, and redeploy. Then open the console's **OGC services**
+name, for example `main.lakegate.ogc_services`, and redeploy. Then open the console's **OGC services**
 tab and use **Create table** once (it needs CREATE TABLE on that schema). Grant SELECT on the table to the
 people and service principals that read services, and MODIFY to the people who define them.
 

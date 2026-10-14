@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const puppeteer = require(process.env.PUPPETEER_CORE || `${process.env.HOME}/Documents/gitprojects/trident-ais/.uitest/node_modules/puppeteer-core`);
 
 const PAGE = 'http://localhost:5199/index.html';
-const GATEWAY = 'https://databricks-exb-gateway-1234567890123456.aws.databricksapps.com';
+const GATEWAY = 'https://lakegate-1234567890123456.aws.databricksapps.com';
 const tables = process.argv.slice(2).length ? process.argv.slice(2)
   : ['main.maritime.gold_anomaly_loitering', 'main.cdf_demo.us_divisions', 'main.public_safety.cases_silver_koop'];
 const out = new URL('../testimages/', import.meta.url).pathname;

@@ -45,7 +45,7 @@ export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo
         <h2>OGC services</h2>
         <p className='muted'>
           OGC API – Features is off on this gateway. A Databricks admin turns it on by setting the bundle variable
-          <code>ogc_services_table</code> to a Unity Catalog table name (for example <code>main.arcgateway.ogc_services</code>) and redeploying.
+          <code>ogc_services_table</code> to a Unity Catalog table name (for example <code>main.lakegate.ogc_services</code>) and redeploying.
         </p>
       </section>
     )

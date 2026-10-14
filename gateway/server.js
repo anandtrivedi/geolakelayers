@@ -163,7 +163,7 @@ const { version } = require('./package.json')
 app.get('/api/info', (req, res) => {
   const host = (process.env.DATABRICKS_HOST || process.env.DATABRICKS_SERVER_HOSTNAME || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
   res.json({
-    name: process.env.DATABRICKS_APP_NAME || 'arcgateway',
+    name: process.env.DATABRICKS_APP_NAME || 'lakegate',
     version,
     user: req.headers['x-forwarded-email'] || null,
     workspaceHost: host || null,
@@ -423,7 +423,7 @@ app.post('/api/optimize', express.json(), async (req, res) => {
     const existing = await runSql(req, `SHOW TABLES IN ${cat}.${sch} LIKE '${name}'`, 60)
     if (existing.length) {
       const props = await runSql(req, `SHOW TBLPROPERTIES ${target}.${name}`, 60)
-      const ours = props.some(p => (p.key || Object.values(p)[0]) === 'arcgateway.optimized')
+      const ours = props.some(p => (p.key || Object.values(p)[0]) === 'lakegate.optimized')
       if (!ours) return res.status(409).json({ error: `${target}.${name} already exists and was not written by LakeGate; pick another name` })
     }
   } catch (err) {
@@ -437,7 +437,7 @@ app.post('/api/optimize', express.json(), async (req, res) => {
     CREATE OR REPLACE TABLE ${out}
     CLUSTER BY (_xmin, _ymin)
     COMMENT 'Map-optimized copy of ${table}, written by LakeGate'
-    TBLPROPERTIES ('arcgateway.optimized' = 'true', 'arcgateway.source' = '${table}')
+    TBLPROPERTIES ('lakegate.optimized' = 'true', 'lakegate.source' = '${table}')
     AS SELECT *, ST_XMin(geom) AS _xmin, ST_YMin(geom) AS _ymin, ST_XMax(geom) AS _xmax, ST_YMax(geom) AS _ymax
     FROM (SELECT *${except}, ${geomExpr} AS geom FROM ${spec.source || table}) AS src
     WHERE geom IS NOT NULL`

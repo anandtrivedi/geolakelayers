@@ -29,17 +29,17 @@ describe('workspaces.normalizeUrl', () => {
 
 describe('workspaces.labelFromUrl', () => {
   test('extracts app name from databricksapps.com URL', () => {
-    const result = labelFromUrl('https://arcgateway-1234567890123456.databricksapps.com')
-    expect(result).toBe('arcgateway')
+    const result = labelFromUrl('https://lakegate-1234567890123456.databricksapps.com')
+    expect(result).toBe('lakegate')
   })
 
   test('removes workspace-id suffix from app name', () => {
-    const result = labelFromUrl('https://arcgateway-1234567890.databricksapps.com')
-    expect(result).toMatch(/arcgateway/)
+    const result = labelFromUrl('https://lakegate-1234567890.databricksapps.com')
+    expect(result).toMatch(/lakegate/)
   })
 
   test('adds (gov) suffix for databricksapps.us URLs', () => {
-    const result = labelFromUrl('https://arcgateway-1234567890.databricksapps.us')
+    const result = labelFromUrl('https://lakegate-1234567890.databricksapps.us')
     expect(result).toContain('gov')
   })
 
