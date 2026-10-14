@@ -137,7 +137,7 @@ function TableDetail ({ t, info, services, onAddToOgc, onGuide, onChanged }: {
             <span>·</span>
             <button className='link' onClick={() => jump('use-scripts')}>a script</button>
           </div>
-          <MapPreview key={version} table={t.table} />
+          <MapPreview key={version} table={t.table} optimized={!!spec.bboxColumns} />
           <UseThisTable t={t} info={info} url={url} services={services} onAddToOgc={onAddToOgc} onGuide={onGuide} />
         </>
       )}

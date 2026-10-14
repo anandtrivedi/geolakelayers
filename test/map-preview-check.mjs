@@ -20,9 +20,10 @@ page.on('pageerror', e => logs.push(`pageerror: ${e.message}`))
 const [catalog, schema] = table.split('.')
 await page.evaluateOnNewDocument((t, c, s, n) => localStorage.setItem('lakegate.explore.lastTable', JSON.stringify({ table: t, catalog: c, schema: s, name: n, idField: '', geometry: '' })), table, catalog, schema, table.split('.')[2])
 await page.goto(`${gateway}/#explore`, { waitUntil: 'networkidle2', timeout: 120000 })
+await page.waitForSelector('.map-preview-status', { timeout: 120000 }).catch(() => {})
 const t0 = Date.now()
 let last = ''
-while (Date.now() - t0 < 90000) {
+while (Date.now() - t0 < 330000) {
   const s = await page.$eval('.map-preview-status', e => e.textContent).catch(() => '')
   if (s !== last) { console.log(`${((Date.now() - t0) / 1000).toFixed(1)}s status: ${s || '(none)'}`); last = s }
   if (!s || /zoom in|failed/i.test(s)) break

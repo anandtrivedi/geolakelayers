@@ -38,7 +38,8 @@ function fitExtent (e: any) {
 }
 
 // table: a FeatureServer layer; ogc: an OGC API – Features collection (drawn with OGCFeatureLayer)
-export function MapPreview ({ table, ogc }: { table: string, ogc?: { url: string, collectionId: string } }) {
+// optimized: the table already has bounding-box columns, so a slow draw isn't something Optimize for maps would fix
+export function MapPreview ({ table, ogc, optimized }: { table: string, ogc?: { url: string, collectionId: string }, optimized?: boolean }) {
   const el = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState('Loading map…')
 
@@ -81,9 +82,15 @@ export function MapPreview ({ table, ogc }: { table: string, ogc?: { url: string
         }
         const lv = await view.whenLayerView(layer)
         setStatus('Drawing…')
+        const drawStart = Date.now()
         const watch = () => {
           if (cancelled) return
-          if (lv.updating) return setTimeout(watch, 300)
+          if (lv.updating) {
+            if (!ogc && !optimized && Date.now() - drawStart > 15000) {
+              setStatus('Still drawing. This table isn\'t organized by location, so each view reads a lot of it. "Optimize for maps", below the map, writes a copy that draws much faster.')
+            }
+            return setTimeout(watch, 300)
+          }
           setStatus(layer.minScale && view.scale > layer.minScale ? 'This table is large, so it draws once you zoom in.' : '')
         }
         watch()
