@@ -105,11 +105,18 @@ function createOverrideStore ({ table }) {
       await run(`DELETE FROM ${table} WHERE table_name = :name`, { name })
       cache = null
     },
+    // Create the table, then let every gateway user read it (overrides decide how a table draws for
+    // everyone). The grant needs MANAGE or ownership; if it fails the table still exists, so say what to run.
     async setup (run) {
       await run(createTableSql(table))
-      // Every gateway user reads overrides (they decide how a table draws for everyone)
-      await run(`GRANT SELECT ON TABLE ${table} TO \`account users\``)
       cache = null
+      const grant = `GRANT SELECT ON TABLE ${table} TO \`account users\``
+      try {
+        await run(grant)
+        return { granted: true }
+      } catch (err) {
+        return { granted: false, grant, warning: `Created ${table}, but couldn't let everyone read it. Someone who can grant on it should run: ${grant}` }
+      }
     },
     forget () { cache = null }
   }

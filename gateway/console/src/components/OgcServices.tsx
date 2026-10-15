@@ -4,6 +4,7 @@ import type { CatalogTable, GatewayInfo, OgcCollection, OgcColumns, OgcService, 
 import { CatalogTree } from './CatalogTree'
 import { Copy, CopyToken } from './Copy'
 import { MapPreview } from './MapPreview'
+import { AccessHint, WriteError } from './Access'
 
 // OGC services: named sets of tables served as OGC API – Features (/ogc/<name>), kept in a Unity Catalog table
 // Engine label for a service: its warehouse, or the gateway's bound one
@@ -87,6 +88,7 @@ export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo
           {!needsSetup && <button className='button' onClick={() => setDraft({ isNew: true, service: { name: '', title: '', description: '', collections: [], warehouse: warehouses.find(w => w.realtime)?.id || '' } })}>New service</button>}
         </div>
         {needsSetup && <Setup table={info.ogc.table || ''} onDone={reload} />}
+        {!needsSetup && services && <AccessHint action='MODIFY' name={info.ogc.table} doing='Creating, changing or deleting a service' />}
         {error && <p className='error'>Could not read services: {error}</p>}
         {!services && !error && <p className='muted'>Loading services…</p>}
         {services && !services.length && !needsSetup && !error && <p className='muted'>No services yet. Use New service to pick tables.</p>}
@@ -112,10 +114,10 @@ export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo
 
 function Setup ({ table, onDone }: { table: string, onDone: () => void }) {
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const create = async () => {
-    setBusy(true); setError('')
-    try { await api.ogcSetup(); onDone() } catch (e: any) { setError(e.message) } finally { setBusy(false) }
+  const [error, setError] = useState<unknown>(null)
+  const create = async (force = false) => {
+    setBusy(true); setError(null)
+    try { await api.ogcSetup(force); onDone() } catch (e) { setError(e) } finally { setBusy(false) }
   }
   return (
     <div className='optimize'>
@@ -125,8 +127,9 @@ function Setup ({ table, onDone }: { table: string, onDone: () => void }) {
         permissions. Afterwards, grant SELECT to the people and service principals that read services, and MODIFY to those
         who define them.
       </p>
-      <button className='button' disabled={busy} onClick={create}>{busy ? 'Creating…' : 'Create table'}</button>
-      {error && <p className='error small'>{error}</p>}
+      <AccessHint action='CREATE_TABLE' name={table.split('.').slice(0, 2).join('.')} doing='Creating it' />
+      <button className='button' disabled={busy} onClick={() => create()}>{busy ? 'Creating…' : 'Create table'}</button>
+      <WriteError error={error} onRetry={() => create(true)} />
     </div>
   )
 }

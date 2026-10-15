@@ -8,6 +8,14 @@ const THREE_PART = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/
 // Comma-separated setting; '-' means none (Databricks Apps refuses empty env values)
 const list = v => (v || '').split(',').map(s => s.trim()).filter(s => s && s !== '-')
 
+// An origin as browsers send it: scheme://host[:port], lower case, no path or trailing slash; '' if invalid
+function normalizeOrigin (value) {
+  try {
+    const u = new URL(String(value || '').trim())
+    return /^https?:$/.test(u.protocol) ? u.origin : ''
+  } catch (_) { return '' }
+}
+
 // Other LakeGate gateways (one per workspace): "name=url;name=url", https only
 function parseDirectory (value) {
   return (value || '').split(';').map(s => s.trim()).filter(s => s && s !== '-')
@@ -50,4 +58,4 @@ function isTransientNetworkError (err) {
     (err && err.name === 'FetchError' && /socket hang up|network timeout|ECONNRESET/i.test(err.message || ''))
 }
 
-module.exports = { isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs, obo, selfOrigin, consoleOnly }
+module.exports = { normalizeOrigin, isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs, obo, selfOrigin, consoleOnly }

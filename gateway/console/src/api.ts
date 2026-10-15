@@ -66,22 +66,31 @@ export interface OgcColumns { table: string, idField: string, count: number, tim
 export class ApiError extends Error {
   status: number
   setup: boolean
-  constructor (message: string, status: number, setup = false) { super(message); this.status = status; this.setup = setup }
+  /** 'preflight' = stopped because no grant was found (can be retried with force); 'permission'; 'not_found' */
+  code?: string
+  /** What the grant check found missing, e.g. "CREATE TABLE on schema main.geo" */
+  missing?: string[]
+  constructor (message: string, status: number, setup = false, code?: string, missing?: string[]) { super(message); this.status = status; this.setup = setup; this.code = code; this.missing = missing }
 }
+
+/** What the caller's grants allow (ok null = couldn't tell) */
+export interface Access { ok: boolean | null, missing?: string[], reason?: string }
+/** Result of creating a settings table: the read grant may fail separately */
+export interface SetupResult { ready: boolean, granted?: boolean, grant?: string, warning?: string }
 
 export interface OptimizeJob { id: string, state: 'running' | 'done' | 'failed', source: string, target: string, startedAt: number, finishedAt?: number, rows?: number, error?: string }
 
 async function get<T> (path: string): Promise<T> {
   const r = await fetch(path, { credentials: 'same-origin' })
   const d = await r.json().catch(() => ({}))
-  if (!r.ok) throw new ApiError(d?.error?.message || d?.error || d?.description || `HTTP ${r.status}`, r.status, !!d?.setup)
+  if (!r.ok) throw new ApiError(d?.error?.message || d?.error || d?.description || `HTTP ${r.status}`, r.status, !!d?.setup, d?.code)
   return d as T
 }
 
 async function send<T> (method: string, path: string, body?: unknown): Promise<T> {
   const r = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) })
   const d = r.status === 204 ? {} : await r.json().catch(() => ({}))
-  if (!r.ok) throw new ApiError(d?.error || `HTTP ${r.status}`, r.status, !!d?.setup)
+  if (!r.ok) throw new ApiError(d?.error || `HTTP ${r.status}`, r.status, !!d?.setup, d?.code, d?.missing)
   return d as T
 }
 
@@ -95,22 +104,18 @@ export const api = {
   tables: (catalog: string) => get<{ tables: CatalogTable[] }>(`/api/catalog?catalogs=${encodeURIComponent(catalog)}`).then(d => d.tables),
   spec: (table: string) => get<{ spec: LayerSpec | null }>(`/api/spec/${encodeURIComponent(table)}`).then(d => d.spec),
   specDetail: (table: string) => get<{ spec: LayerSpec | null, columns: { name: string, type: string }[], override: (LayerOverride & { updatedBy?: string }) | null }>(`/api/spec/${encodeURIComponent(table)}`),
-  optimize: async (table: string, target: string, name: string): Promise<OptimizeJob> => {
-    const r = await fetch('/api/optimize', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ table, target, name }) })
-    const d = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(d?.error || `HTTP ${r.status}`)
-    return d
-  },
+  optimize: (table: string, target: string, name: string, force = false) => send<OptimizeJob>('POST', '/api/optimize', { table, target, name, force }),
+  access: (action: 'SELECT' | 'MODIFY' | 'CREATE_TABLE', name: string) => get<Access>(`/api/access?action=${action}&name=${encodeURIComponent(name)}`),
   job: (id: string) => get<OptimizeJob>(`/api/optimize/${id}`),
   ogcServices: () => get<{ table: string, services: OgcService[] }>('/api/ogc/services').then(d => d.services),
   ogcSave: (s: OgcService, isNew: boolean) => isNew
     ? send<OgcService>('POST', '/api/ogc/services', s)
     : send<OgcService>('PUT', `/api/ogc/services/${encodeURIComponent(s.name)}`, s),
   ogcDelete: (name: string) => send<void>('DELETE', `/api/ogc/services/${encodeURIComponent(name)}`),
-  ogcSetup: () => send<{ ready: boolean }>('POST', '/api/ogc/setup'),
+  ogcSetup: (force = false) => send<SetupResult>('POST', '/api/ogc/setup', { force }),
   ogcColumns: (table: string) => get<OgcColumns>(`/api/ogc/columns/${encodeURIComponent(table)}`),
   overridesInfo: () => get<{ enabled: boolean, table: string | null, missing: boolean }>('/api/overrides'),
-  overridesSetup: () => send<{ ready: boolean }>('POST', '/api/overrides/setup'),
+  overridesSetup: (force = false) => send<SetupResult>('POST', '/api/overrides/setup', { force }),
   saveOverride: (table: string, o: LayerOverride) => send<{ spec: LayerSpec | null }>('PUT', `/api/overrides/${encodeURIComponent(table)}`, o),
   clearOverride: (table: string) => send<void>('DELETE', `/api/overrides/${encodeURIComponent(table)}`),
   scan: (schema: string) => get<ScanResult>(`/api/scan?schema=${encodeURIComponent(schema)}`),

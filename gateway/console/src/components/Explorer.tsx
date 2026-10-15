@@ -5,6 +5,7 @@ import { Copy, CopyToken, UrlField } from './Copy'
 import { MapPreview } from './MapPreview'
 import { CatalogTree } from './CatalogTree'
 import { LayerSettings } from './LayerSettings'
+import { AccessHint, WriteError } from './Access'
 
 const LAST_TABLE = 'lakegate.explore.lastTable'
 
@@ -220,7 +221,7 @@ function Optimize ({ t, spec, count }: { t: CatalogTable, spec: LayerSpec, count
   const [target, setTarget] = useState(`${t.catalog}.${t.schema}`)
   const [name, setName] = useState(`${t.name}_map`)
   const [job, setJob] = useState<OptimizeJob | null>(null)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<unknown>(null)
 
   useEffect(() => {
     if (!job || job.state !== 'running') return
@@ -228,9 +229,9 @@ function Optimize ({ t, spec, count }: { t: CatalogTable, spec: LayerSpec, count
     return () => clearInterval(timer)
   }, [job?.id, job?.state])
 
-  const start = async () => {
-    setError('')
-    try { setJob(await api.optimize(t.table, target.trim(), name.trim())) } catch (e: any) { setError(e.message) }
+  const start = async (force = false) => {
+    setError(null)
+    try { setJob(await api.optimize(t.table, target.trim(), name.trim(), force)) } catch (e) { setError(e) }
   }
   const why = spec.geometrySource?.includes('string') || spec.geometrySource?.includes('binary')
     ? `Its geometry is stored as ${spec.geometrySource}, so every map query parses it row by row.`
@@ -248,11 +249,12 @@ function Optimize ({ t, spec, count }: { t: CatalogTable, spec: LayerSpec, count
       <div className='optimize-form'>
         <label>Target schema<input value={target} onChange={e => setTarget(e.target.value)} placeholder='catalog.schema' /></label>
         <label>Table name<input value={name} onChange={e => setName(e.target.value)} /></label>
-        <button className='button' disabled={job?.state === 'running'} onClick={start}>
+        <button className='button' disabled={job?.state === 'running'} onClick={() => start()}>
           {job?.state === 'running' ? 'Optimizing…' : 'Create optimized copy'}
         </button>
       </div>
-      {error && <p className='error small'>{error}</p>}
+      <AccessHint action='CREATE_TABLE' name={target.trim()} doing='Writing the copy' />
+      <WriteError error={error} onRetry={() => start(true)} />
       {job?.state === 'running' && <p className='muted small'>Writing {job.target}. Large tables take a few minutes.</p>}
       {job?.state === 'done' && <p className='small'>Done in {seconds} s: <code>{job.target}</code> ({job.rows?.toLocaleString()} rows). Use it in place of the original; it appears in this catalog after a refresh.</p>}
       {job?.state === 'failed' && <p className='error small'>Failed: {job.error}</p>}

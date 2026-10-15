@@ -8,6 +8,7 @@
 const crypto = require('crypto')
 const { PLAIN, THREE_PART } = require('../lib/http')
 const { OgcError } = require('./params')
+const { explain } = require('../lib/errors')
 
 const NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/
 const COLLECTION_ID = /^[A-Za-z0-9_-]{1,64}$/
@@ -131,7 +132,7 @@ function createStore ({ table, run, obo }) {
   const wrap = err => {
     if (err instanceof OgcError) return err
     if (notSetUp(err)) return Object.assign(new OgcError(404, 'NotSetUp', `The OGC services table ${table} does not exist yet`), { setup: true })
-    if (denied(err)) return new OgcError(403, 'Forbidden', err.message.split('\n')[0].slice(0, 300))
+    if (denied(err)) return new OgcError(403, 'Forbidden', explain(err).message)
     return new OgcError(500, 'ServerError', (err?.message || String(err)).split('\n')[0].slice(0, 300))
   }
 

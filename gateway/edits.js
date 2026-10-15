@@ -134,4 +134,37 @@ function editableSpec (spec) {
   return !!spec && !spec.objectIdExpr && !spec.bboxColumns && !!spec.objectId
 }
 
-module.exports = { toWkt, parseList, planEdits, editableSpec }
+/**
+ * Run planned edits one by one and report each, the way applyEdits answers (no rollback: each statement
+ * commits on its own). run(sql, params) runs as the editor; explain turns errors into { status, message }.
+ * Once an edit is refused for permissions or sign-in, the rest would be too, so they aren't run.
+ */
+async function applyPlan (plan, run, explain) {
+  const results = { addResults: [], updateResults: [], deleteResults: [] }
+  let changed = false
+  let refused = null
+  for (const step of plan) {
+    const out = { objectId: step.id ?? null, success: false }
+    try {
+      if (refused) throw refused
+      if (step.error) throw Object.assign(new Error(step.error), { status: 400 })
+      if (step.kind === 'add') {
+        const next = await run(step.nextIdSql)
+        out.objectId = Number(next[0]?.n)
+        await run(step.sql, { ...step.params, newid: out.objectId })
+      } else if (step.sql) {
+        await run(step.sql, step.params)
+      }
+      out.success = true
+      changed = true
+    } catch (err) {
+      const e = explain(err)
+      if (e.status === 403 || e.status === 401) refused = e
+      out.error = { code: e.status, description: e.message }
+    }
+    results[`${step.kind}Results`].push(out)
+  }
+  return { results, changed }
+}
+
+module.exports = { toWkt, parseList, planEdits, editableSpec, applyPlan }

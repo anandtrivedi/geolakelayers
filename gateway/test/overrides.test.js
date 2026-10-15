@@ -42,7 +42,7 @@ test('store: reads all overrides once (cached), treats a missing table as empty,
   await store.remove(run, 'a.b.c')
   assert.deepEqual(calls.at(-1), { sql: 'DELETE FROM c.s.o WHERE table_name = :name', params: { name: 'a.b.c' } })
   await assert.rejects(store.put(run, 'nope', {}), /catalog.schema.table/)
-  await store.setup(run)
+  assert.deepEqual(await store.setup(run), { granted: true })
   assert.match(calls.at(-2).sql, /^CREATE TABLE IF NOT EXISTS c\.s\.o/)
   assert.equal(calls.at(-1).sql, 'GRANT SELECT ON TABLE c.s.o TO `account users`')
   const missing = createOverrideStore({ table: 'c.s.o' })
@@ -57,10 +57,15 @@ test('store: reads all overrides once (cached), treats a missing table as empty,
 const connectionManager = require('../provider/connection')
 const overrideRows = new Map()
 const log = []
+// The caller's grants, as information_schema would return them (lib/access.js), and a GRANT that may fail
+let grantRows = []
+let grantFails = false
 connectionManager.getSession = async () => ({
   async executeStatement (sql, opts) {
     log.push({ sql, params: opts.namedParameters })
     const rows = (() => {
+      if (/is_account_group_member/.test(sql)) return grantRows
+      if (/^GRANT /.test(sql) && grantFails) throw new Error("PERMISSION_DENIED: User does not have MANAGE on Table 'c.s.layer_overrides'.")
       if (/^DESCRIBE c\.s\.points/.test(sql)) return [{ col_name: 'pid', data_type: 'bigint' }, { col_name: 'x', data_type: 'double' }, { col_name: 'y', data_type: 'double' }, { col_name: 'note', data_type: 'string' }]
       if (/^DESCRIBE c\.s\.texty/.test(sql)) return [{ col_name: 'k', data_type: 'int' }, { col_name: 'footprint', data_type: 'string' }]
       if (/^DESCRIBE/.test(sql)) return [{ col_name: 'n', data_type: 'int' }]
@@ -171,4 +176,57 @@ test('/api/load reports memory against its limits, requests in flight and CPU, u
   assert.ok(r.body.heapUsed < r.body.heapLimit)
   assert.ok(r.body.cpu >= 0 && r.body.cpu <= 1)
   assert.equal(r.body.inFlight, 0)
+})
+
+const levels = list => list.map(([level, privilege_type]) => ({ level, privilege_type }))
+
+test('/api/access: what the caller\'s grants allow, cached briefly; bad input is a 400', async () => {
+  grantRows = levels([['catalog', 'USE_CATALOG'], ['schema', 'USE_SCHEMA'], ['table', 'SELECT']])
+  let r = await call('/api/access?action=SELECT&name=c.s.roads')
+  assert.deepEqual([r.status, r.body], [200, { ok: true }])
+  r = await call('/api/access?action=MODIFY&name=c.s.roads')
+  assert.deepEqual(r.body, { ok: false, missing: ['MODIFY on table c.s.roads'] })
+  grantRows = []
+  r = await call('/api/access?action=SELECT&name=c.s.roads')
+  assert.deepEqual(r.body, { ok: true }, 'cached for a minute')
+  r = await call('/api/access?action=DROP&name=c.s.roads')
+  assert.equal(r.status, 400)
+  r = await call('/api/access?action=CREATE_TABLE&name=c.s.t')
+  assert.equal(r.status, 400)
+})
+
+test('setup and optimize check grants first, say what is missing, and can be tried anyway', async () => {
+  grantRows = []
+  let r = await call('/api/overrides/setup', { method: 'POST', body: {} })
+  assert.equal(r.status, 403)
+  assert.equal(r.body.code, 'preflight')
+  assert.deepEqual(r.body.missing, ['CREATE TABLE on schema c.s', 'USE SCHEMA on schema c.s', 'USE CATALOG on catalog c'])
+  assert.ok(!log.some(l => /^CREATE TABLE IF NOT EXISTS c\.s\.layer_overrides/.test(l.sql)), 'nothing was created')
+  r = await call('/api/overrides/setup', { method: 'POST', body: { force: true } })
+  assert.deepEqual([r.status, r.body.ready, r.body.granted], [200, true, true])
+  grantFails = true
+  r = await call('/api/overrides/setup', { method: 'POST', body: { force: true } })
+  assert.equal(r.status, 200, 'the table exists even when the grant fails')
+  assert.equal(r.body.granted, false)
+  assert.equal(r.body.grant, 'GRANT SELECT ON TABLE c.s.layer_overrides TO `account users`')
+  assert.match(r.body.warning, /couldn't let everyone read it/)
+  grantFails = false
+  r = await call('/api/optimize', { method: 'POST', body: { table: 'c.s.geo', target: 'c.other', name: 'geo_map' } })
+  assert.deepEqual([r.status, r.body.code], [403, 'preflight'])
+  assert.match(r.body.error, /CREATE TABLE on schema c\.other/)
+  r = await call('/api/optimize', { method: 'POST', body: { table: 'c.s.geo', target: 'c.other', name: 'geo_map', force: true } })
+  assert.notEqual(r.status, 403, 'force goes past the grant check')
+})
+
+test('route errors from Databricks are explained: a missing grant is a 403 that names it', async () => {
+  const original = connectionManager.getSession
+  connectionManager.getSession = async () => ({
+    async executeStatement () { throw new Error("PERMISSION_DENIED: User does not have SELECT on Table 'c.s.secret'.") },
+    close: async () => {}
+  })
+  try {
+    const r = await call('/api/spec/c.s.secret')
+    assert.equal(r.status, 403)
+    assert.deepEqual(r.body, { error: "You don't have SELECT on table c.s.secret. Ask its owner or a Databricks admin to grant it.", code: 'permission' })
+  } finally { connectionManager.getSession = original }
 })

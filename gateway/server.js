@@ -33,9 +33,12 @@ const Model = require('./provider/model')
 const connectionManager = require('./provider/connection')
 const layerSpec = require('./provider/spec')
 const { createOverrideStore, validateOverride, OverrideError } = require('./lib/overrides')
-const { isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly } = require('./lib/http')
+const { sendExplained, explain } = require('./lib/errors')
+const access = require('./lib/access')
+const { isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly, normalizeOrigin } = require('./lib/http')
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+// Origins compare exactly, so a trailing slash or a stray space in the setting would never match
+const allowedOrigins = list(process.env.ALLOWED_ORIGINS).map(normalizeOrigin).filter(Boolean)
 // Catalogs to list: empty means every catalog the signed-in user can see, minus the excluded ones
 const catalogs = list(process.env.CATALOGS)
 const excludeCatalogs = list(process.env.EXCLUDE_CATALOGS === undefined ? 'system,samples,hive_metastore,__databricks_internal' : process.env.EXCLUDE_CATALOGS)
@@ -111,31 +114,13 @@ app.post('/databricks/rest/services/:id/FeatureServer/:layer/applyEdits', async 
       updates: edits.parseList(body.updates),
       deletes: edits.parseList(body.deletes)
     })
-    const results = { addResults: [], updateResults: [], deleteResults: [] }
-    let changed = false
-    for (const step of plan) {
-      const out = { objectId: step.id ?? null, success: false }
-      try {
-        if (step.error) throw new Error(step.error)
-        if (step.kind === 'add') {
-          const next = await runSql(req, step.nextIdSql)
-          out.objectId = Number(next[0]?.n)
-          await runSql(req, step.sql, 120, { ...step.params, newid: out.objectId })
-        } else if (step.sql) {
-          await runSql(req, step.sql, 120, step.params)
-        }
-        out.success = true
-        changed = true
-      } catch (err) {
-        out.error = { code: 500, description: err.message.split('\n')[0].slice(0, 300) }
-      }
-      results[`${step.kind}Results`].push(out)
-    }
+    const { results, changed } = await edits.applyPlan(plan, (sql, params) => runSql(req, sql, 120, params), explain)
     // Make the next map refresh read the table again
     if (changed) Model.forgetTable(table)
     res.json(results)
   } catch (err) {
-    fail(500, err.message.split('\n')[0].slice(0, 300))
+    const e = explain(err)
+    fail(e.status, e.message)
   }
 })
 
@@ -146,6 +131,7 @@ const ogcTable = list(process.env.OGC_SERVICES_TABLE)[0] || null
 const ogcStore = ogcTable ? ogc.createStore({ table: ogcTable, run: (req, sql, params) => runSql(req, sql, 60, params), obo }) : null
 const ogcDeps = {
   model: Model,
+  preflight: (req, res, action, name) => refusedByPreflight(req, res, action, name),
   store: ogcStore,
   obo,
   selfOrigin,
@@ -211,6 +197,32 @@ app.post('/api/token', (req, res) => {
   try { expiresAt = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).exp * 1000 || null } catch (_) {}
   res.json({ token, expiresAt })
 })
+
+// Can the caller do this? A hint from the grants in information_schema (lib/access.js), for the console to
+// show before a write. Cached briefly per caller: grants change rarely, and the write itself still decides.
+const accessCache = new Map()
+async function accessFor (req, action, name) {
+  const key = `${whoKey(req)}|${action}|${name}`
+  const hit = accessCache.get(key)
+  if (hit && Date.now() - hit.at < 60000) return hit.value
+  const value = await access.check((sql, params) => runSql(req, sql, 30, params), action, name)
+  accessCache.set(key, { value, at: Date.now() })
+  if (accessCache.size > 5000) accessCache.delete(accessCache.keys().next().value)
+  return value
+}
+app.get('/api/access', async (req, res) => {
+  try { res.json(await accessFor(req, String(req.query.action || ''), String(req.query.name || ''))) } catch (err) { sendExplained(res, err) }
+})
+// Before a slow or partly-irreversible write: stop if no grant allows it, unless the console says "try anyway"
+// (metastore admins and some indirect grants don't show in information_schema)
+async function refusedByPreflight (req, res, action, name) {
+  if ((req.body || {}).force === true) return false
+  let result
+  try { result = await accessFor(req, action, name) } catch (_) { return false }
+  if (result.ok !== false) return false
+  res.status(403).json({ error: `LakeGate found no grant that lets you do this: you need ${result.missing.join(', ')}. Ask an owner or admin to grant it, or try anyway if you have access another way.`, code: 'preflight', missing: result.missing })
+  return true
+}
 
 // Can the caller read what the gateway depends on? Runs as the caller, like every other query.
 app.get('/api/health', async (req, res) => {
@@ -393,7 +405,7 @@ app.get('/api/scan', async (req, res) => {
     forgetListings()
     res.json({ schema, checked: batch.length, skipped: candidates.length - batch.length, found, failed })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    sendExplained(res, err)
   }
 })
 
@@ -402,7 +414,8 @@ app.use('/api/overrides', express.json())
 app.get('/api/overrides', (req, res) => res.json({ enabled: !!overrideStore, table: overridesTable, missing: overrideStore?.missing || false }))
 app.post('/api/overrides/setup', async (req, res) => {
   if (!overrideStore) return res.status(404).json({ error: 'Layer overrides are off (bundle variable layer_overrides_table)' })
-  try { await overrideStore.setup(q => runSql(req, q)); res.json({ ready: true }) } catch (err) { res.status(500).json({ error: err.message }) }
+  if (await refusedByPreflight(req, res, 'CREATE_TABLE', overridesTable.split('.').slice(0, 2).join('.'))) return
+  try { res.json({ ready: true, ...await overrideStore.setup(q => runSql(req, q)) }) } catch (err) { sendExplained(res, err) }
 })
 app.put('/api/overrides/:table', async (req, res) => {
   const table = req.params.table
@@ -427,7 +440,7 @@ app.put('/api/overrides/:table', async (req, res) => {
     const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), whoKey(req))
     res.json({ override: o, spec })
   } catch (err) {
-    res.status(err.status || (/PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS/.test(err.message) ? 403 : 500)).json({ error: err.message.split('\n')[0] })
+    sendExplained(res, err)
   }
 })
 app.delete('/api/overrides/:table', async (req, res) => {
@@ -437,7 +450,7 @@ app.delete('/api/overrides/:table', async (req, res) => {
     afterOverrideChange(req.params.table)
     res.status(204).end()
   } catch (err) {
-    res.status(err.status || (/PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS/.test(err.message) ? 403 : 500)).json({ error: err.message.split('\n')[0] })
+    sendExplained(res, err)
   }
 })
 
@@ -453,7 +466,7 @@ app.get('/api/catalog', async (req, res) => {
   try {
     res.json({ catalogs: requestedCatalogs(req), excludeCatalogs, runAs: obo(req) ? 'user' : 'app', tables: await listTables(req) })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    sendExplained(res, err)
   }
 })
 
@@ -468,7 +481,7 @@ app.get('/api/spec/:table', async (req, res) => {
     const override = overrideStore ? await overrideStore.get(q => runSql(req, q), table).catch(() => null) : null
     res.json({ table, spec, columns, override, url: `/databricks/rest/services/${table}/FeatureServer/0` })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    sendExplained(res, err)
   }
 })
 
@@ -484,6 +497,7 @@ app.post('/api/optimize', express.json(), async (req, res) => {
   if (!three.test(table || '')) return res.status(400).json({ error: 'table must be catalog.schema.table' })
   if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(target || '')) return res.status(400).json({ error: 'target must be catalog.schema' })
   if (!PLAIN.test(name)) return res.status(400).json({ error: 'name must be a plain identifier' })
+  if (await refusedByPreflight(req, res, 'CREATE_TABLE', target)) return
   let spec
   try {
     spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), layerSpec.whoOf(obo(req)))
@@ -497,7 +511,7 @@ app.post('/api/optimize', express.json(), async (req, res) => {
       if (!ours) return res.status(409).json({ error: `${target}.${name} already exists and was not written by LakeGate; pick another name` })
     }
   } catch (err) {
-    return res.status(500).json({ error: err.message })
+    return sendExplained(res, err)
   }
   if (!spec) return res.status(400).json({ error: `${table} has no usable geometry or id` })
   const geomExpr = spec.geometryExpr
@@ -522,7 +536,7 @@ app.post('/api/optimize', express.json(), async (req, res) => {
     const n = await runSql(req, `SELECT COUNT(*) AS n FROM ${out}`, 120)
     Object.assign(job, { state: 'done', finishedAt: Date.now(), rows: Number(n[0]?.n || 0) })
   } catch (err) {
-    Object.assign(job, { state: 'failed', finishedAt: Date.now(), error: err.message })
+    Object.assign(job, { state: 'failed', finishedAt: Date.now(), error: explain(err).message })
   }
 })
 
@@ -552,7 +566,7 @@ app.get('/api/catalogs', async (req, res) => {
     const names = rows.map(r => r.catalog || Object.values(r)[0]).filter(c => c && !excludeCatalogs.includes(c))
     res.json({ catalogs: catalogs.length ? names.filter(c => catalogs.includes(c)) : names })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    sendExplained(res, err)
   }
 })
 
@@ -577,7 +591,7 @@ app.get('/api/warehouses', async (req, res) => {
       })
     res.json({ default: defaultWarehouse || null, warehouses })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    sendExplained(res, err)
   }
 })
 

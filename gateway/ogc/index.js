@@ -19,8 +19,9 @@
 const express = require('express')
 const { CRS84, EPSG3857, SUPPORTED, reproject } = require('./crs')
 const { OgcError, parseFormat, parseCrs, parseItemsQuery, queryablesOf } = require('./params')
-const { validateService, createStore, denied } = require('./services')
+const { validateService, createStore } = require('./services')
 const { buildOpenApi } = require('./openapi')
+const { explain } = require('../lib/errors')
 
 const CONFORMANCE = [
   'http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/core',
@@ -39,8 +40,11 @@ function toOgcError (err) {
   const message = (err?.message || String(err)).split('\n')[0].slice(0, 300)
   if (err?.code === 400) return new OgcError(400, 'InvalidParameterValue', message)
   if (err?.code === 429) return new OgcError(429, 'TooManyRequests', message)
-  if (denied(err)) return new OgcError(403, 'Forbidden', message)
-  if (/TABLE_OR_VIEW_NOT_FOUND/i.test(message)) return new OgcError(404, 'NotFound', message)
+  // Missing grants and tables, in words that say what to ask for (lib/errors.js)
+  const explained = explain(err)
+  if (explained.status === 403) return new OgcError(403, 'Forbidden', explained.message)
+  if (explained.status === 404) return new OgcError(404, 'NotFound', explained.message)
+  if (explained.status === 401) return new OgcError(401, 'Unauthorized', explained.message)
   return new OgcError(500, 'ServerError', message)
 }
 
@@ -368,6 +372,7 @@ function consoleApi (deps) {
   }))
   router.post('/setup', handle(async (req, res) => {
     if (!store) off()
+    if (deps.preflight && await deps.preflight(req, res, 'CREATE_TABLE', store.table.split('.').slice(0, 2).join('.'))) return
     await store.setup(req)
     res.json({ table: store.table, ready: true })
   }))

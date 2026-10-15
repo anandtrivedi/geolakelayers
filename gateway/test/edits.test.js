@@ -351,3 +351,31 @@ test('edits.editableSpec: false for bbox columns (map-optimized)', async t => {
 test('edits.editableSpec: false for null spec', async t => {
   assert.equal(edits.editableSpec(null), false)
 })
+
+test('edits.applyPlan: runs each edit, reports per edit, and stops running once one is refused for permissions', async () => {
+  const { explain } = require('../lib/errors')
+  const ran = []
+  const plan = [
+    { kind: 'add', nextIdSql: 'SELECT max+1 AS n', sql: 'INSERT 1', params: { a: 1 } },
+    { kind: 'update', id: 7, error: 'Update needs an objectid' },
+    { kind: 'update', id: 8, sql: 'UPDATE 8', params: {} },
+    { kind: 'delete', id: 9, sql: 'DELETE 9', params: {} }
+  ]
+  const run = async (sql, params) => {
+    ran.push([sql, params])
+    if (sql === 'SELECT max+1 AS n') return [{ n: 41 }]
+    if (sql === 'UPDATE 8') throw new Error("PERMISSION_DENIED: User does not have MODIFY on Table 'a.b.c'.")
+    return []
+  }
+  const { results, changed } = await edits.applyPlan(plan, run, explain)
+  assert.equal(changed, true)
+  assert.deepEqual(results.addResults, [{ objectId: 41, success: true }])
+  assert.deepEqual(ran[1], ['INSERT 1', { a: 1, newid: 41 }])
+  assert.deepEqual(results.updateResults[0], { objectId: 7, success: false, error: { code: 400, description: 'Update needs an objectid' } })
+  assert.equal(results.updateResults[1].error.code, 403)
+  assert.match(results.updateResults[1].error.description, /^You don't have MODIFY on table a\.b\.c/)
+  assert.deepEqual(results.deleteResults[0].error, results.updateResults[1].error, 'later edits get the same refusal')
+  assert.ok(!ran.some(([sql]) => sql === 'DELETE 9'), 'and are not run')
+  const none = await edits.applyPlan([{ kind: 'delete', id: 1, error: 'bad id' }], run, explain)
+  assert.equal(none.changed, false)
+})

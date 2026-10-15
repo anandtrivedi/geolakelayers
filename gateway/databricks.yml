@@ -17,6 +17,12 @@ variables:
   app_name:
     description: Name of the Databricks App
     default: lakegate
+  compute_size:
+    description: App compute, MEDIUM (2 vCPU, 6 GB) or LARGE (4 vCPU, 12 GB, twice the DBUs). LARGE helps with long line layers at full detail
+    default: MEDIUM
+  node_heap_mb:
+    description: Node heap limit in MB; leave about half the app's memory for buffers (3072 on MEDIUM, 8192 on LARGE)
+    default: "3072"
   warehouse_id:
     description: SQL warehouse the gateway queries (serverless recommended)
   allowed_origins:
@@ -53,8 +59,7 @@ resources:
       name: ${var.app_name}
       description: LakeGate - Databricks geospatial gateway for ArcGIS and OGC (Unity Catalog tables as FeatureServer layers and OGC API - Features)
       source_code_path: .
-      # Large = up to 4 vCPU and 12 GB; drawing long line layers holds a lot of geometry in memory
-      compute_size: LARGE
+      compute_size: ${var.compute_size}
       # Queries run as the signed-in user, so Unity Catalog decides what each person sees
       user_api_scopes:
         - sql
@@ -64,8 +69,8 @@ resources:
             id: ${var.warehouse_id}
             permission: CAN_USE
       config:
-        # Node caps its heap near 1.5 GB by default; 8 GB leaves Large's other 4 GB for buffers and the driver
-        command: ["node", "--max-old-space-size=8192", "server.js"]
+        # Node caps its heap near 1.5 GB by default; node_heap_mb raises it to fit the compute size
+        command: ["node", "--max-old-space-size=${var.node_heap_mb}", "server.js"]
         env:
           - name: DATABRICKS_WAREHOUSE_ID
             value_from: sql-warehouse

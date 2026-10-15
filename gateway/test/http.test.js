@@ -293,3 +293,12 @@ test('http.isTransientNetworkError: dropped downloads are transient, bugs are no
   assert.ok(!http.isTransientNetworkError(new TypeError('Cannot read properties of undefined')))
   assert.ok(!http.isTransientNetworkError(null))
 })
+
+test('normalizeOrigin: what browsers send as Origin; settings with slashes, paths or spaces still match', () => {
+  const { normalizeOrigin } = require('../lib/http')
+  assert.equal(normalizeOrigin('https://portal.example.com/'), 'https://portal.example.com')
+  assert.equal(normalizeOrigin('  https://Portal.Example.com:8443/portal/apps  '), 'https://portal.example.com:8443')
+  assert.equal(normalizeOrigin('https://localhost:3001'), 'https://localhost:3001')
+  assert.equal(normalizeOrigin('https://example.com:443'), 'https://example.com')
+  for (const bad of ['', '-', 'portal.example.com', 'ftp://x.example', 'javascript:alert(1)', null]) assert.equal(normalizeOrigin(bad), '', String(bad))
+})

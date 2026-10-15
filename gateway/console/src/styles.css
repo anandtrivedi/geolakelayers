@@ -219,3 +219,7 @@ section.card > .map-preview { margin-top: 14px; }
 .load-gauge.high .load-bar span { background: #ff3621; }
 .load-gauge.high .load-pct { color: #ffb3a8; }
 .load-num { white-space: nowrap; }
+
+/* Permission hints before writes, and refusals with "Try anyway" */
+.access-hint { background: #fff8e6; border-left: 3px solid #f5b942; padding: 6px 10px; margin: 8px 0; color: #5c4400; }
+.write-error { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }

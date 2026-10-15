@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { AccessHint, WriteError } from './Access'
 import type { LayerOverride, LayerSpec } from '../api'
 
 type Column = { name: string, type: string }
@@ -50,9 +51,15 @@ export function LayerSettings ({ table, spec, columns, override, onChanged }: {
     setBusy(true); setError('')
     try { await api.clearOverride(table); onChanged() } catch (e: any) { setError(e.message) } finally { setBusy(false) }
   }
-  const setup = async () => {
-    setBusy(true); setError('')
-    try { await api.overridesSetup(); setInfo(await api.overridesInfo()) } catch (e: any) { setError(e.message) } finally { setBusy(false) }
+  const [setupError, setSetupError] = useState<unknown>(null)
+  const [setupWarning, setSetupWarning] = useState('')
+  const setup = async (force = false) => {
+    setBusy(true); setSetupError(null)
+    try {
+      const r = await api.overridesSetup(force)
+      setSetupWarning(r.warning || '')
+      setInfo(await api.overridesInfo())
+    } catch (e) { setSetupError(e) } finally { setBusy(false) }
   }
 
   return (
@@ -72,9 +79,13 @@ export function LayerSettings ({ table, spec, columns, override, onChanged }: {
       {info?.enabled && info.missing && editing && (
         <div>
           <p className='muted small'>The overrides table <code>{info.table}</code> doesn't exist yet. Creating it needs CREATE TABLE on its schema; everyone gets SELECT on it, and whoever should set overrides needs MODIFY.</p>
-          <button className='button' disabled={busy} onClick={setup}>Create overrides table</button>
+          <AccessHint action='CREATE_TABLE' name={info.table?.split('.').slice(0, 2).join('.')} doing='Creating it' />
+          <button className='button' disabled={busy} onClick={() => setup()}>Create overrides table</button>
+          <WriteError error={setupError} onRetry={() => setup(true)} />
         </div>
       )}
+      {setupWarning && <p className='access-hint small'>{setupWarning}</p>}
+      {info?.enabled && !info.missing && editing && <AccessHint action='MODIFY' name={info.table} doing='Saving an override' />}
       {info?.enabled && !info.missing && editing && (
         <div className='override-form'>
           <label>Geometry
