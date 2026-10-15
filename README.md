@@ -50,8 +50,15 @@ Builder**: step 1, then install the widget (step 2, and step 3 if you use Portal
 
 ### 1. Deploy LakeGate (both paths)
 
-LakeGate is a Databricks Asset Bundle in `gateway/`. Each workspace is a target in
-`gateway/databricks.yml`:
+LakeGate is a Databricks Asset Bundle in `gateway/`. Your deployment targets go in
+`gateway/targets.local.yml`, which is gitignored, so your hosts and warehouse ids stay out of the repo. Start
+from the example:
+
+```bash
+cp gateway/targets.example.yml gateway/targets.local.yml
+```
+
+Each Unity Catalog metastore you serve is one target:
 
 ```yaml
 targets:
@@ -64,7 +71,7 @@ targets:
       # optional:
       allowed_warehouses: <id>,<id>                    # extra warehouses authors may pick
       catalogs: "-"                                    # cap on listable catalogs; "-" = none
-      directory: prod=https://lakegate-....databricksapps.com;gov=https://lakegate-....databricksapps.us
+      directory: east=https://lakegate-<id>.aws.databricksapps.com;gov=https://lakegate-<id>.aws-gov.databricksapps.us
 ```
 
 Then deploy and start it:
@@ -148,7 +155,7 @@ each gateway's `allowed_origins`.
 
 ![Workspace card in the widget settings](screenshots/settings-workspace-card.png)
 
-![Two workspaces (prod and gov) in one app, with Map Layers](screenshots/builder-two-workspaces.png)
+![Two workspaces in one app, with Map Layers](screenshots/builder-two-workspaces.png)
 
 To see a layer's rows, add a **Table** widget, pick the map, and turn on **Display layers generated at
 runtime**. Clicking a feature shows its fields when the Map widget's pop-ups are enabled.
@@ -263,7 +270,7 @@ A map pan sends dozens of small read queries at once, which is the workload Lake
 
 1. A workspace admin enables the **Lakehouse RT** preview (workspace menu → Previews) and creates a
    **Real-Time** SQL warehouse (Compute → SQL Warehouses → Create → Real-Time). It is in Beta; the account
-   may need to be enabled first (the Lakehouse//RT documentation).
+   may need to be enabled first.
 2. Give viewers CAN_USE on it, as on the regular warehouse. Warehouse permissions use workspace groups
    (`users`, not `account users`):
    `databricks warehouses update-permissions <id> --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}'`
@@ -296,7 +303,7 @@ time on Lakehouse//RT against about 1.2 s on a regular serverless warehouse; see
 160 ms against 600 ms per page, and a 24-tile map pan finishing in 1.0 s against 1.8 s. Real tables add
 file reads, so expect less of a gap on big unclustered tables.
 
-On real prod tables (October 2026, Lakehouse//RT vs the regular Serverless Starter warehouse, timed from
+On real tables (October 2026, Lakehouse//RT vs the regular Serverless Starter warehouse, timed from
 a client): an AIS points page (270 MB table, native GEOMETRY) 330–500 ms vs 1.5–2.0 s, and a 24-tile pan
 1.5 s vs 6.3 s; a bbox count 140 ms vs 1.1–1.4 s; the map-optimized Overture places copy 125 ms vs 1.1 s;
 AIS H3 hexes 125–160 ms vs 0.8–1.2 s. Through LakeGate's FeatureServer query (2,000 features): about

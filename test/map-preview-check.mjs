@@ -1,15 +1,13 @@
 // Opens Explore data on one table and reports what the map preview does (status text, view center/scale).
 // usage: node test/map-preview-check.mjs <gatewayUrl> <profile> <catalog.schema.table> <outName>
-import { createRequire } from 'module'
 import { execFileSync } from 'child_process'
-const require = createRequire(import.meta.url)
-const puppeteer = require(`${process.env.HOME}/Documents/gitprojects/trident-ais/.uitest/node_modules/puppeteer-core`)
+import { launch } from './browser.mjs'
 const [gateway, profile, table, name = 'preview'] = process.argv.slice(2)
 const origin = new URL(gateway).origin
 const token = JSON.parse(execFileSync('databricks', ['auth', 'token', '--profile', profile])).access_token
 const out = new URL('../testimages/', import.meta.url).pathname
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', userDataDir: `/tmp/console-${Date.now()}`, args: ['--ignore-gpu-blocklist', '--enable-webgl', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] })
+const browser = await launch()
 const page = await browser.newPage()
 await page.setViewport({ width: 1440, height: 900 })
 await page.setRequestInterception(true)

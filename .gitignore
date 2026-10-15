@@ -3,3 +3,5 @@ node_modules/
 .env
 .DS_Store
 test-logs/
+gateway/targets*.local.yml
+CLAUDE.local.md

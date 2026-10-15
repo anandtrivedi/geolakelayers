@@ -1,0 +1,9 @@
+{
+  "name": "lakegate-browser-checks",
+  "private": true,
+  "type": "module",
+  "description": "Headless browser checks against a deployed LakeGate gateway",
+  "devDependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

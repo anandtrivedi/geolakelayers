@@ -2,26 +2,22 @@
 // Real: popup handoff, postMessage, SDK interceptor, browser CORS, FeatureLayer loading.
 // Simulated: the popup's Databricks login — its handoff request carries the CLI token
 // instead of a browser session cookie.
-// usage: node test/browser-test.mjs [table ...]
-import { createRequire } from 'module';
+// usage: node test/browser-test.mjs <gatewayUrl> <profile> <catalog.schema.table> [table ...]
+// Serve test/ on :5199 first (e.g. npx http-server test -p 5199).
 import { execFileSync } from 'child_process';
 import fs from 'fs';
-const require = createRequire(import.meta.url);
-const puppeteer = require(process.env.PUPPETEER_CORE || `${process.env.HOME}/Documents/gitprojects/trident-ais/.uitest/node_modules/puppeteer-core`);
+import { launch } from './browser.mjs';
 
-const PAGE = 'http://localhost:5199/index.html';
-const GATEWAY = 'https://lakegate-1234567890123456.aws.databricksapps.com';
-const tables = process.argv.slice(2).length ? process.argv.slice(2)
-  : ['main.maritime.gold_anomaly_loitering', 'main.cdf_demo.us_divisions', 'main.public_safety.cases_silver_koop'];
+const [GATEWAY, profile, ...tables] = process.argv.slice(2);
+if (!GATEWAY || !profile || !tables.length) { console.error('usage: node test/browser-test.mjs <gatewayUrl> <profile> <catalog.schema.table> [table ...]'); process.exit(2); }
+const catalogs = [...new Set(tables.map((t) => t.split('.')[0]))].join(',');
+const PAGE = `http://localhost:5199/index.html?gateway=${encodeURIComponent(GATEWAY)}&catalogs=${encodeURIComponent(catalogs)}`;
 const out = new URL('../testimages/', import.meta.url).pathname;
 fs.mkdirSync(out, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const cliToken = JSON.parse(execFileSync('databricks', ['auth', 'token', '--profile', 'prod'])).access_token;
+const cliToken = JSON.parse(execFileSync('databricks', ['auth', 'token', '--profile', profile])).access_token;
 
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
-  userDataDir: `/tmp/exb-gw-${Date.now()}`, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
-});
+const browser = await launch();
 const page = await browser.newPage();
 await page.setViewport({ width: 1440, height: 900 });
 const problems = [];

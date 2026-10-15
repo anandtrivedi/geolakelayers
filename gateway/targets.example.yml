@@ -1,0 +1,27 @@
+# Copy to targets.local.yml (gitignored) and fill in one target per Unity Catalog metastore.
+# Deploy:  databricks bundle deploy -t prod  &&  databricks bundle run gateway -t prod
+targets:
+  prod:
+    default: true
+    workspace:
+      host: https://<workspace>.cloud.databricks.com
+    variables:
+      # Queries run here unless an author picks another allowed warehouse (serverless recommended)
+      warehouse_id: <warehouse id>
+      # Browser origins that may call the gateway: your Portal / Experience Builder, plus localhost for Developer Edition
+      allowed_origins: https://<portal-host>,https://localhost:3001
+      # Optional:
+      # allowed_warehouses: <id>,<id>          # extra warehouses authors and OGC services may pick
+      # catalogs: <catalog>,<catalog>          # cap on the catalogs the widget may list
+      # editing: "true"                         # allow edits (apps and UC MODIFY still decide)
+      # ogc_services_table: <catalog>.lakegate.ogc_services
+      # layer_overrides_table: <catalog>.lakegate.layer_overrides
+      # directory: east=https://lakegate-<id>.aws.databricksapps.com;gov=https://lakegate-<id>.aws-gov.databricksapps.us
+
+  # A second metastore (another region, or GovCloud) gets its own target and its own gateway
+  # gov:
+  #   workspace:
+  #     host: https://<gov-workspace>.cloud.databricks.us
+  #   variables:
+  #     warehouse_id: <warehouse id>
+  #     allowed_origins: https://<portal-host>

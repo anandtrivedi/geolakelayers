@@ -29,7 +29,8 @@
 <div id="wrap">
   <div id="panel">
     <b>Databricks Data</b>
-    <p><input id="gw" value="https://lakegate-1234567890123456.aws.databricksapps.com"></p>
+    <p><input id="gw" placeholder="Gateway URL"></p>
+    <p><input id="cats" placeholder="Catalogs, comma-separated"></p>
     <button id="signin">Sign in to Databricks</button>
     <div id="status">Not signed in.</div>
     <input id="filter" placeholder="Filter tables" style="width:100%;box-sizing:border-box;display:none">
@@ -48,6 +49,9 @@ const [esriConfig, ArcMap, MapView, FeatureLayer] = await $arcgis.import(['@arcg
   window.view = view
   let token = null
   let tables = []
+  const params = new URLSearchParams(location.search)
+  $('gw').value = params.get('gateway') || ''
+  $('cats').value = params.get('catalogs') || ''
   const gw = () => $('gw').value.replace(/\/$/, '')
   const status = s => { $('status').textContent = s }
 
@@ -73,7 +77,7 @@ const [esriConfig, ArcMap, MapView, FeatureLayer] = await $arcgis.import(['@arcg
 
   async function loadCatalog () {
     const t0 = performance.now()
-    const r = await fetch(`${gw()}/api/catalog?catalogs=main`, { headers: { Authorization: `Bearer ${token}` } })
+    const r = await fetch(`${gw()}/api/catalog?catalogs=${encodeURIComponent($('cats').value.trim())}`, { headers: { Authorization: `Bearer ${token}` } })
     const d = await r.json()
     if (!r.ok) { status(`Catalog failed: ${d.error || r.status}`); return }
     tables = d.tables

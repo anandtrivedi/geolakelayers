@@ -72,12 +72,12 @@ describe('TableTree', () => {
 
   test('expandAll opens and loads every workspace and catalog', async () => {
     const loadTables = jest.fn(async (w: Workspace, c: string) => [t(`${c}.s.${w.id}_${c}`)])
-    setup({ workspaces: [ws('a', 'Prod'), { ...ws('b', 'Gov'), catalogs: ['x', 'y'] }], loadTables, expandAll: true })
+    setup({ workspaces: [ws('a', 'East'), { ...ws('b', 'Gov'), catalogs: ['x', 'y'] }], loadTables, expandAll: true })
     await screen.findByText('a_cat')
     await screen.findByText('b_x')
     await screen.findByText('b_y')
     expect(loadTables).toHaveBeenCalledTimes(3)
-    expect(screen.getByText('Prod')).toBeTruthy()
+    expect(screen.getByText('East')).toBeTruthy()
   })
 
   test('text filter and tableFilter hide rows', async () => {
@@ -111,8 +111,8 @@ describe('TableTree', () => {
     const { unmount } = setup()
     expect(screen.queryByText('a')).toBeNull()
     unmount()
-    setup({ workspaces: [ws('a', 'Prod'), ws('b', 'Gov')] })
-    expect(screen.getByText('Prod')).toBeTruthy()
+    setup({ workspaces: [ws('a', 'East'), ws('b', 'Gov')] })
+    expect(screen.getByText('East')).toBeTruthy()
     expect(screen.getByText('Gov')).toBeTruthy()
   })
 

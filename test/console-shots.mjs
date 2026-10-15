@@ -1,16 +1,14 @@
 // Screenshots of the LakeGate console. The CLI token is attached only to requests for the gateway's
 // own origin (never to Esri's CDN or anything else).
 // usage: node test/console-shots.mjs <gatewayUrl> <profile> <outPrefix>
-import { createRequire } from 'module'
 import { execFileSync } from 'child_process'
-const require = createRequire(import.meta.url)
-const puppeteer = require(`${process.env.HOME}/Documents/gitprojects/trident-ais/.uitest/node_modules/puppeteer-core`)
-const [gateway, profile = 'prod', prefix = 'console'] = process.argv.slice(2)
+import { launch } from './browser.mjs'
+const [gateway, profile, prefix = 'console'] = process.argv.slice(2)
 const origin = new URL(gateway).origin
 const token = JSON.parse(execFileSync('databricks', ['auth', 'token', '--profile', profile])).access_token
 const out = new URL('../testimages/', import.meta.url).pathname
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, userDataDir: `/tmp/console-${Date.now()}`, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] })
+const browser = await launch()
 const page = await browser.newPage()
 await page.setViewport({ width: 1440, height: 900 })
 await page.setRequestInterception(true)

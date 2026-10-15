@@ -86,7 +86,7 @@ export function Architecture () {
       <Box x={430} y={196} w={280} h={170} featured title='LakeGate (this app)'
         lines={['FeatureServer layer per UC table', 'OGC API – Features services', 'queries run as the viewer (OBO)', 'geometry + id by type and content', 'warehouse allow-list, catalog scope', 'one per metastore, same bundle']} />
       <Box x={430} y={430} w={280} h={84} title='Other metastores'
-        lines={['their own LakeGate gateway', '(e.g. gov in GovCloud)', 'listed in the workspace directory']} />
+        lines={['their own LakeGate gateway', '(e.g. one in GovCloud)', 'listed in the workspace directory']} />
 
       <Box x={820} y={82} w={260} h={92} title='SQL warehouse (serverless)'
         lines={['bbox pushdown with ST_Intersects', 'paging, counts, extents', 'allow-listed per gateway']} />

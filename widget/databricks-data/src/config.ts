@@ -4,7 +4,7 @@ import type { ImmutableObject } from 'jimu-core'
 export interface Workspace {
   /** Stable id used in saved layer keys */
   id: string
-  /** Name shown to authors and viewers, e.g. "prod" */
+  /** Name shown to authors and viewers, e.g. "Production" */
   label: string
   /** Feature gateway app URL, no trailing slash */
   gatewayUrl: string
