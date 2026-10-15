@@ -28,18 +28,19 @@ function target (name) {
   return { catalog, schema, table: table || null, name: parts.join('.') }
 }
 
-/** One query: the caller's grants and ownerships on the target and its parents. */
+/** One query: the caller's grants and ownerships on the target and its parents. Every branch names its
+ * columns, since a UNION takes its names from whichever branch comes first. */
 function grantsSql (t) {
   const is = `\`${t.catalog}\`.information_schema`
   const parts = []
   if (t.table) {
     parts.push(`SELECT 'table' AS level, grantee, privilege_type FROM ${is}.table_privileges WHERE table_schema = :schema AND table_name = :table`)
-    parts.push(`SELECT 'table', table_owner, 'OWNER' FROM ${is}.tables WHERE table_schema = :schema AND table_name = :table`)
+    parts.push(`SELECT 'table' AS level, table_owner AS grantee, 'OWNER' AS privilege_type FROM ${is}.tables WHERE table_schema = :schema AND table_name = :table`)
   }
-  parts.push(`SELECT 'schema', grantee, privilege_type FROM ${is}.schema_privileges WHERE schema_name = :schema`)
-  parts.push(`SELECT 'schema', schema_owner, 'OWNER' FROM ${is}.schemata WHERE schema_name = :schema`)
-  parts.push(`SELECT 'catalog', grantee, privilege_type FROM ${is}.catalog_privileges WHERE catalog_name = :catalog`)
-  parts.push(`SELECT 'catalog', catalog_owner, 'OWNER' FROM ${is}.catalogs WHERE catalog_name = :catalog`)
+  parts.push(`SELECT 'schema' AS level, grantee, privilege_type FROM ${is}.schema_privileges WHERE schema_name = :schema`)
+  parts.push(`SELECT 'schema' AS level, schema_owner AS grantee, 'OWNER' AS privilege_type FROM ${is}.schemata WHERE schema_name = :schema`)
+  parts.push(`SELECT 'catalog' AS level, grantee, privilege_type FROM ${is}.catalog_privileges WHERE catalog_name = :catalog`)
+  parts.push(`SELECT 'catalog' AS level, catalog_owner AS grantee, 'OWNER' AS privilege_type FROM ${is}.catalogs WHERE catalog_name = :catalog`)
   return `SELECT level, privilege_type FROM (${parts.join(' UNION ALL ')}) AS g
     WHERE g.grantee = current_user() OR is_account_group_member(g.grantee) OR is_member(g.grantee)`
 }

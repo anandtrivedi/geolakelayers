@@ -19,6 +19,10 @@ test('grantsSql: the caller\'s grants and ownerships at each level, names as par
   assert.match(sql, /grantee = current_user\(\) OR is_account_group_member\(g\.grantee\) OR is_member\(g\.grantee\)/)
   assert.ok(!sql.includes("'roads'"), 'table name is a parameter')
   assert.ok(!grantsSql(S).includes('table_privileges'), 'a schema check skips table views')
+  // A UNION takes column names from its first branch, which differs between table and schema checks
+  for (const sqlOf of [grantsSql(T), grantsSql(S)]) {
+    for (const branch of sqlOf.split('UNION ALL')) assert.match(branch, /SELECT '\w+' AS level, \w+ AS grantee, '?\w+'? AS privilege_type FROM|SELECT '\w+' AS level, grantee, privilege_type FROM/, branch)
+  }
 })
 
 test('missingFor: direct grants, inheritance, ALL PRIVILEGES and ownership', () => {
