@@ -8,7 +8,7 @@ import { PlusOutlined } from 'jimu-icons/outlined/editor/plus'
 import { RightOutlined } from 'jimu-icons/outlined/directional/right'
 import { DownOutlined } from 'jimu-icons/outlined/directional/down'
 import type { IMConfig, CatalogTable, Workspace } from '../config'
-import { getToken, signIn, listenForToken, fetchCatalog, fetchCatalogNames, fetchWarehouses, fetchDirectory, fetchEditing, setWarehouse } from '../auth'
+import { getToken, signIn, signInNotice, listenForToken, fetchCatalog, fetchCatalogNames, fetchWarehouses, fetchDirectory, fetchEditing, setWarehouse } from '../auth'
 import type { WarehouseInfo } from '../auth'
 import { workspacesOf, labelFromUrl, newWorkspaceId, normalizeUrl, layerKey, parseLayerKey } from '../workspaces'
 import { TableTree } from '../table-tree'
@@ -35,6 +35,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   const allowBrowse = props.config.allowBrowse !== false
 
   const [users, setUsers] = React.useState<{ [id: string]: string }>({})
+  const [blocked, setBlocked] = React.useState<{ [gatewayUrl: string]: boolean }>({})
   const [info, setInfo] = React.useState<{ [id: string]: WorkspaceInfo }>({})
   const [open, setOpen] = React.useState<{ [id: string]: boolean }>(() => rows.length === 1 ? { [rows[0].id]: true } : {})
   const [adding, setAdding] = React.useState(false)
@@ -173,9 +174,13 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
                 <span className={`ws-status${user ? ' on' : ''}`}>{user ? nls('connected') : nls('notSignedIn')}</span>
               </div>
               {!user && url && (
-                <Button size='sm' type='primary' className='w-100 ws-signin' onClick={() => signIn(url)}>
-                  {nls('signInTo', { workspace: ws.label || labelFromUrl(url) })}
-                </Button>
+                <>
+                  {signInNotice(url) === 'expired' && <p className='ws-note'>{nls('signInExpired')}</p>}
+                  <Button size='sm' type='primary' className='w-100 ws-signin' onClick={() => setBlocked(b => ({ ...b, [url]: !signIn(url) }))}>
+                    {nls('signInTo', { workspace: ws.label || labelFromUrl(url) })}
+                  </Button>
+                  {blocked[url] && <p className='ws-note ws-error' role='alert'>{nls('popupBlocked')}</p>}
+                </>
               )}
               {isOpen && (
                 <div className='ws-body'>
@@ -319,6 +324,8 @@ const style = css`
   .ws-status { font-size: 0.75rem; color: var(--sys-color-surface-paper-hint); white-space: nowrap; }
   .ws-status.on { color: var(--sys-color-success-main); }
   .ws-signin { margin: 6px 0 2px; }
+  .ws-note { font-size: 12px; margin: 4px 0; color: var(--sys-color-surface-paper-hint); }
+  .ws-note.ws-error { color: var(--sys-color-error-main); }
   .ws-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
   .field { display: flex; flex-direction: column; gap: 4px; margin: 0; font-size: 0.8125rem; }
   .catalog-list { max-height: 180px; overflow: auto; border: 1px solid var(--sys-color-divider-tertiary); border-radius: 3px; padding: 2px 6px; }

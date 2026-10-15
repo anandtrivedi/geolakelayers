@@ -14,6 +14,8 @@ export default {
   connected: 'connected',
   notSignedIn: 'not signed in',
   signInTo: 'Sign in to {workspace}',
+  popupBlocked: 'The browser blocked the sign-in window. Allow pop-ups for this site, then sign in again.',
+  signInExpired: 'Your Databricks sign-in expired. Sign in again.',
   signedInAs: 'Signed in as {user}',
   workspaceName: 'Name',
   gatewayUrl: 'Gateway URL',

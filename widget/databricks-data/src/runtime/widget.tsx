@@ -17,7 +17,7 @@ import { Alert, Button, Loading, LoadingType, TextInput } from 'jimu-ui'
 import esriConfig from 'esri/config'
 import * as reactiveUtils from 'esri/core/reactiveUtils'
 import type { IMConfig, CatalogTable, Workspace } from '../config'
-import { getToken, signIn as openSignIn, listenForToken, fetchCatalog, tableRef, setWarehouse, gatewayHeaders } from '../auth'
+import { getToken, signIn as openSignIn, signInNotice, listenForToken, fetchCatalog, tableRef, setWarehouse, gatewayHeaders } from '../auth'
 import { workspacesOf, layerKey, parseLayerKey } from '../workspaces'
 import { TableTree } from '../table-tree'
 import { announceLayer } from '../sync'
@@ -100,6 +100,9 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
 
   const [jmv, setJmv] = React.useState<JimuMapView>(null)
   // Signed-in user per gateway URL (keyed by URL so editing a workspace's URL can't show a stale sign-in)
+  // Sign-in problems to show next to each workspace's button: a blocked popup
+  const [blocked, setBlocked] = React.useState<{ [gatewayUrl: string]: boolean }>({})
+  const startSignIn = (url: string) => setBlocked(b => ({ ...b, [url]: !openSignIn(url) }))
   const [users, setUsers] = React.useState<{ [gatewayUrl: string]: string }>(() => {
     const u = {}
     for (const ws of workspaces) if (getToken(ws.gatewayUrl)) u[ws.gatewayUrl] = getToken(ws.gatewayUrl).user
@@ -287,9 +290,11 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
           : (
             <div key={ws.id} className='dbx-signin'>
               {savedFor(ws) > 0 && <p className='dbx-hint'>{nls('savedLayersWaitingIn', { n: String(savedFor(ws)), workspace: ws.label })}</p>}
-              <Button type='primary' size='sm' onClick={() => openSignIn(ws.gatewayUrl)}>
+              {signInNotice(ws.gatewayUrl) === 'expired' && <p className='dbx-hint'>{nls('signInExpired')}</p>}
+              <Button type='primary' size='sm' onClick={() => startSignIn(ws.gatewayUrl)}>
                 {multi ? nls('signInTo', { workspace: ws.label }) : nls('signInDatabricks')}
               </Button>
+              {blocked[ws.gatewayUrl] && <p className='dbx-hint dbx-error' role='alert'>{nls('popupBlocked')}</p>}
             </div>
             ))}
       </div>
@@ -341,6 +346,7 @@ const style = css`
   .dbx-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .dbx-title { font-size: 0.9375rem; font-weight: 600; }
   .dbx-hint { color: var(--sys-color-surface-paper-hint); }
+  .dbx-hint.dbx-error { color: var(--sys-color-error-main); }
   .dbx-alert { margin-bottom: 8px; width: 100%; }
   .dbx-workspaces { margin-bottom: 6px; }
   .dbx-signin { margin-bottom: 8px; }

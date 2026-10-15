@@ -4,6 +4,8 @@ export default {
   signedInAs: 'Signed in as {user}',
   signedInTo: '{workspace}: signed in as {user}',
   signInTo: 'Sign in to {workspace}',
+  popupBlocked: 'The browser blocked the sign-in window. Allow pop-ups for this site, then sign in again.',
+  signInExpired: 'Your Databricks sign-in expired. Sign in again.',
   savedLayersWaitingIn: 'Sign in to load {n} saved layers from {workspace}.',
   noTablesInCatalog: 'No map-ready tables in this catalog',
   chooseMap: 'Select a Map widget in this widget\'s settings to add layers.',

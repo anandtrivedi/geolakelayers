@@ -17,7 +17,16 @@ const jimuConfig = (window as any).jimuConfig || {}
 const inBuilder = !!(jimuConfig.isBuilder || jimuConfig.isInBuilder)
 const channel: BroadcastChannel | null = inBuilder && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('databricks-gateway-token') : null
 
+// Why the last sign-in for a gateway ended, so the UI can say "expired" rather than just "not signed in"
+const ended: { [gateway: string]: 'expired' } = {}
+
+/** 'expired' when the sign-in lapsed or the gateway rejected the token; null otherwise. */
+export function signInNotice (gateway: string): 'expired' | null {
+  return tokens[gateway] ? null : ended[gateway] || null
+}
+
 function setToken (gateway: string, t: GatewayToken, share: boolean): void {
+  delete ended[gateway]
   tokens[gateway] = t
   if (share) channel?.postMessage({ type: 'token', gateway, token: t })
   listeners[gateway]?.forEach(fn => fn(t))
@@ -33,17 +42,18 @@ function expiresAt (token: string): number {
   }
 }
 
-/** Forget a gateway's token (expired, or the gateway rejected it); listeners get null. */
-export function signOut (gateway: string): void {
+/** Forget a gateway's token; listeners get null. expired: it lapsed or the gateway rejected it. */
+export function signOut (gateway: string, expired = false): void {
   if (!tokens[gateway]) return
   delete tokens[gateway]
+  if (expired) ended[gateway] = 'expired'
   for (const k of Array.from(lookups.keys())) if (k.startsWith(`${gateway}|`)) lookups.delete(k)
   listeners[gateway]?.forEach(fn => fn(null))
 }
 
 // Expired tokens are dropped a minute early, so requests don't start with a token about to lapse
 setInterval(() => {
-  for (const g of Object.keys(tokens)) if (expiresAt(tokens[g].token) - 60000 < Date.now()) signOut(g)
+  for (const g of Object.keys(tokens)) if (expiresAt(tokens[g].token) - 60000 < Date.now()) signOut(g, true)
 }, 30000)
 
 channel?.addEventListener('message', (e: MessageEvent) => {
@@ -54,7 +64,7 @@ channel?.addEventListener('message', (e: MessageEvent) => {
 
 export function getToken (gateway: string): GatewayToken | undefined {
   const t = tokens[gateway]
-  if (t && expiresAt(t.token) - 60000 < Date.now()) { signOut(gateway); return undefined }
+  if (t && expiresAt(t.token) - 60000 < Date.now()) { signOut(gateway, true); return undefined }
   return t
 }
 
@@ -97,7 +107,7 @@ async function getJson (gateway: string, path: string): Promise<any> {
     // A rejected/expired token comes back as a cross-origin login redirect, which fetch reports this way
     throw new Error('The gateway did not answer. If this keeps happening, sign in again.')
   }
-  if (r.status === 401) { signOut(gateway); throw new Error('Your Databricks sign-in expired. Sign in again.') }
+  if (r.status === 401) { signOut(gateway, true); throw new Error('Your Databricks sign-in expired. Sign in again.') }
   const d = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(d.error?.message || d.error || `HTTP ${r.status}`)
   return d
@@ -126,8 +136,10 @@ export async function fetchCatalogNames (gateway: string): Promise<string[]> {
   return (await memo(memoKey(gateway, '/api/catalogs'), () => getJson(gateway, '/api/catalogs'))).catalogs
 }
 
-export function signIn (gateway: string): void {
-  window.open(`${gateway}/auth/handoff?origin=${encodeURIComponent(window.location.origin)}`, 'dbx-signin', 'width=520,height=640')
+/** Open the sign-in popup. false when the browser blocked it (the caller should say so). */
+export function signIn (gateway: string): boolean {
+  const popup = window.open(`${gateway}/auth/handoff?origin=${encodeURIComponent(window.location.origin)}`, 'dbx-signin', 'width=520,height=640')
+  return !!popup && !popup.closed
 }
 
 /**
