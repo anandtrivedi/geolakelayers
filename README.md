@@ -11,8 +11,8 @@ as live map layers, in two forms:
   LakeGate, no widget.
 
 Viewers sign in with Databricks and see only what Unity Catalog lets them see. Nothing is copied: every pan and
-zoom is a query on a Databricks SQL warehouse. (The one exception is **Optimize for maps**, which writes a
-map-friendly copy of a table when you ask for it.)
+zoom is a query on a Databricks SQL warehouse, with results cached per user for up to five minutes. (The one
+exception is **Optimize for maps**, which writes a map-friendly copy of a table when you ask for it.)
 
 ![Published experience with Unity Catalog layers](screenshots/published-app-layers.png)
 
@@ -39,14 +39,38 @@ One gateway per Unity Catalog metastore is enough. People sign in to the workspa
 serve any catalog bound to that workspace, so workspaces that share a metastore share one gateway. A
 workspace on another metastore (another region, or GovCloud) gets its own gateway from the same bundle.
 
+### New to Databricks or Experience Builder?
+
+- **Workspace**: a Databricks deployment you sign in to, at an address like `https://<name>.cloud.databricks.com`.
+- **Unity Catalog**: Databricks' catalog and permission system. Tables are named `catalog.schema.table`, and
+  grants such as `SELECT` (read) and `MODIFY` (write) decide who can do what. A **metastore** is the top-level
+  Unity Catalog container for a region; workspaces attached to the same one see the same catalogs.
+- **SQL warehouse**: the compute that runs queries. People need `CAN USE` on one to query through it.
+- **Databricks App**: a web app hosted inside the workspace. Databricks signs people in before a request
+  reaches it, and LakeGate runs each query with that person's identity.
+- **OAuth token**: what scripts and QGIS send as `Authorization: Bearer <token>`. Get one with
+  `databricks auth token` (Databricks CLI), or from the console's **Copy token** button. Tokens last about an
+  hour. Personal access tokens don't work, because Databricks Apps only accept OAuth.
+- **Experience Builder Developer Edition**: Esri's downloadable Experience Builder, which runs on your own
+  machine and is where custom widgets such as this one are installed and built. Portal's built-in Experience
+  Builder can use the widget once it is built and hosted (step 3).
+
 ## Deployment
 
-You need: a recent Databricks CLI (built with v1.17) with a profile for each workspace, Databricks Apps enabled
-with user authorization, a serverless SQL warehouse, and ArcGIS Enterprise 11.0 or later (this project is
-built and tested against 12.1).
+You need:
 
-There are two paths. **OGC clients only** (QGIS, GDAL, web maps, scripts): step 1 is all you need. **Experience
-Builder**: step 1, then install the widget (step 2, and step 3 if you use Portal's own Experience Builder).
+- the [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install) (tested with v1.17), signed
+  in to the workspace with `databricks auth login --host <workspace URL> --profile <name>`;
+- permission to create a Databricks App in that workspace, with user authorization available (an admin may
+  need to turn on Databricks Apps first);
+- a SQL warehouse. Serverless is recommended; a Pro warehouse also works. Spatial SQL (`ST_*` functions) has
+  to be available on it;
+- for the Experience Builder path, Experience Builder Developer Edition. Tested with Developer Edition 1.20 and
+  ArcGIS Enterprise 12.1; other versions haven't been tried.
+
+There are two paths. **OGC clients only** (QGIS, GDAL, web maps, scripts): step 1, with `ogc_services_table`
+set (below). **Experience Builder**: step 1, then install the widget (step 2, and step 3 if you use Portal's
+own Experience Builder).
 
 ### 1. Deploy LakeGate (both paths)
 
@@ -92,12 +116,33 @@ preview them on a map.
 
 ![Exploring a catalog in the console](screenshots/lakegate-explore.png)
 
-What users need in Databricks: `CAN_USE` on the app (the bundle grants it to account users), `CAN_USE` on the
-warehouse, and `USE CATALOG` / `USE SCHEMA` / `SELECT` on the tables. Queries run as the user, so the app's
-service principal needs no data grants.
+Who needs what. Queries run as the person, so the app's service principal needs no data grants.
+
+| Who | Needs |
+|---|---|
+| Everyone (viewers, OGC clients, scripts) | `CAN USE` on the app (the bundle grants it to `account users`; change `permissions` in `databricks.yml` to narrow it), `CAN USE` on the warehouse, and `USE CATALOG`, `USE SCHEMA` and `SELECT` on the tables they map. If the settings tables are on: `SELECT` on them |
+| Authors who set layer overrides or define OGC services | `MODIFY` on the overrides or OGC services table |
+| Authors who use **Optimize for maps** | `CREATE TABLE` (with `USE SCHEMA`, `USE CATALOG`) on the target schema |
+| Editors | `MODIFY` on the table, plus editing turned on (`editing: "true"`) |
+| Whoever creates a settings table from the console | `CREATE TABLE` on its schema, and `MANAGE` or ownership to grant everyone `SELECT` on it |
+
+Before a write, the console reads your grants from `information_schema` and warns if none allows it. Creating
+a settings table and Optimize for maps stop at that point, with a **Try anyway** button: metastore admins and
+some indirect grants don't show there. Any refusal from Databricks is shown as the missing privilege and the
+object, not as a raw SQL error.
+
+**OGC services** are off until `ogc_services_table` names a table, for example
+`main.lakegate.ogc_services`. Set it in your target and redeploy, then open the console's **OGC services** tab
+and click **Create table** (or create it yourself), grant `SELECT` on it to everyone who reads services and
+`MODIFY` to those who define them, and click **New service** to pick tables. Layer overrides work the same
+way with `layer_overrides_table`.
 
 You're done with the OGC path when the console opens and an OGC service's landing page answers a request
 that carries `Authorization: Bearer <token>`.
+
+**Compute.** The app runs on Medium compute (2 vCPU, 6 GB) by default. Long line layers drawn at full detail
+can use a lot of memory; set `compute_size: LARGE` and `node_heap_mb: "8192"` in your target if the console's
+**Server** gauge often runs high. Large uses twice the DBUs.
 
 To add a workspace on the same metastore: bind its catalogs to the gateway's workspace and add its Experience
 Builder address to `allowed_origins`. For a workspace on another metastore: add a target, deploy it, and add
@@ -176,8 +221,11 @@ The gateway switch and `MODIFY` are what enforce editing; the widget's switch on
 Editable tables have a real integer id: a single-column primary key, or an id column picked as an override.
 Tables with a derived id and map-optimized copies stay read-only. Each save is SQL on the Delta table (`INSERT` / `UPDATE` / `DELETE`), so
 it takes a second or two: right for corrections, reviews and batch attribute updates, not for high-volume
-capture. New features get the next id after the table's current maximum, and there is no row versioning
-(the last save wins). For heavy transactional editing, a Lakebase-backed feature service is the better fit.
+capture. New features get the next id after the table's current maximum, so two people adding features at
+the same moment can collide; there is no row versioning (the last save wins). Edits in one save are applied
+one by one, not as a transaction: if one fails, the ones before it stay, and each gets its own result. Once
+one is refused for permissions, the rest aren't tried. For heavy transactional editing, a Lakebase-backed
+feature service is the better fit.
 
 Edits are accepted only from origins in `allowed_origins` (and the gateway's own pages); values are sent as
 SQL parameters and column names are checked against the table.
@@ -241,8 +289,9 @@ a map preview.
 Items accept `bbox` (and `bbox-crs`), `crs` (CRS84 or `http://www.opengis.net/def/crs/EPSG/0/3857`),
 `limit` (default 100, at most `MAX_ROWS`), `offset`, `datetime` (instant or interval, for collections with
 a time field), `properties` (fields to return) and `field=value` filters on queryable fields. Bounding boxes
-are 2D (four numbers). Unknown parameters are refused with a 400, as
-the standard requires, so a typo never returns the whole table.
+are 2D (four numbers). The `next` links page with a `cursor` on the feature id, which stays fast and doesn't
+skip or repeat rows when the table changes between pages; `offset` works too, for clients that use it.
+Unknown parameters are refused with a 400, as the standard requires, so a typo never returns the whole table.
 
 Who can call it: everything still goes through the Databricks Apps front door, so clients need a
 Databricks OAuth token. Personal access tokens are not accepted.
@@ -264,9 +313,11 @@ Queries run as the caller, exactly like the ArcGIS layers, so Unity Catalog gran
 column masks) decide what each client gets. Collections the caller can't read are left out of their
 collection list. The services are read-only.
 
-## Lakehouse//RT (low-latency reads)
+## Lakehouse//RT (low-latency reads, optional, Beta)
 
-A map pan sends dozens of small read queries at once, which is the workload Lakehouse//RT is built for. A gateway can offer a Lakehouse//RT warehouse next to its regular one:
+Nothing in LakeGate requires this; everything works on a regular SQL warehouse. A map pan sends dozens of
+small read queries at once, which is the workload Lakehouse//RT is built for, so a gateway can offer a
+Lakehouse//RT warehouse next to its regular one:
 
 1. A workspace admin enables the **Lakehouse RT** preview (workspace menu → Previews) and creates a
    **Real-Time** SQL warehouse (Compute → SQL Warehouses → Create → Real-Time). It is in Beta; the account
@@ -274,6 +325,7 @@ A map pan sends dozens of small read queries at once, which is the workload Lake
 2. Give viewers CAN_USE on it, as on the regular warehouse. Warehouse permissions use workspace groups
    (`users`, not `account users`):
    `databricks warehouses update-permissions <id> --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}'`
+   (`update-permissions` adds to the existing permissions; `set-permissions` would replace them)
 3. Add its id to `allowed_warehouses` in the gateway's bundle target and redeploy. LakeGate recognizes
    Lakehouse//RT warehouses by their type; nothing else to configure.
 
@@ -328,6 +380,12 @@ rejects empty values):
 | `editing` | `"false"` | Master switch for editing on this gateway |
 | `layer_overrides_table` | `-` | Unity Catalog table holding geometry/id overrides; `-` turns overrides off |
 | `ogc_services_table` | `-` | Unity Catalog table holding OGC API service definitions; `-` turns OGC API off |
+| `compute_size` | `MEDIUM` | App compute: `MEDIUM` (2 vCPU, 6 GB) or `LARGE` (4 vCPU, 12 GB) |
+| `node_heap_mb` | `"3072"` | Node heap limit; about half the app's memory (`"8192"` on `LARGE`) |
+| `app_name` | `lakegate` | Name of the Databricks App |
+
+Allowed origins are compared the way browsers send them (scheme, host and port), so a trailing slash or a path
+in the setting is ignored.
 
 Widget (set in the builder): workspaces (name, gateway URL, warehouse, catalogs viewers can browse), whether
 viewers can browse and add tables, whether layers can be edited, start-up layers.

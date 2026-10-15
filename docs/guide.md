@@ -1,6 +1,6 @@
 # Using LakeGate
 
-LakeGate connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, and clients that speak OGC API – Features. The data isn't copied anywhere. Every request runs on a Databricks SQL warehouse as the person (or service principal) making it, so Unity Catalog grants decide what each user sees. This guide covers where LakeGate fits and what each client needs. It doesn't walk through clicks in Experience Builder or other tools, because those screens change between releases.
+LakeGate connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, and clients that speak OGC API – Features. Maps read the tables where they are; the only copy LakeGate ever makes is the one you ask for with **Optimize for maps**. Every request runs on a Databricks SQL warehouse as the person (or service principal) making it, so Unity Catalog grants decide what each user sees. Results are cached per person for up to five minutes, so a change to a table can take that long to show. This guide covers where LakeGate fits and what each client needs. It doesn't walk through clicks in Experience Builder or other tools, because those screens change between releases.
 
 ## Pick the path for your client
 
@@ -11,7 +11,7 @@ LakeGate connects Unity Catalog tables to two mapping worlds: ArcGIS Experience 
 | Python, notebooks, pipelines | An OGC service, or a table's FeatureServer URL | Databricks OAuth token as a Bearer header |
 | ArcGIS Map Viewer or ArcGIS Pro, "add layer from URL" | Not supported yet | These clients can't send a Databricks sign-in |
 
-Personal access tokens aren't accepted. Use an OAuth token for yourself (`databricks auth token`) or for a service principal (client credentials). Tokens expire after about an hour, so long-running jobs should fetch a new one.
+Personal access tokens aren't accepted: Databricks Apps only let OAuth tokens through. Use an OAuth token for yourself (`databricks auth token`, or **Copy token** in this console) or for a service principal (client credentials). Tokens expire after about an hour, so long-running jobs should fetch a new one.
 
 ## Experience Builder
 
@@ -31,7 +31,7 @@ Several workspaces can feed one app. Each has its own gateway and its own sign-i
 
 An OGC service is a named set of tables. Create one in the **OGC services** tab; each table becomes a collection. The service's landing page URL is what you give a client, and the client follows the links from there. Each service has an engine, the warehouse its queries run on. Lakehouse//RT warehouses suit interactive maps best.
 
-Anything that speaks OGC API – Features and can send an `Authorization` header works. In QGIS, that's a WFS / OGC API – Features connection to the service's landing page, with an **API Header** authentication configuration that sends `Authorization: Bearer <token>`. Tested with QGIS 4.2. A token lasts about an hour; when it expires, paste a new one into the same authentication config. Unattended jobs should use a service principal's client credentials and fetch a fresh token each run. Responses are GeoJSON in CRS84 by default, or EPSG:3857 on request. Results come in pages; clients follow the `next` link.
+Anything that speaks OGC API – Features and can send an `Authorization` header works. In QGIS, that's a WFS / OGC API – Features connection to the service's landing page, with an **API Header** authentication configuration that sends `Authorization: Bearer <token>`. Tested with QGIS 4.2. A token lasts about an hour; when it expires, paste a new one into the same authentication config. That makes QGIS fine for a working session, not for a connection left open for days. Unattended jobs should use a service principal's client credentials and fetch a fresh token each run. Responses are GeoJSON in CRS84 by default, or EPSG:3857 on request. Results come in pages; clients follow the `next` link.
 
 ## Scripts and notebooks
 
@@ -42,12 +42,17 @@ Use the OGC endpoints for GeoJSON, or a table's FeatureServer URL with the Esri 
 - One gateway per Unity Catalog metastore, deployed from the repo's bundle. Workspaces that share a metastore share one gateway: it can serve any catalog bound to its own workspace, and people sign in to that workspace. A workspace on another metastore (another region, or GovCloud) needs its own gateway; the `directory` setting lists the others in each console.
 - Allowed origins: the Experience Builder and Portal addresses that may call the gateway from a browser.
 - Allowed warehouses: the warehouses apps and OGC services may run on. Users also need CAN USE on them.
-- Unity Catalog grants on the data, plus SELECT on the gateway's own settings tables: OGC services and layer overrides.
+- Unity Catalog grants on the data, plus SELECT on the gateway's own settings tables: OGC services and layer overrides. The README's deployment section has a table of who needs which grant.
+
+Before anything that writes to Unity Catalog (a layer override, an OGC service, a settings table, an optimized copy), the console checks your grants and warns if none allows it. If Databricks refuses anyway, the message names the missing privilege and the object.
 
 ## When something doesn't work
 
+- **Nothing happens on Sign in.** The browser blocked the popup; the widget says so. Allow pop-ups for the site and try again.
 - **The sign-in popup closes and nothing loads.** The page's address probably isn't in the gateway's allowed origins.
-- **A table is missing or a layer is empty.** The user needs USE CATALOG, USE SCHEMA and SELECT on it, and CAN USE on the warehouse.
+- **"Your Databricks sign-in expired."** Sign-ins last about an hour. Sign in again; layers reload.
+- **"You don't have … on …"** Unity Catalog refused the request for your account. The message names the privilege and the object; ask the object's owner or an admin to grant it.
+- **A table is missing or a layer is empty.** The user needs USE CATALOG, USE SCHEMA and SELECT on it, and CAN USE on the warehouse. "Can't use this SQL warehouse" means the warehouse grant is missing.
 - **401 from a script.** The token is missing, expired, or a personal access token.
 - **Slow maps on a big table.** Use a Lakehouse//RT warehouse, or create a map-optimized copy from Explore data. Lines and polygons are simplified to the map's zoom level on regular warehouses; Lakehouse//RT can't simplify, so those tile queries run on the bound warehouse.
 - **The gateway is busy or restarts.** The Server gauge in the console's top bar shows its memory and the requests it is answering. Long line layers at full detail use the most; the app runs on Large compute with an 8 GB Node heap.
