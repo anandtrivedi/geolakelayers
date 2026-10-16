@@ -132,6 +132,8 @@ function fakeDb ({ rows = 30, count = 30, describe, pk = ['objectid'] } = {}) {
     }
     if (/MIN\(seen_at\)/.test(sql)) return [{ t0: '2024-01-01T00:00:00Z', t1: '2024-02-01T00:00:00Z' }]
     if (/MIN\(ST_XMin/.test(sql)) return [{ xmin: -77, ymin: 38, xmax: -76, ymax: 39 }]
+    if (/GROUP BY/.test(sql)) return [{ kind: 'a', n: 10n }, { kind: 'b', n: 20n }]
+    if (/^SELECT DISTINCT/.test(sql)) return [{ kind: 'a' }, { kind: 'b' }]
     if (/COUNT\(\*\)/i.test(sql)) return [{ cnt: count }]
     const limit = Number(/LIMIT (\d+)/.exec(sql)?.[1] || 100)
     const offset = Number(/OFFSET (\d+)/.exec(sql)?.[1] || 0)
@@ -301,3 +303,39 @@ test('buildSelectClause: wraps the geometry in ST_Simplify only when there is a 
     assert.equal(I.buildSelectClause('*', false, 0.02), '*')
   })
 })
+
+test('statistics and distinct values: SQL over the whole table, validated names, same filters', () => {
+  inSpec(WKT_SPEC, () => {
+    const stats = I.parseStatistics('[{"statisticType":"count","onStatisticField":"kind","outStatisticFieldName":"n"}]')
+    assert.deepEqual(stats, [{ fn: 'COUNT', field: 'kind', alias: 'n' }])
+    assert.equal(I.buildStatisticsQuery('c.s.t', { groupByFieldsForStatistics: 'kind', where: "kind <> 'x'" }, stats),
+      "SELECT kind, COUNT(kind) AS n FROM c.s.t WHERE (kind <> 'x') GROUP BY kind ORDER BY kind LIMIT 100")
+    assert.equal(I.buildStatisticsQuery('c.s.t', {}, I.parseStatistics([{ statisticType: 'max', onStatisticField: 'height' }, { statisticType: 'count' }])),
+      'SELECT MAX(height) AS max_height, COUNT(*) AS count_all FROM c.s.t')
+    assert.equal(I.buildStatisticsQuery('c.s.t', { groupByFieldsForStatistics: 'kind', orderByFields: 'n DESC', resultRecordCount: '5', resultOffset: '5' }, stats),
+      'SELECT kind, COUNT(kind) AS n FROM c.s.t GROUP BY kind ORDER BY n DESC LIMIT 5 OFFSET 5')
+    assert.equal(I.buildDistinctQuery('c.s.t', { outFields: 'kind', where: "state = 'NY  NJ'" }),
+      "SELECT DISTINCT kind FROM c.s.t WHERE (state = 'NY  NJ') ORDER BY kind LIMIT 100", 'string literals untouched')
+    assert.equal(I.parseStatistics(undefined), null)
+    assert.equal(I.parseStatistics('[]'), null)
+    for (const bad of ['{nope', '[{"statisticType":"median","onStatisticField":"a"}]', '[{"statisticType":"sum","onStatisticField":"a; drop"}]',
+      '[{"statisticType":"sum","onStatisticField":"a","outStatisticFieldName":"x y"}]', '[{"statisticType":"sum"}]']) {
+      assert.throws(() => I.parseStatistics(bad), /Invalid|Unsupported/, bad)
+    }
+    assert.throws(() => I.buildStatisticsQuery('c.s.t', { groupByFieldsForStatistics: 'a,b c' }, stats), /Invalid groupByFieldsForStatistics/)
+    assert.throws(() => I.buildDistinctQuery('c.s.t', { outFields: '*' }), /needs outFields/)
+  })
+})
+
+test('getData: statistics come back precalculated, distinct values as features without geometry', withDb({}, async (db, table) => {
+  const model = new Model()
+  const call = query => new Promise((resolve, reject) => model.getData({ headers: { 'x-forwarded-access-token': 'tok' }, params: { id: table }, url: `/x/FeatureServer/0/query`, query }, (e, d) => e ? reject(e) : resolve(d)))
+  const stats = await call({ where: '1=1', groupByFieldsForStatistics: 'kind', outStatistics: '[{"statisticType":"count","onStatisticField":"kind","outStatisticFieldName":"n"}]' })
+  assert.deepEqual(stats.statistics, [{ kind: 'a', n: 10 }, { kind: 'b', n: 20 }], 'BIGINT counts become numbers')
+  assert.ok(stats.metadata.fields.find(f => f.name === 'kind'))
+  const distinct = await call({ where: '1=1', outFields: 'kind', returnDistinctValues: 'true', returnGeometry: 'false' })
+  assert.deepEqual(distinct.features.map(f => f.properties.kind), ['a', 'b'])
+  assert.equal(distinct.features[0].geometry, null)
+  assert.deepEqual(distinct.filtersApplied, { where: true, geometry: true, offset: true, limit: true }, 'Koop must not filter or page again')
+  assert.equal(features(db).length, 0, 'no feature page fetched')
+}))

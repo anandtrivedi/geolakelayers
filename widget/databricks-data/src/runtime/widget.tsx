@@ -7,7 +7,8 @@
   2. A request interceptor per gateway adds that token (and the chosen warehouse) to every SDK request.
   3. Picking a table creates a FEATURE_LAYER data source for
      <gateway>/databricks/rest/services/<table>/FeatureServer/0 and adds its layer to the selected map
-     (see layers.ts), so other widgets (Legend, Layer List, Table, Filter) can use it.
+     (see layers.ts), so other widgets (Legend, Layer List, Table, Filter) can use it. Start-up layers use
+     the widget's output data sources, which authors can connect other widgets to (see outputs.ts).
 */
 import { React, jsx, css, getAppStore } from 'jimu-core'
 import type { AllWidgetProps } from 'jimu-core'
@@ -17,11 +18,13 @@ import { Alert, Button, Loading, LoadingType, TextInput } from 'jimu-ui'
 import esriConfig from 'esri/config'
 import * as reactiveUtils from 'esri/core/reactiveUtils'
 import type { IMConfig, CatalogTable, Workspace } from '../config'
-import { getToken, signIn as openSignIn, signInNotice, listenForToken, fetchCatalog, tableRef, setWarehouse, gatewayHeaders } from '../auth'
+import { getToken, signIn as openSignIn, signInNotice, listenForToken, fetchCatalog, tableRef, setWarehouse } from '../auth'
+import { ensureInterceptor } from '../interceptor'
 import { workspacesOf, layerKey, parseLayerKey } from '../workspaces'
 import { TableTree } from '../table-tree'
 import { announceLayer } from '../sync'
 import { addGatewayLayer, removeGatewayLayer, forgetGatewayLayer } from './layers'
+import { outputDataSourceId } from '../outputs'
 import type { GatewayLayer } from './layers'
 import { versionManager } from '../version-manager'
 import defaultMessages from './translations/default'
@@ -32,25 +35,9 @@ function soleMapWidgetId (): string | undefined {
   return maps.length === 1 ? maps[0] : undefined
 }
 
-// Shared by every instance of the widget in the app
-const interceptorFor = new Set<string>()
 // Layers each widget added, kept across remounts (e.g. a Widget Controller panel closed and reopened),
 // so saved layers aren't added a second time to the same map
 const addedByWidget = new Map<string, Added[]>()
-
-function ensureInterceptor (gateway: string): void {
-  if (interceptorFor.has(gateway)) return
-  interceptorFor.add(gateway)
-  // Only the first matching interceptor runs, and Experience Builder registers a catch-all one at startup,
-  // so ours has to go first or gateway requests go out without the token (and fall back to the Portal proxy)
-  esriConfig.request.interceptors.unshift({
-    urls: gateway,
-    before: (params: any) => {
-      if (!getToken(gateway)) return
-      params.requestOptions.headers = { ...(params.requestOptions.headers || {}), ...gatewayHeaders(gateway) }
-    }
-  })
-}
 
 // Distinct color per added layer, symbol by geometry type
 const PALETTE = ['#e4572e', '#2e86ab', '#3bb273', '#7768ae', '#f3a712', '#d1495b', '#00798c', '#8d6a9f']
@@ -95,7 +82,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   // Before any request goes out: one interceptor per gateway and the warehouse the author picked
   for (const ws of workspaces) {
     setWarehouse(ws.gatewayUrl, ws.warehouseId)
-    ensureInterceptor(ws.gatewayUrl)
+    ensureInterceptor(esriConfig, ws.gatewayUrl)
   }
 
   const [jmv, setJmv] = React.useState<JimuMapView>(null)
@@ -186,7 +173,11 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     if (inBuilder && !fromConfig) announceLayer(props.id, 'add', key)
     const t0 = performance.now()
     try {
-      const gl = await addGatewayLayer({ widgetId: props.id, jmv, gateway: ws.gatewayUrl, key, table: t.table, title })
+      // A start-up layer uses its saved output data source, so widgets connected to it in the builder work
+      const appConfig = getAppStore().getState()?.appConfig
+      const outputId = outputDataSourceId(props.id, key)
+      const isOutput = !!appConfig?.dataSources?.[outputId] && !!appConfig?.widgets?.[props.id]?.outputDataSources?.includes(outputId)
+      const gl = await addGatewayLayer({ widgetId: props.id, jmv, gateway: ws.gatewayUrl, key, table: t.table, title, outputId: isOutput ? outputId : undefined })
       // Removed while it was being created: undo the add
       if (!isCurrent(entry)) { removeGatewayLayer(props.id, jmv, gl); return }
       entry.gl = gl

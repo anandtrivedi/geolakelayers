@@ -1,6 +1,8 @@
 /** @jsx jsx */
-import { React, jsx, css, Immutable } from 'jimu-core'
+import { React, jsx, css, Immutable, getAppStore } from 'jimu-core'
+import type { DataSourceJson } from 'jimu-core'
 import type { AllWidgetSettingProps } from 'jimu-for-builder'
+import { loadArcGISJSAPIModules } from 'jimu-arcgis'
 import { MapWidgetSelector, SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components'
 import { Button, Checkbox, Option, Select, Switch, TextInput } from 'jimu-ui'
 import { TrashOutlined } from 'jimu-icons/outlined/editor/trash'
@@ -13,6 +15,8 @@ import type { WarehouseInfo } from '../auth'
 import { workspacesOf, labelFromUrl, newWorkspaceId, normalizeUrl, layerKey, parseLayerKey } from '../workspaces'
 import { TableTree } from '../table-tree'
 import { onLayerAnnounced } from '../sync'
+import { ensureInterceptor } from '../interceptor'
+import { buildOutputDataSources, retryFailedOutputs } from '../outputs'
 import defaultMessages from './translations/default'
 
 /*
@@ -121,6 +125,37 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
     })
     return () => offs.forEach(off => off())
   }, [wsKey])
+
+  // Start-up layers are the widget's output data sources, so other widgets can be connected to them.
+  // Rebuilt when the layers change or a workspace signs in; saved only when something differs.
+  // Other widgets' settings in this window read those layers too, so they get the token as well.
+  React.useEffect(() => {
+    loadArcGISJSAPIModules(['esri/config']).then(([esriConfig]) => {
+      for (const ws of workspaces) ensureInterceptor(esriConfig, ws.gatewayUrl)
+    }).catch(() => {})
+  }, [wsKey])
+  const usersKey = workspaces.map(ws => users[ws.gatewayUrl] || '').join('|')
+  React.useEffect(() => {
+    let stale = false
+    const savedJson = (id: string): DataSourceJson | undefined =>
+      (getAppStore().getState() as any).appStateInBuilder?.appConfig?.dataSources?.[id]?.asMutable?.({ deep: true })
+    buildOutputDataSources({
+      widgetId: props.id,
+      workspaces,
+      layers: selected,
+      titleOf: (ws, table) => workspaces.length > 1 ? `${table.split('.').pop()} · ${ws.label}` : table.split('.').pop(),
+      saved: savedJson,
+      signedIn: ws => !!getToken(ws.gatewayUrl)
+    }).then(outputs => {
+      if (stale) return
+      const current = (props.outputDataSources || []) as unknown as string[]
+      const same = outputs.length === current.length && outputs.every((o, i) => o.id === current[i] &&
+        JSON.stringify(o) === JSON.stringify(savedJson(o.id)))
+      if (!same) props.onSettingChange({ id: props.id }, outputs)
+      retryFailedOutputs(outputs.map(o => o.id))
+    }).catch(() => {})
+    return () => { stale = true }
+  }, [selected.join('|'), wsKey, usersKey])
 
   const loadTables = React.useCallback((ws: Workspace, catalog: string) => {
     setWarehouse(ws.gatewayUrl, ws.warehouseId)

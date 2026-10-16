@@ -208,6 +208,31 @@ Model.prototype.getData = function (req, callback) {
           }
         }
 
+        // Statistics and distinct values cover the whole table in SQL (Koop would compute them from one page).
+        // Filter/Select dropdowns and charts in Experience Builder ask for these.
+        const statistics = parseStatistics(req.query.outStatistics)
+        if (statistics || isTrue(req.query.returnDistinctValues)) {
+          const sql = statistics ? buildStatisticsQuery(table, req.query, statistics) : buildDistinctQuery(table, req.query)
+          logger.info(`${thisTask}> Executing ${statistics ? 'statistics' : 'distinct'} query: ${sql}`)
+          const key = queryCacheKey(userToken, req.warehouseId, sql)
+          let rows = queryCacheGet(key)
+          if (!rows) {
+            rows = await executeAndRecord(session, sql, statistics ? 'statistics' : 'distinct', thisTask)
+            queryCachePut(key, rows)
+          }
+          rows = rows.map(row => JSON.parse(JSON.stringify(row, bigintToNumber)))
+          const metadata = { idField: S().objectId, name: table, maxRecordCount: maxRows, fields: await this.getFieldMetadata(table, session, thisTask, who) }
+          // Koop takes the statistics fields from the first row, so an empty result goes out as no features
+          if (statistics && rows.length) return callback(null, { statistics: rows, metadata })
+          return callback(null, {
+            type: 'FeatureCollection',
+            features: rows.map(properties => ({ type: 'Feature', geometry: null, properties })),
+            metadata,
+            // Filters, paging and distinct are done; Koop still converts the rows to Esri features
+            filtersApplied: { where: true, geometry: true, offset: true, limit: true }
+          })
+        }
+
         // Layer info (FeatureServer/0 without /query) only needs the schema, a geometry type and an
         // extent: fetch one sample row instead of a full page, and take the extent from SQL (cached)
         // (Koop doesn't set req.params.method reliably, so look at the path: layer info ends at the layer id)
@@ -451,6 +476,71 @@ function buildExtentQuery (table, query) {
     FROM ${S().source || table}
     ${whereClause}
   `.trim()
+}
+
+function isTrue (value) {
+  return value === true || value === 'true'
+}
+
+// outStatistics (a JSON array, or already parsed) -> [{ fn, field, alias }], or null when absent
+const STATISTIC_SQL = { count: 'COUNT', sum: 'SUM', min: 'MIN', max: 'MAX', avg: 'AVG', stddev: 'STDDEV_SAMP', var: 'VAR_SAMP' }
+const ALIAS = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+function parseStatistics (value) {
+  if (value === undefined || value === null || value === '') return null
+  let list = value
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list) } catch { throw Object.assign(new Error('Invalid outStatistics: not JSON'), { code: 400 }) }
+  }
+  if (!Array.isArray(list)) list = [list]
+  if (!list.length) return null
+  return list.map(s => {
+    const fn = STATISTIC_SQL[String(s.statisticType || '').toLowerCase()]
+    if (!fn) throw Object.assign(new Error(`Unsupported statisticType: ${s.statisticType}`), { code: 400 })
+    const field = s.onStatisticField
+    if (!(fn === 'COUNT' && (field === '*' || field === undefined)) && !validateColumnName(field).valid) {
+      throw Object.assign(new Error(`Invalid onStatisticField: ${field}`), { code: 400 })
+    }
+    const alias = s.outStatisticFieldName || `${String(s.statisticType).toLowerCase()}_${field === '*' || field === undefined ? 'all' : field}`
+    if (!ALIAS.test(alias)) throw Object.assign(new Error(`Invalid outStatisticFieldName: ${alias}`), { code: 400 })
+    return { fn, field: field === undefined ? '*' : field, alias }
+  })
+}
+
+function columnList (value, what) {
+  const result = validateColumnList(Array.isArray(value) ? value.join(',') : String(value))
+  if (!result.valid) throw Object.assign(new Error(`Invalid ${what}: ${result.error}`), { code: 400 })
+  return result.fields
+}
+
+// Statistics query: SELECT <group fields>, FN(field) AS alias ... GROUP BY <group fields>, same filters as features
+function buildStatisticsQuery (table, query, statistics) {
+  const groupBy = query.groupByFieldsForStatistics ? columnList(query.groupByFieldsForStatistics, 'groupByFieldsForStatistics') : []
+  const whereClauses = buildWhereClauses(query)
+  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
+  const stats = statistics.map(({ fn, field, alias }) => `${fn}(${field}) AS ${alias}`)
+  let sql = `SELECT ${[...groupBy, ...stats].join(', ')} FROM ${S().source || table}${whereClause ? ' ' + whereClause : ''}`
+  if (groupBy.length) {
+    sql += ` GROUP BY ${groupBy.join(', ')}`
+    sql += ` ORDER BY ${query.orderByFields ? sanitizeOrderBy(query.orderByFields) : groupBy.join(', ')}`
+    sql += ` LIMIT ${parseResultRecordCount(query.resultRecordCount)}`
+    const offset = parseResultOffset(query.resultOffset)
+    if (offset > 0) sql += ` OFFSET ${offset}`
+  }
+  return sql
+}
+
+// Distinct values of outFields (no geometry), same filters as features
+function buildDistinctQuery (table, query) {
+  if (!query.outFields || query.outFields === '*') throw Object.assign(new Error('returnDistinctValues needs outFields'), { code: 400 })
+  const fields = columnList(query.outFields, 'outFields')
+  const whereClauses = buildWhereClauses(query)
+  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
+  let sql = `SELECT DISTINCT ${fields.join(', ')} FROM ${S().source || table}${whereClause ? ' ' + whereClause : ''}`
+  sql += ` ORDER BY ${query.orderByFields ? sanitizeOrderBy(query.orderByFields) : fields.join(', ')}`
+  sql += ` LIMIT ${parseResultRecordCount(query.resultRecordCount)}`
+  const offset = parseResultOffset(query.resultOffset)
+  if (offset > 0) sql += ` OFFSET ${offset}`
+  return sql
 }
 
 // Per-user query cache: key includes the user (UC permissions differ), warehouse and the exact SQL
@@ -1165,6 +1255,9 @@ Model._internals = {
   executeAndRecord,
   isLayerInfoPath,
   runFeatureQuery,
+  parseStatistics,
+  buildStatisticsQuery,
+  buildDistinctQuery,
   queryCacheKey,
   queryCacheGet,
   queryCachePut,

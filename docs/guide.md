@@ -25,6 +25,8 @@ App authors add the widget to an experience, usually next to the map, and give i
 
 Viewers sign in to Databricks the first time they open the app. Databricks tables then behave like other map layers in Map Layers, Legend, Table and pop-ups. If the author turns on editing and the gateway allows it, viewers can edit layers whose tables have an integer id, as long as they have MODIFY on the table. The gateway setting and MODIFY are what enforce this; the widget's switch only shows or hides editing in the app.
 
+Other widgets can drive the Databricks layers, the way a filter drives the charts on a dashboard. The tables the author picks as start-up layers become the widget's outputs, so in a Filter, Select, List, Chart or Table widget they appear under **Select data → Outputs** (sign in to the workspace in the widget's settings first). A Filter with a dropdown on a field ("carrier is …", values from the data) then narrows the layer on the map, and the gateway runs that filter as SQL in Databricks, as the viewer. The dropdown's values and any counts come from the whole table. Tables viewers add while using the app aren't outputs, so other widgets can't be connected to them.
+
 Several workspaces can feed one app. Each has its own gateway and its own sign-in.
 
 ## OGC clients
