@@ -610,7 +610,10 @@ function buildSelectClause (outFields, returnGeometry, tolerance = 0) {
     // This is much more efficient than parsing geometry on the client
     // Supports WKT, WKB, and native GEOMETRY types
     const geomExpr = buildGeometryExpression()
-    const shape = tolerance > 0 ? `ST_Simplify(${geomExpr}, ${tolerance})` : geomExpr
+    // A shape smaller than the tolerance simplifies to an empty geometry, which the PBF encoder can't take;
+    // keep those as they are (they cover a pixel or less anyway)
+    const simplified = `ST_Simplify(${geomExpr}, ${tolerance})`
+    const shape = tolerance > 0 ? `CASE WHEN ST_IsEmpty(${simplified}) THEN ${geomExpr} ELSE ${simplified} END` : geomExpr
     return `${fields}, ST_AsGeoJSON(${shape}) as __geojson__`
   }
 

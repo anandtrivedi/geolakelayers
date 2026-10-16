@@ -295,7 +295,9 @@ test('simplifyTolerance: maxAllowableOffset in degrees for lines and polygons on
 test('buildSelectClause: wraps the geometry in ST_Simplify only when there is a tolerance', () => {
   inSpec(WKT_SPEC, () => {
     assert.equal(I.buildSelectClause('*', true), '*, ST_AsGeoJSON(ST_GeomFromText(geometry_wkt, 4326)) as __geojson__')
-    assert.equal(I.buildSelectClause('*', true, 0.02), '*, ST_AsGeoJSON(ST_Simplify(ST_GeomFromText(geometry_wkt, 4326), 0.02)) as __geojson__')
+    const g = 'ST_GeomFromText(geometry_wkt, 4326)'
+    assert.equal(I.buildSelectClause('*', true, 0.02), `*, ST_AsGeoJSON(CASE WHEN ST_IsEmpty(ST_Simplify(${g}, 0.02)) THEN ${g} ELSE ST_Simplify(${g}, 0.02) END) as __geojson__`,
+      'shapes smaller than the tolerance keep their geometry instead of going empty')
     assert.equal(I.buildSelectClause('*', false, 0.02), '*')
   })
 })
