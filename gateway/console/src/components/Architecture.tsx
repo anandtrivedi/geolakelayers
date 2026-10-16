@@ -93,7 +93,7 @@ export function Architecture () {
       <Box x={820} y={222} w={260} h={292} featured title='Unity Catalog'
         lines={['grants, row filters and column masks', 'decide what each viewer sees']} />
       <Box x={836} y={292} w={228} h={92} gray shadow={false} title='Delta tables'
-        lines={['Maritime, Overture, AIS, ...', 'data stays in Databricks', '(nothing copied to ArcGIS)']} />
+        lines={['any table with geometry', 'data stays in Databricks', '(nothing copied to ArcGIS)']} />
       <Box x={836} y={398} w={228} h={100} gray shadow={false} title='LakeGate settings'
         lines={['OGC services', 'layer overrides', 'UC tables, read as the viewer']} />
 
