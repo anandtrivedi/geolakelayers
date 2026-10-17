@@ -129,8 +129,10 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
   // Start-up layers are the widget's output data sources, so other widgets can be connected to them.
   // Rebuilt when the layers change or a workspace signs in; saved only when something differs.
   // Other widgets' settings in this window read those layers too, so they get the token as well.
+  // (data sources are recreated only once the interceptor is in, or they'd fail again without the token)
+  const interceptorReady = React.useRef<Promise<void>>(Promise.resolve())
   React.useEffect(() => {
-    loadArcGISJSAPIModules(['esri/config']).then(([esriConfig]) => {
+    interceptorReady.current = loadArcGISJSAPIModules(['esri/config']).then(([esriConfig]) => {
       for (const ws of workspaces) ensureInterceptor(esriConfig, ws.gatewayUrl)
     }).catch(() => {})
   }, [wsKey])
@@ -152,7 +154,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
       const same = outputs.length === current.length && outputs.every((o, i) => o.id === current[i] &&
         JSON.stringify(o) === JSON.stringify(savedJson(o.id)))
       if (!same) props.onSettingChange({ id: props.id }, outputs)
-      retryFailedOutputs(outputs.map(o => o.id))
+      return interceptorReady.current.then(() => { if (!stale) retryFailedOutputs(outputs.map(o => o.id)) })
     }).catch(() => {})
     return () => { stale = true }
   }, [selected.join('|'), wsKey, usersKey])

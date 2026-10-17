@@ -162,8 +162,11 @@ Model.prototype.getData = function (req, callback) {
         let result
 
         if (returnCountOnly) {
-          // Return only count
-          queryString = buildCountQuery(table, req.query)
+          // Return only count (of distinct values when returnDistinctValues is set, as Filter/Select paging asks)
+          if (isTrue(req.query.returnDistinctValues)) assertSqlGeometryFilter(req.query)
+          queryString = isTrue(req.query.returnDistinctValues) && req.query.outFields && req.query.outFields !== '*'
+            ? buildDistinctCountQuery(table, req.query)
+            : buildCountQuery(table, req.query)
           logger.info(`${thisTask}> Executing count query: ${queryString}`)
 
           result = await executeAndRecord(session, queryString, 'count', thisTask)
@@ -212,6 +215,8 @@ Model.prototype.getData = function (req, callback) {
         // Filter/Select dropdowns and charts in Experience Builder ask for these.
         const statistics = parseStatistics(req.query.outStatistics)
         if (statistics || isTrue(req.query.returnDistinctValues)) {
+          // Koop can't filter these rows by geometry, so a spatial filter has to make it into the SQL
+          assertSqlGeometryFilter(req.query)
           const sql = statistics ? buildStatisticsQuery(table, req.query, statistics) : buildDistinctQuery(table, req.query)
           logger.info(`${thisTask}> Executing ${statistics ? 'statistics' : 'distinct'} query: ${sql}`)
           const key = queryCacheKey(userToken, req.warehouseId, sql)
@@ -220,7 +225,7 @@ Model.prototype.getData = function (req, callback) {
             rows = await executeAndRecord(session, sql, statistics ? 'statistics' : 'distinct', thisTask)
             queryCachePut(key, rows)
           }
-          rows = rows.map(row => JSON.parse(JSON.stringify(row, bigintToNumber)))
+          rows = rows.map(scalarAttributes)
           const metadata = { idField: S().objectId, name: table, maxRecordCount: maxRows, fields: await this.getFieldMetadata(table, session, thisTask, who) }
           // Koop takes the statistics fields from the first row, so an empty result goes out as no features
           if (statistics && rows.length) return callback(null, { statistics: rows, metadata })
@@ -509,7 +514,33 @@ function parseStatistics (value) {
 function columnList (value, what) {
   const result = validateColumnList(Array.isArray(value) ? value.join(',') : String(value))
   if (!result.valid) throw Object.assign(new Error(`Invalid ${what}: ${result.error}`), { code: 400 })
+  if (S().geometryColumn && result.fields.some(f => f.toLowerCase() === S().geometryColumn.toLowerCase())) {
+    throw Object.assign(new Error(`Invalid ${what}: the geometry column can't be grouped or listed`), { code: 400 })
+  }
   return result.fields
+}
+
+// Statistics and distinct values are filtered only in SQL: reject a spatial filter we can't translate
+// (e.g. a polygon) instead of answering for the whole table
+function assertSqlGeometryFilter (query) {
+  if (query.geometry && buildBboxFilter(query.geometry, query.geometryType, query.inSR) === null) {
+    throw Object.assign(new Error('Statistics and distinct values support envelope and point spatial filters only'), { code: 400 })
+  }
+}
+
+// One row of statistics or distinct values as ArcGIS attributes: BIGINT -> number, dates -> epoch ms,
+// STRUCT/ARRAY/MAP -> JSON text, binary dropped
+function scalarAttributes (row) {
+  const out = {}
+  for (const [k, v] of Object.entries(row)) {
+    if (typeof v === 'bigint') out[k] = Number(v)
+    else if (v instanceof Date) out[k] = v.getTime()
+    else if (v !== null && typeof v === 'object') {
+      if (Buffer.isBuffer(v) || v instanceof Uint8Array) continue
+      out[k] = JSON.stringify(v, bigintToNumber)
+    } else out[k] = v
+  }
+  return out
 }
 
 // Statistics query: SELECT <group fields>, FN(field) AS alias ... GROUP BY <group fields>, same filters as features
@@ -530,12 +561,22 @@ function buildStatisticsQuery (table, query, statistics) {
 }
 
 // Distinct values of outFields (no geometry), same filters as features
-function buildDistinctQuery (table, query) {
+function distinctSelect (table, query) {
   if (!query.outFields || query.outFields === '*') throw Object.assign(new Error('returnDistinctValues needs outFields'), { code: 400 })
   const fields = columnList(query.outFields, 'outFields')
   const whereClauses = buildWhereClauses(query)
   const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
-  let sql = `SELECT DISTINCT ${fields.join(', ')} FROM ${S().source || table}${whereClause ? ' ' + whereClause : ''}`
+  return { fields, sql: `SELECT DISTINCT ${fields.join(', ')} FROM ${S().source || table}${whereClause ? ' ' + whereClause : ''}` }
+}
+
+// Number of distinct values (returnDistinctValues with returnCountOnly)
+function buildDistinctCountQuery (table, query) {
+  return `SELECT COUNT(*) AS cnt FROM (${distinctSelect(table, query).sql}) d`
+}
+
+function buildDistinctQuery (table, query) {
+  const { fields, sql: select } = distinctSelect(table, query)
+  let sql = select
   sql += ` ORDER BY ${query.orderByFields ? sanitizeOrderBy(query.orderByFields) : fields.join(', ')}`
   sql += ` LIMIT ${parseResultRecordCount(query.resultRecordCount)}`
   const offset = parseResultOffset(query.resultOffset)
@@ -1258,6 +1299,8 @@ Model._internals = {
   parseStatistics,
   buildStatisticsQuery,
   buildDistinctQuery,
+  buildDistinctCountQuery,
+  scalarAttributes,
   queryCacheKey,
   queryCacheGet,
   queryCachePut,

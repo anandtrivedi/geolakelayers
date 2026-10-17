@@ -22,7 +22,7 @@ import type { DataSource } from 'jimu-core'
 import type { JimuMapView, JimuLayerView } from 'jimu-arcgis'
 import FeatureLayer from 'esri/layers/FeatureLayer'
 import { gatewayHeaders } from '../auth'
-import { layerUrl } from '../outputs'
+import { layerUrl, outputDataSourceId } from '../outputs'
 
 export interface GatewayLayer {
   layer: __esri.FeatureLayer
@@ -42,9 +42,7 @@ export { layerUrl }
 // e.g. a.b_c and a_b.c), and a counter so a late cleanup of an earlier attempt can't destroy a newer one
 let attempt = 0
 export function dataSourceId (widgetId: string, key: string): string {
-  let h = 5381
-  for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0
-  return `${widgetId}_dbx_${key.split('.').pop().replace(/[^A-Za-z0-9_]/g, '_')}_${h.toString(36)}_${++attempt}`
+  return `${outputDataSourceId(widgetId, key)}_${++attempt}`
 }
 
 function setStatus (id: string, status: DataSourceStatus): void {

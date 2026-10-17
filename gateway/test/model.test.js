@@ -324,7 +324,16 @@ test('statistics and distinct values: SQL over the whole table, validated names,
     }
     assert.throws(() => I.buildStatisticsQuery('c.s.t', { groupByFieldsForStatistics: 'a,b c' }, stats), /Invalid groupByFieldsForStatistics/)
     assert.throws(() => I.buildDistinctQuery('c.s.t', { outFields: '*' }), /needs outFields/)
+    assert.throws(() => I.buildDistinctQuery('c.s.t', { outFields: 'kind,geometry_wkt' }), /geometry column/)
+    assert.equal(I.buildDistinctCountQuery('c.s.t', { outFields: 'kind', where: 'a = 1' }),
+      'SELECT COUNT(*) AS cnt FROM (SELECT DISTINCT kind FROM c.s.t WHERE (a = 1)) d')
   })
+})
+
+test('scalarAttributes: statistics and distinct rows as ArcGIS attributes', () => {
+  const at = new Date('2024-01-01T00:00:00Z')
+  assert.deepEqual(I.scalarAttributes({ n: 5n, at, tags: { a: 1n }, raw: Buffer.from('x'), s: 'y', none: null }),
+    { n: 5, at: at.getTime(), tags: '{"a":1}', s: 'y', none: null })
 })
 
 test('getData: statistics come back precalculated, distinct values as features without geometry', withDb({}, async (db, table) => {
@@ -338,4 +347,10 @@ test('getData: statistics come back precalculated, distinct values as features w
   assert.equal(distinct.features[0].geometry, null)
   assert.deepEqual(distinct.filtersApplied, { where: true, geometry: true, offset: true, limit: true }, 'Koop must not filter or page again')
   assert.equal(features(db).length, 0, 'no feature page fetched')
+  const n = await call({ where: '1=1', outFields: 'kind', returnDistinctValues: 'true', returnCountOnly: 'true' })
+  assert.ok(n.count !== undefined)
+  assert.ok(db.log.some(e => /^SELECT COUNT\(\*\) AS cnt FROM \(SELECT DISTINCT kind /.test(e.sql)), 'counts distinct values, not rows')
+  const polygon = JSON.stringify({ rings: [[[0, 0], [1, 0], [1, 1], [0, 0]]] })
+  await assert.rejects(call({ outFields: 'kind', returnDistinctValues: 'true', geometry: polygon, geometryType: 'esriGeometryPolygon' }),
+    e => e.code === 400, 'a spatial filter SQL can\'t apply is refused, not ignored')
 }))
