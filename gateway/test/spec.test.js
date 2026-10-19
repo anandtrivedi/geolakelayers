@@ -18,6 +18,7 @@ test('native GEOMETRY / GEOGRAPHY are found by type whatever they are called', (
     ['geometry(4326)', 'footprint'],
     ['geometry(3857)', 'ST_Transform(footprint, 4326)'],
     ['geometry', 'ST_SetSRID(footprint, 4326)'],
+    ['geometry(0)', 'ST_SetSRID(footprint, 4326)'],
     ['geography', 'ST_GeomFromWKB(ST_AsBinary(footprint), 4326)']
   ]) {
     const s = spec.detect(cols([['k', 'bigint'], ['footprint', type]]))

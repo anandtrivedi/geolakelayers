@@ -50,11 +50,12 @@ const isText = c => c.type === 'string' || /^(varchar|char)\(/.test(c.type)
 const isBinary = c => c.type === 'binary'
 const isNumber = c => /^(double|float|decimal|tinyint|smallint|int|integer|bigint)/.test(c.type)
 
-// GEOMETRY(4326) is used as-is; another SRID is reprojected; GEOMETRY(ANY)/GEOGRAPHY are taken as lon/lat
+// GEOMETRY(4326) is used as-is; another SRID is reprojected; GEOMETRY(ANY), GEOMETRY(0) (no SRID, which
+// ST_Transform can't reproject from) and GEOGRAPHY are taken as lon/lat, as for text geometry
 function nativeExpr (c) {
   const srid = (c.type.match(/\((\d+)\)/) || [])[1]
   if (c.type.startsWith('geography')) return `ST_GeomFromWKB(ST_AsBinary(${c.name}), 4326)`
-  if (!srid) return `ST_SetSRID(${c.name}, 4326)`
+  if (!srid || srid === '0') return `ST_SetSRID(${c.name}, 4326)`
   if (srid !== '4326') return `ST_Transform(${c.name}, 4326)`
   return c.name
 }
