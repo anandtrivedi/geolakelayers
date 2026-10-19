@@ -337,13 +337,18 @@ Then pick it as the engine:
   Lakehouse//RT warehouse when the gateway has one. OGC clients can't choose a warehouse themselves, so the
   service decides; if its warehouse is later removed from the allow-list, it reads on the bound warehouse.
 
-Feature, count and extent queries run on Lakehouse//RT, over the Statement Execution API and as the
-viewer. Metadata (DESCRIBE, information_schema), edits, overrides and OGC service changes stay on the bound
-warehouse, which must be a regular SQL warehouse. Tables with row filters or column masks (not supported
-on Lakehouse//RT yet) are detected before the first query and read on the bound warehouse. If
-Lakehouse//RT refuses a table's query anyway, the query is retried on the bound warehouse and the table
-stays there (for hours when the reason is a known incompatibility, minutes otherwise), so layers keep
-drawing. `/api/realtime` shows how many queries it served and what it sent elsewhere, and why.
+Reads run on Lakehouse//RT, over the Statement Execution API and as the viewer: features, counts, extents
+and also the metadata LakeGate reads to work out a table's layout (DESCRIBE, information_schema). Edits,
+overrides and OGC service changes run on the bound warehouse, which must be a regular SQL warehouse, and so
+do simplified line and polygon tiles (no ST_Simplify on Lakehouse//RT yet). Tables with row filters or
+column masks (not supported on Lakehouse//RT yet) are detected before the first query and read on the
+bound warehouse. When Lakehouse//RT refuses a query, what happens depends on why: a missing function sends
+statements using it to the bound warehouse, a table it can't serve stays on the bound warehouse for hours
+(minutes when the reason is unclear), and repeated outages or timeouts send everything to the bound
+warehouse for a short cool-down. Layers keep drawing either way. `/api/realtime` shows how many queries it
+served, what it sent elsewhere, and why. `test/rt-contract.mjs` checks these behaviors against a real
+Lakehouse//RT warehouse; [docs/optimizations.md](docs/optimizations.md) records what was measured and the
+design choices that follow from it.
 
 Limits while it's in Beta: managed tables only, no row filters or column masks yet, read-only, not in
 GovCloud. Spatial SQL works (tested on a Lakehouse//RT warehouse in October 2026: ST_AsGeoJSON,

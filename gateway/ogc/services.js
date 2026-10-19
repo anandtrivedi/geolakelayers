@@ -92,11 +92,18 @@ const notSetUp = err => /TABLE_OR_VIEW_NOT_FOUND|cannot be found|does not exist/
 const denied = err => /PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS|does not have .* privilege|not authorized/i.test(err?.message || '')
 
 /**
- * Store bound to one table. run(req, sql, params) runs SQL as the caller and returns rows.
+ * Store bound to one table. run(req, sql, params, warehouse) runs SQL as the caller and returns rows
+ * (warehouse undefined = the gateway's default). allowed(warehouse) says whether a warehouse may be used.
  */
-function createStore ({ table, run, obo }) {
+function createStore ({ table, run, obo, allowed = () => false }) {
   if (!THREE_PART.test(table || '')) throw new Error('OGC services table must be catalog.schema.table')
   const cache = new Map() // `${who}|list` or `${who}|${name}` -> { value, at }
+  // A service's own definition is read on its engine, once some read has shown which one that is, so
+  // requests to a Lakehouse//RT service don't wake the regular warehouse for the lookup. The engine id
+  // isn't private (anyone who can read the row sees it), and the read still runs as the caller.
+  const engines = new Map() // name -> warehouse id
+  const engineOf = name => { const w = engines.get(name); return w && allowed(w) ? w : undefined }
+  const learn = s => { if (s) { if (s.warehouse) engines.set(s.name, s.warehouse); else engines.delete(s.name) } return s }
   const whoOf = req => crypto.createHash('sha256').update(obo(req) || 'app').digest('hex').slice(0, 32)
   const remember = async (req, key, fn) => {
     const k = `${whoOf(req)}|${key}`
@@ -111,12 +118,14 @@ function createStore ({ table, run, obo }) {
     for (const k of cache.keys()) if (k.endsWith('|list') || k.endsWith(`|${name}`)) cache.delete(k)
   }
   // Read with the warehouse column, or without it on a table from before the engine setting
-  const select = async (req, where, params) => {
+  const select = async (req, where, params, warehouse) => {
     try {
-      return await run(req, `SELECT ${COLUMNS} FROM ${table}${where}`, params)
+      return await run(req, `SELECT ${COLUMNS} FROM ${table}${where}`, params, warehouse)
     } catch (err) {
-      if (!noWarehouseColumn(err)) throw err
-      return run(req, `SELECT ${OLD_COLUMNS} FROM ${table}${where}`, params)
+      if (noWarehouseColumn(err)) return run(req, `SELECT ${OLD_COLUMNS} FROM ${table}${where}`, params)
+      // The engine may be unusable for this caller (no CAN USE); the default warehouse decides
+      if (warehouse) return select(req, where, params)
+      throw err
     }
   }
   // Writes add the column first if the table predates it (needs MODIFY, which writers have)
@@ -141,15 +150,15 @@ function createStore ({ table, run, obo }) {
     async list (req) {
       try {
         return await remember(req, 'list', async () =>
-          (await select(req, ' ORDER BY name')).map(fromRow).filter(Boolean))
+          (await select(req, ' ORDER BY name')).map(fromRow).filter(Boolean).map(learn))
       } catch (err) { throw wrap(err) }
     },
     async get (req, name) {
       if (!NAME.test(String(name || ''))) return null
       try {
         return await remember(req, name, async () => {
-          const rows = await select(req, ' WHERE name = :name', { name })
-          return rows.length ? fromRow(rows[0]) : null
+          const rows = await select(req, ' WHERE name = :name', { name }, engineOf(name))
+          return rows.length ? learn(fromRow(rows[0])) : null
         })
       } catch (err) { throw wrap(err) }
     },
@@ -185,7 +194,8 @@ function createStore ({ table, run, obo }) {
         forget('')
       } catch (err) { throw wrap(err) }
     },
-    _cache: cache
+    _cache: cache,
+    _engines: engines
   }
 }
 

@@ -128,7 +128,13 @@ app.post('/databricks/rest/services/:id/FeatureServer/:layer/applyEdits', async 
 // (OGC_SERVICES_TABLE, '-' = off). Same caller token, warehouse allow-list and caches as the Esri layers.
 const ogc = require('./ogc')
 const ogcTable = list(process.env.OGC_SERVICES_TABLE)[0] || null
-const ogcStore = ogcTable ? ogc.createStore({ table: ogcTable, run: (req, sql, params) => runSql(req, sql, 60, params), obo }) : null
+const ogcStore = ogcTable ? ogc.createStore({
+  table: ogcTable,
+  // A warehouse the request names wins over the service's engine, as for the service's reads
+  run: (req, sql, params, warehouse) => runSql(req, sql, 60, params, req.warehouseId || warehouse),
+  obo,
+  allowed: w => allowedWarehouses.includes(w)
+}) : null
 const ogcDeps = {
   model: Model,
   preflight: (req, res, action, name) => refusedByPreflight(req, res, action, name),
@@ -271,8 +277,8 @@ app.get('/api/load', (req, res) => {
   })
 })
 
-async function runSql (req, sql, timeout = 60, namedParameters) {
-  const session = await connectionManager.getSession(obo(req), req.warehouseId)
+async function runSql (req, sql, timeout = 60, namedParameters, warehouseId = req.warehouseId) {
+  const session = await connectionManager.getSession(obo(req), warehouseId)
   try {
     const op = await session.executeStatement(sql, namedParameters ? { queryTimeout: timeout, namedParameters } : { queryTimeout: timeout })
     const rows = await op.fetchAll()

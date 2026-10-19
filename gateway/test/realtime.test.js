@@ -61,94 +61,162 @@ test('seaSession: failed statements, HTTP errors and timeouts (which cancel) thr
   assert.equal(urls.at(-1), 'https://h/api/2.0/sql/statements/s9/cancel')
 })
 
-test('routing rules: reads vs metadata vs writes, table of a statement', () => {
-  const { READ, METADATA, CALLER_ERROR, tableOf } = require('../provider/connection')._routing
-  for (const s of ['SELECT 1', '  with x as (select 1) select * from x', '(SELECT 1)']) assert.ok(READ.test(s), s)
-  for (const s of ['INSERT INTO a.b.c VALUES (1)', 'MERGE INTO a.b.c', 'DESCRIBE a.b.c', 'CREATE TABLE x']) assert.ok(!READ.test(s) || METADATA.test(s), s)
-  for (const s of ['DESCRIBE a.b.c', 'SHOW CATALOGS', 'SELECT * FROM system.information_schema.columns', 'SELECT 1 FROM c.information_schema.table_constraints']) assert.ok(METADATA.test(s), s)
-  assert.ok(!METADATA.test('SELECT systematic FROM a.b.c'))
+test('routing rules: reads and metadata vs writes, table of a statement', () => {
+  const { READ, REGULAR_ONLY, CALLER_ERROR, tableOf } = require('../provider/connection')._routing
+  for (const s of ['SELECT 1', '  with x as (select 1) select * from x', '(SELECT 1)', 'DESCRIBE a.b.c', 'SHOW TABLES IN a.b']) assert.ok(READ.test(s), s)
+  for (const s of ['INSERT INTO a.b.c VALUES (1)', 'MERGE INTO a.b.c', 'CREATE TABLE x', 'ALTER TABLE a.b.c ADD COLUMNS (x INT)']) assert.ok(!READ.test(s), s)
+  assert.ok(REGULAR_ONLY.test('SELECT * FROM system.information_schema.columns'))
+  assert.ok(!REGULAR_ONLY.test('SELECT systematic FROM a.b.c'))
   assert.equal(tableOf('SELECT *, x FROM a.b.c WHERE y'), 'a.b.c')
   assert.equal(tableOf('SELECT * FROM (SELECT *, h AS objectid FROM a.b.c) AS __src ORDER BY objectid'), 'a.b.c')
+  assert.equal(tableOf('DESCRIBE a.b.c'), 'a.b.c')
+  assert.equal(tableOf('DESCRIBE TABLE EXTENDED a.b.c'), 'a.b.c')
   assert.equal(tableOf('SELECT 1'), null)
   assert.ok(CALLER_ERROR.test('[INSUFFICIENT_PERMISSIONS] User does not have SELECT'))
   assert.ok(!CALLER_ERROR.test('[UNSUPPORTED_FEATURE] The function st_asgeojson is not supported'))
 })
 
-test('realtime session: reads on Lakehouse//RT, metadata and writes on the regular warehouse, refusals fall back per table', async () => {
+test('refusalOf: what a Lakehouse//RT error means (messages as RT returns them, see test/rt-contract.mjs)', () => {
+  const { refusalOf } = require('../provider/connection')._routing
+  const kind = (message, status) => refusalOf(Object.assign(new Error(message), status ? { status } : {}))
+  assert.equal(kind('[UNSUPPORTED_FEATURE] A table with row filters, column masks, or ABAC policies is not supported in Lakehouse//RT. Details: table c.s.t.').kind, 'governed')
+  assert.deepEqual(kind('[UNSUPPORTED_FEATURE] Function `st_envelope_agg` is not supported in Lakehouse//RT.'), { kind: 'function', fn: 'st_envelope_agg' })
+  assert.equal(kind('[UNSUPPORTED_FEATURE] Delta feature x is not supported').kind, 'unsupported')
+  assert.equal(kind('[TABLE_OR_VIEW_NOT_FOUND] The table or view c.s.nope cannot be found.').kind, 'caller')
+  assert.equal(kind('[INSUFFICIENT_PERMISSIONS] User does not have SELECT on c.s.t').kind, 'caller')
+  assert.equal(kind('Statement Execution API: HTTP 503', 503).kind, 'transient')
+  assert.equal(kind('slow down', 429).kind, 'transient')
+  assert.equal(kind('Query timed out after 60 s').kind, 'transient')
+  assert.equal(kind('fetch failed').kind, 'transient')
+  assert.equal(kind('something new').kind, 'unknown')
+})
+
+// A routing session over fakes: rt(sql) decides what Lakehouse//RT does with each statement
+async function routed ({ rt = () => {}, governed = new Set(), checkOnRt = true } = {}) {
   const sea = require('../provider/sea')
   const original = sea.seaSession
-  const rtCalls = []
-  let refuse = /never/
+  const calls = { rt: [], regular: [] }
+  const policyCount = sql => [...governed].some(t => { const [, s, n] = t.split('.'); return sql.includes(`table_schema = '${s}' AND table_name = '${n}'`) }) ? 1 : 0
   sea.seaSession = () => ({
     async executeStatement (sql) {
-      rtCalls.push(sql)
-      if (refuse.test(sql)) throw new Error(refuse.message || '[UNSUPPORTED_FEATURE] st_asgeojson is not supported')
-      if (/denied/.test(sql)) throw new Error('[INSUFFICIENT_PERMISSIONS] no')
+      calls.rt.push(sql)
+      if (/information_schema\.row_filters/.test(sql)) {
+        if (!checkOnRt) throw new Error('[UNSUPPORTED_FEATURE] information_schema is not supported')
+        return { fetchAll: async () => [{ n: policyCount(sql) }], close: async () => {} }
+      }
+      rt(sql)
       return { fetchAll: async () => [{ from: 'rt' }], close: async () => {} }
     },
     async close () {}
   })
   const connection = require('../provider/connection')
   const cm = new connection.ConnectionManager()
-  // Warehouse types are recognized from the warehouses listing (or looked up); here: noted directly
   connection.noteWarehouseType('rt0000000000000a', 'REALTIME')
   connection.noteWarehouseType('reg000000000000b', 'PRO')
-  const regularCalls = []
   let regularOpened = 0
   const regularWarehouses = []
-  const governedTables = new Set(['q.r.masked'])
   cm.getUserSession = async (token, wh) => {
     regularOpened++
     regularWarehouses.push(wh)
     return {
       executeStatement: async sql => {
-        regularCalls.push(sql)
-        const n = /information_schema\.row_filters/.test(sql) ? ([...governedTables].some(t => { const [, s, n] = t.split('.'); return sql.includes(`table_schema = '${s}' AND table_name = '${n}'`) }) ? 1 : 0) : undefined
+        calls.regular.push(sql)
+        const n = /information_schema\.row_filters/.test(sql) ? policyCount(sql) : undefined
         return { fetchAll: async () => [n === undefined ? { from: 'regular' } : { n }], close: async () => {} }
       },
       close: async () => {}
     }
   }
-  try {
-    const s = await cm.getSession('tok', 'rt0000000000000a')
-    const run = async sql => (await (await s.executeStatement(sql, {})).fetchAll())[0].from
-    assert.equal(await run('SELECT * FROM a.b.c LIMIT 10'), 'rt')
-    assert.ok(regularCalls.some(q => /row_filters[\s\S]*column_masks/.test(q)), 'checked for row filters and column masks first')
-    const checks = regularCalls.length
-    assert.equal(await run('SELECT count(*) FROM a.b.c'), 'rt')
-    assert.equal(regularCalls.length, checks, 'the policy check is cached per table')
-    assert.equal(await run('DESCRIBE a.b.c'), 'regular')
-    assert.equal(await run('INSERT INTO a.b.c VALUES (1)'), 'regular')
-    assert.equal(await run('SELECT ST_AsGeoJSON(ST_Simplify(g, 0.1)) FROM a.b.c'), 'regular', 'simplified tiles: no ST_Simplify on Lakehouse//RT')
-    assert.equal(await run('SELECT * FROM a.b.c LIMIT 5'), 'rt', 'without pinning the table')
-    assert.equal(regularOpened, 1, 'one regular session per request, reused')
-    assert.deepEqual(regularWarehouses, [undefined], 'the bound warehouse')
-    // A table with a row filter or column mask never goes to Lakehouse//RT
-    const rtBefore = rtCalls.length
-    assert.equal(await run('SELECT * FROM q.r.masked'), 'regular')
-    assert.equal(rtCalls.length, rtBefore)
-    refuse = Object.assign(/x\.y\.z/, { message: '[UNSUPPORTED_FEATURE] st_asgeojson is not supported' })
-    assert.equal(await run('SELECT ST_AsGeoJSON(g) FROM x.y.z'), 'regular', 'refused read retried on the regular warehouse')
-    assert.equal(await run('SELECT count(*) FROM x.y.z'), 'regular', 'that table now skips Lakehouse//RT')
-    refuse = Object.assign(/t\.u\.v/, { message: 'HTTP 503 temporarily unavailable' })
-    assert.equal(await run('SELECT * FROM t.u.v'), 'regular')
-    assert.equal(await run('SELECT * FROM a.b.c'), 'rt', 'other tables still use it')
-    await assert.rejects(s.executeStatement('SELECT denied FROM q.r.s', {}), /INSUFFICIENT_PERMISSIONS/, 'permission errors are not retried')
-    const st = cm.realtimeStatus()
-    assert.ok(st.warehouses.includes('rt0000000000000a') && !st.warehouses.includes('reg000000000000b'))
-    assert.equal(st.fallbacks, 2)
-    const pins = Object.fromEntries(st.tablesOnRegular.map(t => [t.table, t]))
-    assert.equal(pins['q.r.masked'].reason, 'row filter or column mask')
-    const hours = t => (Date.parse(pins[t].until) - Date.now()) / 3600000
-    assert.ok(hours('x.y.z') > 5, 'a known incompatibility is pinned for hours')
-    assert.ok(hours('t.u.v') < 0.2, 'an unexplained failure only for minutes')
-    assert.match(st.recentErrors.at(-1).error, /UNSUPPORTED_FEATURE/)
-    // Regular warehouses don't go through the realtime path; no token, no realtime path either
-    await cm.getSession('tok', 'reg000000000000b')
-    assert.equal(regularOpened, 2)
-  } finally {
-    sea.seaSession = original
-  }
+  const s = await cm.getSession('tok', 'rt0000000000000a')
+  sea.seaSession = original
+  const run = async sql => (await (await s.executeStatement(sql, {})).fetchAll())[0].from
+  return { cm, s, run, calls, opened: () => regularOpened, regularWarehouses }
+}
+
+test('realtime session: reads and metadata on Lakehouse//RT, writes on the regular warehouse', async () => {
+  const { run, calls, opened, regularWarehouses } = await routed()
+  assert.equal(await run('SELECT * FROM a.b.c LIMIT 10'), 'rt')
+  assert.ok(calls.rt.some(q => /row_filters[\s\S]*column_masks/.test(q)), 'checked for row filters and column masks first, on RT')
+  assert.equal(calls.regular.length, 0, 'the regular warehouse was not used')
+  const checks = calls.rt.length
+  assert.equal(await run('SELECT count(*) FROM a.b.c'), 'rt')
+  assert.equal(calls.rt.length, checks + 1, 'the policy check is cached per table')
+  assert.equal(await run('DESCRIBE a.b.c'), 'rt', 'DESCRIBE runs on RT')
+  assert.equal(await run('SELECT k.column_name FROM a.information_schema.table_constraints t'), 'rt', 'information_schema runs on RT, with no policy check of its own')
+  assert.ok(!calls.rt.some(q => q.includes("table_name = 'table_constraints'")))
+  assert.equal(await run('SELECT * FROM system.access.audit'), 'regular')
+  assert.equal(await run('INSERT INTO a.b.c VALUES (1)'), 'regular')
+  assert.equal(await run('SELECT ST_AsGeoJSON(ST_Simplify(g, 0.1)) FROM a.b.c'), 'regular', 'simplified tiles: no ST_Simplify on Lakehouse//RT')
+  assert.equal(await run('SELECT * FROM a.b.c LIMIT 5'), 'rt', 'without pinning the table')
+  assert.equal(opened(), 1, 'one regular session per request, reused')
+  assert.deepEqual(regularWarehouses, [undefined], 'the bound warehouse')
+})
+
+test('realtime session: governed tables, refusals by kind, permission errors', async () => {
+  const fail = { 'x.y.z': '[UNSUPPORTED_FEATURE] A table with row filters, column masks, or ABAC policies is not supported in Lakehouse//RT', 't.u.v': 'something new', 'f.g.h': '[UNSUPPORTED_FEATURE] Function `st_envelope_agg` is not supported in Lakehouse//RT.' }
+  const { cm, s, run, calls } = await routed({
+    governed: new Set(['q.r.masked']),
+    rt: sql => {
+      if (/denied/.test(sql)) throw new Error('[INSUFFICIENT_PERMISSIONS] no')
+      if (/st_envelope_agg/i.test(sql)) throw new Error(fail['f.g.h'])
+      for (const t of ['x.y.z', 't.u.v']) if (sql.includes(t)) throw new Error(fail[t])
+    }
+  })
+  const rtBefore = calls.rt.length
+  assert.equal(await run('SELECT * FROM q.r.masked'), 'regular', 'a table with a row filter or column mask never goes to Lakehouse//RT')
+  assert.equal(calls.rt.length, rtBefore + 1, 'only the policy check ran there')
+  assert.equal(await run('SELECT ST_AsGeoJSON(g) FROM x.y.z'), 'regular', 'refused read retried on the regular warehouse')
+  assert.equal(await run('SELECT count(*) FROM x.y.z'), 'regular', 'that table now skips Lakehouse//RT')
+  assert.equal(await run('SELECT * FROM t.u.v'), 'regular')
+  assert.equal(await run('SELECT * FROM a.b.c'), 'rt', 'other tables still use it')
+  assert.equal(await run('SELECT ST_XMin(ST_Envelope_Agg(g)) FROM f.g.h'), 'regular')
+  assert.equal(await run('SELECT ST_Envelope_Agg(g) FROM a.b.c'), 'regular', 'a learned unsupported function goes to regular for every table')
+  assert.equal(await run('SELECT * FROM f.g.h'), 'rt', 'without pinning the table it was learned on')
+  await assert.rejects(s.executeStatement('SELECT denied FROM q.r.s', {}), /INSUFFICIENT_PERMISSIONS/, 'permission errors are not retried')
+  const st = cm.realtimeStatus()
+  assert.ok(st.warehouses.includes('rt0000000000000a') && !st.warehouses.includes('reg000000000000b'))
+  assert.deepEqual(st.refusals, { governed: 1, unknown: 1, function: 1 })
+  assert.ok(st.unsupportedFunctions.includes('st_simplify') && st.unsupportedFunctions.includes('st_envelope_agg'))
+  const pins = Object.fromEntries(st.tablesOnRegular.map(t => [t.table, t]))
+  assert.equal(pins['q.r.masked'].reason, 'row filter or column mask')
+  assert.equal(pins['x.y.z'].reason, 'row filter or column mask')
+  assert.ok(!pins['f.g.h'])
+  const hours = t => (Date.parse(pins[t].until) - Date.now()) / 3600000
+  assert.ok(hours('x.y.z') > 5, 'a known incompatibility is pinned for hours')
+  assert.ok(hours('t.u.v') < 0.2, 'an unexplained failure only for minutes')
+  assert.equal(st.recentErrors[0].kind, 'function')
+})
+
+test('realtime session: the policy check falls back to the regular warehouse when RT can\'t run it', async () => {
+  const { run, calls } = await routed({ governed: new Set(['q.r.masked']), checkOnRt: false })
+  assert.equal(await run('SELECT * FROM q.r.masked'), 'regular')
+  assert.ok(calls.regular.some(q => /row_filters/.test(q)))
+  assert.equal(await run('SELECT * FROM a.b.c'), 'rt')
+})
+
+test('realtime session: circuit breaker after repeated transient failures, then one probe', async () => {
+  let down = true
+  const { cm, run, calls } = await routed({ rt: sql => { if (down && /FROM a\.b\./.test(sql)) throw Object.assign(new Error('Statement Execution API: HTTP 503'), { status: 503 }) } })
+  for (let i = 0; i < 5; i++) assert.equal(await run(`SELECT * FROM a.b.t${i}`), 'regular')
+  let st = cm.realtimeStatus()
+  assert.equal(st.breakers.length, 1, 'open after 5 transient failures')
+  assert.equal(st.tablesOnRegular.length, 0, 'transient failures do not pin tables')
+  const tried = calls.rt.length
+  assert.equal(await run('SELECT * FROM c.d.e'), 'regular', 'while open, RT is not tried')
+  assert.equal(calls.rt.length, tried)
+  assert.equal(cm.realtimeStatus().shortCircuited, 1)
+  // Cool-down over: the next statement probes RT; one more failure reopens at once
+  const b = cm.rt.breakers.get('rt0000000000000a')
+  b.openUntil = Date.now() - 1
+  assert.equal(await run('SELECT * FROM a.b.t9'), 'regular')
+  assert.equal(cm.realtimeStatus().breakers.length, 1, 'reopened after one failed probe')
+  assert.ok(b.cooldown > 30000, 'with a longer cool-down')
+  b.openUntil = Date.now() - 1
+  down = false
+  assert.equal(await run('SELECT * FROM a.b.t9'), 'rt', 'recovered')
+  st = cm.realtimeStatus()
+  assert.equal(st.breakers.length, 0)
+  assert.equal(b.cooldown, 30000, 'cool-down reset after a success')
 })
 
 test('isRealtime looks a warehouse up once (as the caller), caches it, and treats a failed lookup as regular', async () => {

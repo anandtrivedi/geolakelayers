@@ -37,15 +37,57 @@ function noteWarehouseType (id, type) {
 // refusal, for much longer when the reason is known (row filter or column mask, unsupported feature)
 const REALTIME_FALLBACK_MS = parseInt(process.env.REALTIME_FALLBACK_MS) || 10 * 60 * 1000
 const REALTIME_INCOMPATIBLE_MS = parseInt(process.env.REALTIME_INCOMPATIBLE_MS) || 6 * 3600 * 1000
-const INCOMPATIBLE = /UNSUPPORTED|NOT_SUPPORTED|not supported|ROW_FILTER|COLUMN_MASK|ABAC|row filter|column mask/i
-// Statements Lakehouse//RT can't run: anything but a read, and metadata (DESCRIBE, SHOW, system tables)
-const READ = /^\s*(\(\s*)*(SELECT|WITH)\b/i
-const METADATA = /^\s*(DESCRIBE|SHOW)\b|information_schema|\bsystem\./i
+// What Lakehouse//RT runs, as measured by test/rt-contract.mjs: reads, and also DESCRIBE, SHOW and
+// information_schema, so detecting a table's layout doesn't wake the regular warehouse. Writes and DDL go to
+// the regular warehouse, and so do system tables (not tested on RT).
+const READ = /^\s*(\(\s*)*(SELECT|WITH|DESCRIBE|SHOW)\b/i
+const REGULAR_ONLY = /\bsystem\./i
+// Why Lakehouse//RT refused a statement decides what happens next (refusalOf)
+const GOVERNED = /row filters?|column masks?|ABAC|ROW_FILTER|COLUMN_MASK/i
+const UNSUPPORTED_FUNCTION = /Function `([A-Za-z0-9_.]+)` is not supported/i
+const INCOMPATIBLE = /UNSUPPORTED|NOT_SUPPORTED|not supported/i
+const TRANSIENT = /timed out|fetch failed|socket hang up|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|TEMPORARILY_UNAVAILABLE|RESOURCE_EXHAUSTED|SERVICE_UNAVAILABLE/i
+// Functions Lakehouse//RT doesn't have; statements using them go to the regular warehouse without pinning
+// the table. ST_Simplify (simplified line and polygon tiles) is known; others are learned from refusals and
+// forgotten after REALTIME_INCOMPATIBLE_MS, since RT is gaining functions.
+const KNOWN_UNSUPPORTED_FUNCTIONS = ['st_simplify']
 // Errors that are the caller's (permissions, missing table): retrying elsewhere wouldn't help
-// Lakehouse//RT has no ST_Simplify; simplified line and polygon tiles go to the regular warehouse
-const SIMPLIFY = /\bST_Simplify\s*\(/i
 const CALLER_ERROR = /PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS|TABLE_OR_VIEW_NOT_FOUND|UNRESOLVED_COLUMN|PARSE_SYNTAX_ERROR|does not have .* privilege/i
-const tableOf = sql => (/\bFROM\s+(?:\(\s*SELECT\b[\s\S]*?\bFROM\s+)?([A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)/i.exec(sql) || [])[1] || null
+// Circuit breaker per Lakehouse//RT warehouse: this many transient failures within a minute send every
+// statement to the regular warehouse for a cool-down (doubling while failures continue, up to the max)
+const BREAKER_FAILURES = parseInt(process.env.REALTIME_BREAKER_FAILURES) || 5
+const BREAKER_WINDOW_MS = 60 * 1000
+const BREAKER_COOLDOWN_MS = parseInt(process.env.REALTIME_BREAKER_COOLDOWN_MS) || 30 * 1000
+const BREAKER_MAX_MS = 5 * 60 * 1000
+const TABLE = '([A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\.[A-Za-z0-9_]+)'
+const FROM_TABLE = new RegExp(`\\bFROM\\s+(?:\\(\\s*SELECT\\b[\\s\\S]*?\\bFROM\\s+)?${TABLE}`, 'i')
+const DESCRIBED_TABLE = new RegExp(`^\\s*DESCRIBE\\s+(?:TABLE\\s+)?(?:EXTENDED\\s+)?${TABLE}`, 'i')
+const tableOf = sql => (DESCRIBED_TABLE.exec(sql) || FROM_TABLE.exec(sql) || [])[1] || null
+// information_schema views carry no row filters or masks of their own
+const isCatalogView = table => /\.information_schema\./i.test(table)
+
+/**
+ * What a Lakehouse//RT refusal means:
+ *   caller      permissions, missing table, bad SQL: the caller's error, not retried
+ *   governed    row filter, column mask or ABAC policy: the table is read on the regular warehouse for hours
+ *   function    a function RT lacks: statements using it go to the regular warehouse from now on
+ *   unsupported another feature RT lacks: the table is read on the regular warehouse for hours
+ *   transient   5xx, 429, timeouts, network: retried on the regular warehouse, counted by the circuit breaker
+ *   unknown     anything else: the table is read on the regular warehouse for a few minutes
+ */
+function refusalOf (err) {
+  const m = err?.message || String(err)
+  if (CALLER_ERROR.test(m)) return { kind: 'caller' }
+  if (GOVERNED.test(m)) return { kind: 'governed' }
+  const fn = UNSUPPORTED_FUNCTION.exec(m)
+  if (fn) return { kind: 'function', fn: fn[1].toLowerCase() }
+  if (INCOMPATIBLE.test(m)) return { kind: 'unsupported' }
+  if (err?.status >= 500 || err?.status === 429 || TRANSIENT.test(m)) return { kind: 'transient' }
+  return { kind: 'unknown' }
+}
+
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const functionsPattern = fns => fns.length ? new RegExp(`\\b(${fns.map(escapeRe).join('|')})\\s*\\(`, 'i') : /(?!)/
 
 // Workspace host and warehouse: explicit settings win; inside Databricks Apps the runtime injects
 // DATABRICKS_HOST (no scheme) and the bundle maps the sql-warehouse resource to DATABRICKS_WAREHOUSE_ID.
@@ -248,60 +290,105 @@ class ConnectionManager {
   }
 
   /**
-   * A session on a Lakehouse//RT warehouse: reads go there over the Statement Execution API; metadata and
-   * writes go to the regular (bound) warehouse, and so does any read Lakehouse//RT refuses, for that table,
-   * for REALTIME_FALLBACK_MS. Counters are kept for the console (realtimeStatus).
+   * A session on a Lakehouse//RT warehouse: reads and metadata go there over the Statement Execution API;
+   * writes go to the regular (bound) warehouse, and so does any statement Lakehouse//RT refuses (see
+   * refusalOf for what a refusal changes). Counters are kept for the console (realtimeStatus).
    */
   async realtimeSession (userToken, warehouseId) {
     if (!userToken) throw new Error('Lakehouse//RT warehouses need the caller\'s token (USE_OBO)')
     const { host } = connectionTarget()
     const rt = require('./sea').seaSession({ host, token: userToken, warehouseId })
-    const stats = this.rt || (this.rt = { queries: 0, fallbacks: 0, routed: 0, errors: [], skip: new Map(), checked: new Map() })
+    const stats = this.rt || (this.rt = {
+      queries: 0, fallbacks: 0, routed: 0, shortCircuited: 0, errors: [], skip: new Map(), checked: new Map(),
+      refusals: {}, functions: new Map(KNOWN_UNSUPPORTED_FUNCTIONS.map(f => [f, Infinity])), breakers: new Map()
+    })
+    const unsupported = () => {
+      const now = Date.now()
+      const live = [...stats.functions].filter(([, until]) => until > now).map(([f]) => f)
+      if (live.join() !== stats.functionsKey) { stats.functionsKey = live.join(); stats.functionsRe = functionsPattern(live) }
+      return stats.functionsRe
+    }
+    const breaker = stats.breakers.get(warehouseId) || { failures: [], openUntil: 0, cooldown: BREAKER_COOLDOWN_MS }
+    stats.breakers.set(warehouseId, breaker)
     let regular = null
     const onRegular = async (...args) => {
       if (!regular) regular = await this.getSession(userToken, undefined)
       return regular.executeStatement(...args)
     }
     const pin = (table, ms, reason) => { if (table) stats.skip.set(table, { until: Date.now() + ms, reason }) }
-    // Row filters and column masks aren't supported on Lakehouse//RT (queries fail), so look before sending
-    // a table there; policies belong to the table, so one check serves every caller for a while
+    // Open: Lakehouse//RT has been failing; don't wait on it for every statement. When the cool-down ends,
+    // one more failure reopens it at once.
+    const breakerOpen = () => {
+      if (!breaker.openUntil) return false
+      if (breaker.openUntil > Date.now()) return true
+      breaker.openUntil = 0
+      breaker.failures = Array(BREAKER_FAILURES - 1).fill(Date.now())
+      return false
+    }
+    const transientFailure = () => {
+      const now = Date.now()
+      breaker.failures = breaker.failures.filter(t => now - t < BREAKER_WINDOW_MS).concat(now)
+      if (breaker.failures.length < BREAKER_FAILURES) return
+      breaker.openUntil = now + breaker.cooldown
+      logger.warn(`Lakehouse//RT warehouse ${warehouseId} keeps failing; using the regular warehouse for ${Math.round(breaker.cooldown / 1000)} s`)
+      breaker.cooldown = Math.min(breaker.cooldown * 2, BREAKER_MAX_MS)
+      breaker.failures = []
+    }
+    const succeeded = () => { if (!breaker.openUntil) { breaker.failures = []; breaker.cooldown = BREAKER_COOLDOWN_MS } }
+    // Lakehouse//RT refuses tables with row filters and column masks, but has been measured serving one for
+    // a few seconds after a filter was added; information_schema shows the change at once. So look before
+    // sending a table there. Policies belong to the table, so one check serves every caller for a while.
+    // The check runs on Lakehouse//RT itself (information_schema works there), else the regular warehouse.
     const governed = async table => {
       const hit = stats.checked.get(table)
       if (hit && Date.now() - hit.at < WAREHOUSE_TYPE_TTL_MS) return hit.governed
       const [cat, sch, tbl] = table.split('.')
       const where = `table_schema = '${sch}' AND table_name = '${tbl}'`
+      const sql = `SELECT (SELECT count(*) FROM ${cat}.information_schema.row_filters WHERE ${where}) + (SELECT count(*) FROM ${cat}.information_schema.column_masks WHERE ${where}) AS n`
+      const count = async exec => {
+        const op = await exec(sql, { queryTimeout: 30 })
+        try { return Number((await op.fetchAll())[0]?.n || 0) } finally { await op.close() }
+      }
       let isGoverned = false
       try {
-        const op = await onRegular(`SELECT (SELECT count(*) FROM ${cat}.information_schema.row_filters WHERE ${where}) + (SELECT count(*) FROM ${cat}.information_schema.column_masks WHERE ${where}) AS n`, { queryTimeout: 30 })
-        isGoverned = Number((await op.fetchAll())[0]?.n || 0) > 0
-        await op.close()
+        isGoverned = (breakerOpen() ? await count(onRegular) : await count((...a) => rt.executeStatement(...a)).catch(() => count(onRegular))) > 0
       } catch (err) {
+        // Not known: Lakehouse//RT refuses the table itself if it does have a policy
         logger.warn(`Could not check ${table} for row filters or column masks: ${err.message.split('\n')[0]}`)
       }
       stats.checked.set(table, { governed: isGoverned, at: Date.now() })
       if (isGoverned) pin(table, REALTIME_INCOMPATIBLE_MS, 'row filter or column mask')
       return isGoverned
     }
+    const toRegular = (sql, opts) => { stats.routed++; return onRegular(sql, opts) }
     return {
       executeStatement: async (sql, opts) => {
         const table = tableOf(sql)
         const pinned = table && stats.skip.get(table)
-        if (!READ.test(sql) || METADATA.test(sql) || SIMPLIFY.test(sql) || (pinned && pinned.until > Date.now()) || (table && await governed(table))) {
-          stats.routed++
-          return onRegular(sql, opts)
-        }
+        if (!READ.test(sql) || REGULAR_ONLY.test(sql) || unsupported().test(sql) || (pinned && pinned.until > Date.now())) return toRegular(sql, opts)
+        if (breakerOpen()) { stats.shortCircuited++; return toRegular(sql, opts) }
+        if (table && !isCatalogView(table) && await governed(table)) return toRegular(sql, opts)
         try {
           const op = await rt.executeStatement(sql, opts)
           stats.queries++
+          succeeded()
           return op
         } catch (err) {
-          if (CALLER_ERROR.test(err.message)) throw err
+          const why = refusalOf(err)
+          if (why.kind === 'caller') throw err
           stats.fallbacks++
+          stats.refusals[why.kind] = (stats.refusals[why.kind] || 0) + 1
           const reason = err.message.split('\n')[0].slice(0, 300)
-          stats.errors.unshift({ at: new Date().toISOString(), table, error: reason })
+          stats.errors.unshift({ at: new Date().toISOString(), table, kind: why.kind, error: reason })
           stats.errors.length = Math.min(stats.errors.length, 20)
-          pin(table, INCOMPATIBLE.test(err.message) ? REALTIME_INCOMPATIBLE_MS : REALTIME_FALLBACK_MS, reason)
-          logger.warn(`Lakehouse//RT refused a query${table ? ` on ${table}` : ''}; using the regular warehouse: ${reason}`)
+          if (why.kind === 'function') {
+            stats.functions.set(why.fn, Date.now() + REALTIME_INCOMPATIBLE_MS)
+          } else if (why.kind === 'transient') {
+            transientFailure()
+          } else {
+            pin(table, why.kind === 'unknown' ? REALTIME_FALLBACK_MS : REALTIME_INCOMPATIBLE_MS, why.kind === 'governed' ? 'row filter or column mask' : reason)
+          }
+          logger.warn(`Lakehouse//RT refused a query${table ? ` on ${table}` : ''} (${why.kind}); using the regular warehouse: ${reason}`)
           return onRegular(sql, opts)
         }
       },
@@ -311,13 +398,17 @@ class ConnectionManager {
 
   /** What Lakehouse//RT has done since the gateway started (console diagnostics). */
   realtimeStatus () {
-    const s = this.rt || { queries: 0, fallbacks: 0, routed: 0, errors: [], skip: new Map() }
+    const s = this.rt || { queries: 0, fallbacks: 0, routed: 0, shortCircuited: 0, errors: [], skip: new Map(), refusals: {}, functions: new Map(KNOWN_UNSUPPORTED_FUNCTIONS.map(f => [f, Infinity])), breakers: new Map() }
     const now = Date.now()
     return {
       warehouses: [...warehouseTypes].filter(([, t]) => t.realtime).map(([id]) => id),
       queries: s.queries,
       fallbacks: s.fallbacks,
       routedToRegular: s.routed,
+      shortCircuited: s.shortCircuited,
+      refusals: s.refusals,
+      unsupportedFunctions: [...s.functions].filter(([, until]) => until > now).map(([f]) => f),
+      breakers: [...s.breakers].filter(([, b]) => b.openUntil > now).map(([id, b]) => ({ warehouse: id, until: new Date(b.openUntil).toISOString() })),
       tablesOnRegular: [...s.skip].filter(([, p]) => p.until > now).map(([table, p]) => ({ table, until: new Date(p.until).toISOString(), reason: p.reason })),
       recentErrors: s.errors
     }
@@ -362,4 +453,4 @@ module.exports = new ConnectionManager()
 module.exports.ConnectionManager = ConnectionManager
 module.exports.noteWarehouseType = noteWarehouseType
 module.exports._warehouseTypes = warehouseTypes
-module.exports._routing = { READ, METADATA, CALLER_ERROR, tableOf }
+module.exports._routing = { READ, REGULAR_ONLY, CALLER_ERROR, tableOf, refusalOf, functionsPattern }

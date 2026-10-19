@@ -227,6 +227,33 @@ test('store: reads are cached per user and writes invalidate', async () => {
   await assert.rejects(missing.list({ headers: {} }), e => e.status === 404 && e.setup === true)
 })
 
+test('store: a service is looked up on its own engine once a read has shown it, else the default warehouse', async () => {
+  const mem = memoryRun()
+  const seen = []
+  let engineDown = false
+  const run = async (req, sql, p, warehouse) => {
+    if (sql.includes('WHERE name = :name') && !sql.startsWith('SELECT 1')) {
+      seen.push(warehouse)
+      if (warehouse && engineDown) throw new Error('[PERMISSION_DENIED] no CAN USE on warehouse')
+    }
+    return mem.run(req, sql, p)
+  }
+  const store = services.createStore({ table: 'c.s.t', run, obo: req => req.token, allowed: w => w === 'abcdef0123456789' })
+  const u = n => ({ headers: {}, token: `u${n}` })
+  await store.create(u(0), services.validateService({ ...demo, warehouse: 'abcdef0123456789' }))
+  await store.get(u(1), 'demo')
+  await store.get(u(2), 'demo')
+  assert.deepEqual(seen, [undefined, 'abcdef0123456789'], 'first read on the default, then on the engine (for every caller)')
+  engineDown = true
+  assert.equal((await store.get(u(3), 'demo')).name, 'demo', 'an engine the caller cannot use falls back to the default')
+  assert.deepEqual(seen.slice(2), ['abcdef0123456789', undefined])
+  // An engine that is no longer allowed is not used
+  const other = services.createStore({ table: 'c.s.t', run, obo: req => req.token, allowed: () => false })
+  seen.length = 0
+  await other.get(u(4), 'demo'); await other.get(u(5), 'demo')
+  assert.deepEqual(seen, [undefined, undefined])
+})
+
 test('OGC: landing, conformance, collections, collection, queryables, API', async () => {
   const s = await server()
   try {
