@@ -131,7 +131,7 @@ function fakeDb ({ rows = 30, count = 30, describe, pk = ['objectid'] } = {}) {
       return [row]
     }
     if (/MIN\(seen_at\)/.test(sql)) return [{ t0: '2024-01-01T00:00:00Z', t1: '2024-02-01T00:00:00Z' }]
-    if (/MIN\(ST_XMin/.test(sql)) return [{ xmin: -77, ymin: 38, xmax: -76, ymax: 39 }]
+    if (/MIN\(ST_XMin/.test(sql)) return [{ xmin: -77, ymin: 38, xmax: -76, ymax: 39, cnt: count }]
     if (/GROUP BY/.test(sql)) return [{ kind: 'a', n: 10n }, { kind: 'b', n: 20n }]
     if (/^SELECT DISTINCT/.test(sql)) return [{ kind: 'a' }, { kind: 'b' }]
     if (/COUNT\(\*\)/i.test(sql)) return [{ cnt: count }]
@@ -265,6 +265,11 @@ test('getData (Esri path): layer info fetches one row; a query fetches a page; s
   assert.equal(q.params, undefined, 'no named parameters on the Esri path')
   const count = await call({ url: `/x/FeatureServer/0/query`, query: { returnCountOnly: 'true' } })
   assert.deepEqual(count, { count: 30 })
+  const box = { xmin: -77, ymin: 38, xmax: -76, ymax: 39, spatialReference: { wkid: 4326 } }
+  assert.deepEqual(await call({ url: `/x/FeatureServer/0/query`, query: { returnExtentOnly: 'true', where: "kind = 'a'" } }), { extent: box })
+  assert.match(db.log.at(-1).sql, /WHERE \(kind = 'a'\)/, 'the extent honors the where')
+  // queryExtent() (map "Zoom to") sets both flags and needs the extent back, not just the count
+  assert.deepEqual(await call({ url: `/x/FeatureServer/0/query`, query: { returnExtentOnly: 'true', returnCountOnly: 'true' } }), { count: 30, extent: box })
   await assert.rejects(call({ url: '/x', params: { id: 'bad; name' }, query: {} }), /Invalid table name/)
 }))
 

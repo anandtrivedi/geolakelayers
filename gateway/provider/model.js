@@ -161,7 +161,21 @@ Model.prototype.getData = function (req, callback) {
         let queryString
         let result
 
-        if (returnCountOnly) {
+        if (returnExtentOnly) {
+          // Return only extent (bounding box). queryExtent() in the ArcGIS JS API (map "Zoom to" actions)
+          // also sets returnCountOnly and expects { count, extent }, as ArcGIS Server answers.
+          queryString = buildExtentQuery(table, req.query)
+          logger.info(`${thisTask}> Executing extent query: ${queryString}`)
+
+          result = await executeAndRecord(session, queryString, 'extent', thisTask)
+
+          const row = result[0] || {}
+          const extent = row.xmin !== null && row.xmin !== undefined
+            ? { xmin: row.xmin, ymin: row.ymin, xmax: row.xmax, ymax: row.ymax, spatialReference: { wkid: S().spatialReference } }
+            : null
+          logger.info(`${thisTask}> Extent result: ${JSON.stringify(extent)}`)
+          return callback(null, returnCountOnly ? { count: Number(row.cnt) || 0, extent } : { extent })
+        } else if (returnCountOnly) {
           // Return only count (of distinct values when returnDistinctValues is set, as Filter/Select paging asks)
           if (isTrue(req.query.returnDistinctValues)) assertSqlGeometryFilter(req.query)
           queryString = isTrue(req.query.returnDistinctValues) && req.query.outFields && req.query.outFields !== '*'
@@ -186,29 +200,6 @@ Model.prototype.getData = function (req, callback) {
           logger.info(`${thisTask}> Returned ${objectIds.length} IDs`)
 
           return callback(null, { objectIdFieldName: S().objectId, objectIds })
-        } else if (returnExtentOnly) {
-          // Return only extent (bounding box)
-          queryString = buildExtentQuery(table, req.query)
-          logger.info(`${thisTask}> Executing extent query: ${queryString}`)
-
-          result = await executeAndRecord(session, queryString, 'extent', thisTask)
-
-          if (result.length > 0 && result[0].xmin !== null) {
-            const extent = {
-              xmin: result[0].xmin,
-              ymin: result[0].ymin,
-              xmax: result[0].xmax,
-              ymax: result[0].ymax,
-              spatialReference: {
-                wkid: S().spatialReference
-              }
-            }
-            logger.info(`${thisTask}> Extent result: ${JSON.stringify(extent)}`)
-            return callback(null, { extent })
-          } else {
-            logger.info(`${thisTask}> No extent found (empty dataset or invalid geometries)`)
-            return callback(null, { extent: null })
-          }
         }
 
         // Statistics and distinct values cover the whole table in SQL (Koop would compute them from one page).
@@ -477,7 +468,8 @@ function buildExtentQuery (table, query) {
       MIN(ST_XMin(ST_Envelope(${geomExpr}))) as xmin,
       MIN(ST_YMin(ST_Envelope(${geomExpr}))) as ymin,
       MAX(ST_XMax(ST_Envelope(${geomExpr}))) as xmax,
-      MAX(ST_YMax(ST_Envelope(${geomExpr}))) as ymax
+      MAX(ST_YMax(ST_Envelope(${geomExpr}))) as ymax,
+      COUNT(*) as cnt
     FROM ${S().source || table}
     ${whereClause}
   `.trim()
