@@ -52,9 +52,10 @@ Before anything that writes to Unity Catalog (a layer override, an OGC service, 
 
 - **Nothing happens on Sign in.** The browser blocked the popup; the widget says so. Allow pop-ups for the site and try again.
 - **The sign-in popup closes and nothing loads.** The page's address probably isn't in the gateway's allowed origins.
-- **The sign-in popup shows the LakeGate console, or "Login error", instead of closing.** This can happen the first
-  time you sign in to Databricks in that browser: the login lands on the app's home page rather than the sign-in
-  step. Close the popup and click Sign in again; you're signed in by then, so it goes straight through.
+- **The sign-in popup shows "Login error" instead of closing.** This can happen the first time you sign in to
+  Databricks in that browser. Close the popup and click Sign in again; you're signed in by then, so it goes
+  straight through. (When a first login lands on the LakeGate console instead, the gateway now carries on
+  with the sign-in by itself.)
 - **"Your Databricks sign-in expired."** Sign-ins last about an hour. Sign in again; layers reload.
 - **"You don't have … on …"** Unity Catalog refused the request for your account. The message names the privilege and the object; ask the object's owner or an admin to grant it.
 - **A table is missing or a layer is empty.** The user needs USE CATALOG, USE SCHEMA and SELECT on it, and CAN USE on the warehouse. "Can't use this SQL warehouse" means the warehouse grant is missing.

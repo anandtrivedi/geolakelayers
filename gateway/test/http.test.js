@@ -302,3 +302,11 @@ test('normalizeOrigin: what browsers send as Origin; settings with slashes, path
   assert.equal(normalizeOrigin('https://example.com:443'), 'https://example.com')
   for (const bad of ['', '-', 'portal.example.com', 'ftp://x.example', 'javascript:alert(1)', null]) assert.equal(normalizeOrigin(bad), '', String(bad))
 })
+
+test('http.handoffPage: posts the token to each given origin only, escaped for an inline script', () => {
+  const page = http.handoffPage({ type: 'databricks-gateway-token', token: 'a</script><b>', user: 'u\u2028' }, ['https://a.example', 'https://b.example'])
+  assert.match(page, /for \(const o of \["https:\/\/a\.example","https:\/\/b\.example"\]\) window\.opener\.postMessage\(/)
+  assert.ok(!page.includes('a</script>'), 'no script breakout from the token')
+  assert.ok(page.includes('\\u003c/script>') && page.includes('\\u2028'))
+  assert.equal((page.match(/<\/script>/g) || []).length, 1, 'only the closing tag of the page itself')
+})

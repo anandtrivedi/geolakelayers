@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LakeGate · Databricks geospatial gateway for ArcGIS and OGC</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <!-- A widget's sign-in popup (window "dbx-signin") that a first Databricks login sent here instead of back
+         to /auth/handoff: carry on with the handoff, so the map gets its sign-in without a second click -->
+    <script>if (window.opener && window.name === 'dbx-signin') location.replace('./auth/handoff?resume=1')</script>
   </head>
   <body>
     <div id="root"></div>

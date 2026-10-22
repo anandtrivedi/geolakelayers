@@ -35,7 +35,7 @@ const layerSpec = require('./provider/spec')
 const { createOverrideStore, validateOverride, OverrideError } = require('./lib/overrides')
 const { sendExplained, explain } = require('./lib/errors')
 const access = require('./lib/access')
-const { isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly, normalizeOrigin } = require('./lib/http')
+const { isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly, normalizeOrigin, handoffPage } = require('./lib/http')
 
 // Origins compare exactly, so a trailing slash or a stray space in the setting would never match
 const allowedOrigins = list(process.env.ALLOWED_ORIGINS).map(normalizeOrigin).filter(Boolean)
@@ -623,9 +623,13 @@ app.get('/api/warehouses', async (req, res) => {
 // It only ever posts to an origin on the allow-list.
 app.get('/auth/handoff', (req, res) => {
   const origin = String(req.query.origin || '')
+  // resume=1: the console sent a sign-in popup back here after a first Databricks login dropped the
+  // handoff address (and its origin). Offer the token to each allowed origin; the browser delivers it only
+  // to an opener at one of them, the same guarantee as an explicit origin.
+  const resume = req.query.resume === '1'
   res.set('Cache-Control', 'no-store')
   res.set('X-Frame-Options', 'DENY')
-  if (!allowedOrigins.includes(origin)) {
+  if (resume ? !allowedOrigins.length : !allowedOrigins.includes(origin)) {
     return res.status(403).send('Origin not allowed. Add it to ALLOWED_ORIGINS on the gateway.')
   }
   const token = req.headers['x-forwarded-access-token']
@@ -634,14 +638,8 @@ app.get('/auth/handoff', (req, res) => {
   }
   // The settings panel asks for the catalog list right after sign-in; start it now (SHOW CATALOGS is slow cold)
   cached(req, 'catalogs', 5 * 60 * 1000, () => runSql(req, 'SHOW CATALOGS', 30)).catch(() => {})
-  // Escaped for an inline <script>: no '</script>' or line-separator breakouts from any field
-  const payload = JSON.stringify({ type: 'databricks-gateway-token', token, user: req.headers['x-forwarded-email'] || null })
-    .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
-  res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Signed in</title>
-<p style="font:14px system-ui">Signed in to Databricks. You can close this window.</p>
-<script>
-  if (window.opener) { window.opener.postMessage(${payload}, ${JSON.stringify(origin)}); window.close() }
-</script>`)
+  const message = { type: 'databricks-gateway-token', token, user: req.headers['x-forwarded-email'] || null }
+  res.type('html').send(handoffPage(message, resume ? allowedOrigins : [origin]))
 })
 
 // Log and keep serving on stray network errors from the SQL driver; anything else is a real bug, so exit and

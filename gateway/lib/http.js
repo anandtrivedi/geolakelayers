@@ -58,4 +58,16 @@ function isTransientNetworkError (err) {
     (err && err.name === 'FetchError' && /socket hang up|network timeout|ECONNRESET/i.test(err.message || ''))
 }
 
-module.exports = { normalizeOrigin, isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs, obo, selfOrigin, consoleOnly }
+// The popup page that hands the signed-in user's token to the window that opened it. The browser delivers
+// each message only when the opener is at that origin, so the token never reaches anyone else.
+function handoffPage (message, origins) {
+  // Escaped for an inline <script>: no '</script>' or line-separator breakouts from any field
+  const safe = v => JSON.stringify(v).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
+  return `<!doctype html><meta charset="utf-8"><title>Signed in</title>
+<p style="font:14px system-ui">Signed in to Databricks. You can close this window.</p>
+<script>
+  if (window.opener) { for (const o of ${safe(origins)}) window.opener.postMessage(${safe(message)}, o); window.close() }
+</script>`
+}
+
+module.exports = { normalizeOrigin, handoffPage, isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs, obo, selfOrigin, consoleOnly }
