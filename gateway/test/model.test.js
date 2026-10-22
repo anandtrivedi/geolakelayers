@@ -359,3 +359,26 @@ test('getData: statistics come back precalculated, distinct values as features w
   await assert.rejects(call({ outFields: 'kind', returnDistinctValues: 'true', geometry: polygon, geometryType: 'esriGeometryPolygon' }),
     e => e.code === 400, 'a spatial filter SQL can\'t apply is refused, not ignored')
 }))
+
+test('open tables (OPEN_TABLES): read as the app on the bound warehouse; every other table as the caller', withDb({}, async (db, table) => {
+  const calls = []
+  const fake = connectionManager.getSession
+  connectionManager.getSession = async (token, warehouse) => { calls.push([token, warehouse]); return fake() }
+  process.env.OPEN_TABLES = ` x.y.z, ${table.toUpperCase()} , not-a-table`
+  try {
+    assert.deepEqual(layerSpec.openTables(), ['x.y.z', table])
+    assert.equal(layerSpec.isOpenTable(table), true)
+    assert.equal(layerSpec.isOpenTable('c.s.other'), false)
+    const model = new Model()
+    const call = (id, req) => new Promise((resolve, reject) => model.getData({ headers: { 'x-forwarded-access-token': 'tok' }, warehouseId: 'wh2', params: { id }, url: '/x/FeatureServer/0/query', query: { returnCountOnly: 'true' }, ...req }, (e, d) => e ? reject(e) : resolve(d)))
+    await call(table)
+    assert.deepEqual(calls.at(-1), [null, undefined], 'Esri reads of an open table run as the app on the bound warehouse')
+    await Model.queryFeatures({ table, userToken: 'tok', warehouseId: 'wh2', limit: 1 })
+    assert.deepEqual(calls.at(-1), [null, undefined], 'OGC reads too')
+    await Model.queryFeatures({ table: 'c.s.other', userToken: 'tok', warehouseId: 'wh2', limit: 1 }).catch(() => {})
+    assert.deepEqual(calls.at(-1), ['tok', 'wh2'], 'other tables stay on behalf of the caller')
+  } finally {
+    delete process.env.OPEN_TABLES
+    connectionManager.getSession = fake
+  }
+}))

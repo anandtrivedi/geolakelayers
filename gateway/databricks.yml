@@ -46,6 +46,9 @@ variables:
   layer_overrides_table:
     description: Unity Catalog table (catalog.schema.table) holding authors' geometry/id overrides for tables that aren't detected automatically. "-" = overrides off
     default: "-"
+  open_tables:
+    description: Tables (catalog.schema.table, comma-separated) read as the app's service principal, so anyone who can sign in to the gateway sees them whatever their own grants. Grant the service principal SELECT on each. Edits still run as the editor. "-" = none (every read runs as the signed-in user)
+    default: "-"
   ogc_services_table:
     description: Unity Catalog table (catalog.schema.table) holding the OGC API services defined in the console. "-" = OGC API off
     default: "-"
@@ -88,6 +91,8 @@ resources:
             value: ${var.exclude_catalogs}
           - name: LAYER_OVERRIDES_TABLE
             value: ${var.layer_overrides_table}
+          - name: OPEN_TABLES
+            value: ${var.open_tables}
           - name: OGC_SERVICES_TABLE
             value: ${var.ogc_services_table}
           - name: WIDGET_SOURCE

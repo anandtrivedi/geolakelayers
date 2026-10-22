@@ -139,9 +139,12 @@ Model.prototype.getData = function (req, callback) {
     return callback(new Error('Invalid table name provided'))
   }
 
-  // Run as the calling user when the front door forwards their token (USE_OBO=false to run as the app)
-  const userToken = process.env.USE_OBO !== 'false' ? req.headers && req.headers['x-forwarded-access-token'] : null
-  connectionManager.getSession(userToken, req.warehouseId)
+  // Run as the calling user when the front door forwards their token (USE_OBO=false to run as the app).
+  // Open tables are read as the app on its bound warehouse (the service principal may not use the others).
+  const open = layerSpec.isOpenTable(table)
+  const userToken = !open && process.env.USE_OBO !== 'false' ? req.headers && req.headers['x-forwarded-access-token'] : null
+  const warehouseId = open ? undefined : req.warehouseId
+  connectionManager.getSession(userToken, warehouseId)
     .then(async session => {
       try {
         // Inspect the table once (cached) and scope its spec to this request
@@ -210,7 +213,7 @@ Model.prototype.getData = function (req, callback) {
           assertSqlGeometryFilter(req.query)
           const sql = statistics ? buildStatisticsQuery(table, req.query, statistics) : buildDistinctQuery(table, req.query)
           logger.info(`${thisTask}> Executing ${statistics ? 'statistics' : 'distinct'} query: ${sql}`)
-          const key = queryCacheKey(userToken, req.warehouseId, sql)
+          const key = queryCacheKey(userToken, warehouseId, sql)
           let rows = queryCacheGet(key)
           if (!rows) {
             rows = await executeAndRecord(session, sql, statistics ? 'statistics' : 'distinct', thisTask)
@@ -235,7 +238,7 @@ Model.prototype.getData = function (req, callback) {
         const isLayerInfo = isLayerInfoPath(req.originalUrl || req.url)
         // Regular query
         const featureQuery = isLayerInfo ? { ...req.query, resultRecordCount: '1', resultOffset: '0' } : req.query
-        const { geojson } = await runFeatureQuery(session, table, featureQuery, { userToken, warehouseId: req.warehouseId, taskId: thisTask })
+        const { geojson } = await runFeatureQuery(session, table, featureQuery, { userToken, warehouseId, taskId: thisTask })
 
         logger.info(`${thisTask}> Translated to ${geojson.features.length} features`)
         if (geojson.features.length > 0) {
@@ -1161,6 +1164,7 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId, who =
 // Returns { features, numberMatched?, lastId, spec }; throws err.code 400 for tables that can't be served.
 async function queryFeatures ({ table, userToken, warehouseId, bbox = [], propertyFilters = [], params = {}, time, featureId, limit, offset = 0, cursor, count = 'none', taskId = uuidv4() }) {
   if (!isValidTableName(table)) throw Object.assign(new Error('Invalid table name'), { code: 400 })
+  if (layerSpec.isOpenTable(table)) { userToken = null; warehouseId = undefined } // open tables: read as the app
   const session = await connectionManager.getSession(userToken, warehouseId)
   try {
     const who = layerSpec.whoOf(userToken)
@@ -1218,6 +1222,7 @@ async function countMatched (table, session, taskId, who, extra, params) {
 const temporalCache = new Map()
 async function collectionInfo ({ table, userToken, warehouseId, timeField, taskId = uuidv4() }) {
   if (!isValidTableName(table)) throw Object.assign(new Error('Invalid table name'), { code: 400 })
+  if (layerSpec.isOpenTable(table)) { userToken = null; warehouseId = undefined } // open tables: read as the app
   const session = await connectionManager.getSession(userToken, warehouseId)
   try {
     const who = layerSpec.whoOf(userToken)

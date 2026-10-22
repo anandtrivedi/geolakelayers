@@ -173,6 +173,7 @@ app.get('/api/info', (req, res) => {
     workspaceHost: host || null,
     gatewayUrl: `https://${req.headers['x-forwarded-host'] || req.headers.host}`,
     runAs: obo(req) ? 'user' : 'app',
+    openTables: layerSpec.openTables(),
     defaultWarehouse: defaultWarehouse || null,
     allowedWarehouses,
     allowedOrigins,
@@ -291,6 +292,10 @@ async function runSql (req, sql, timeout = 60, namedParameters, warehouseId = re
 
 const requestedCatalogs = req => scopedCatalogs(req, catalogs)
 
+// Reads of open tables (OPEN_TABLES) run as the app on its bound warehouse: a request with no forwarded token
+const AS_APP = { headers: {}, query: {} }
+const readerFor = (req, table) => layerSpec.isOpenTable(table) ? AS_APP : req
+
 const catalogCache = new Map() // sha256(user token) or 'app' -> { tables, at }
 const CATALOG_TTL_MS = 300000
 // Tables a "Scan schema" found (text/binary geometry), per caller: who -> Map(table -> entry)
@@ -367,6 +372,17 @@ async function listTables (req) {
       detectedBy: 'override'
     }))
   }
+  // Open tables are listed for everyone; the app reads them, so their spec is resolved as the app
+  await Promise.all(layerSpec.openTables().filter(inScope).map(async t => {
+    const prev = byTable.get(t)
+    if (prev) return byTable.set(t, { ...prev, open: true })
+    try {
+      const spec = await layerSpec.resolveSpec(t, sql => runSql(AS_APP, sql), 'app')
+      if (spec) byTable.set(t, entryOf(t, { idField: spec.idSource === 'derived' ? 'derived' : spec.objectId, geometry: spec.geometryColumn || spec.geometrySource, detectedBy: spec.geometryDetectedBy, open: true }))
+    } catch (err) {
+      console.error(`Open table ${t} unreadable as the app: ${err.message.split('\n')[0]}`)
+    }
+  }))
   const tables = Array.from(byTable.values()).sort((a, b) => a.table.localeCompare(b.table))
   catalogCache.set(key, { tables, at: Date.now() })
   return tables
@@ -481,9 +497,10 @@ app.get('/api/spec/:table', async (req, res) => {
   const table = req.params.table
   if (!/^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+){2}$/.test(table)) return res.status(400).json({ error: 'catalog.schema.table expected' })
   try {
-    const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), layerSpec.whoOf(obo(req)))
+    const reader = readerFor(req, table)
+    const spec = await layerSpec.resolveSpec(table, sql => runSql(reader, sql), layerSpec.whoOf(obo(reader)))
     // No geometry found: still list the columns, so an author can pick them as an override
-    const columns = spec ? spec.columns : layerSpec.describeColumns(await runSql(req, `DESCRIBE ${table}`)).map(c => ({ name: c.name, type: c.type }))
+    const columns = spec ? spec.columns : layerSpec.describeColumns(await runSql(reader, `DESCRIBE ${table}`)).map(c => ({ name: c.name, type: c.type }))
     const override = overrideStore ? await overrideStore.get(q => runSql(req, q), table).catch(() => null) : null
     res.json({ table, spec, columns, override, url: `/databricks/rest/services/${table}/FeatureServer/0` })
   } catch (err) {

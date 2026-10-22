@@ -406,6 +406,11 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
 - Caches are per user. "Optimize for maps" only replaces tables LakeGate wrote itself.
 - The app is open to all account users on purpose: what anyone can read or change is decided by Unity Catalog.
   The catalog cap limits what the widget lists, not what people can access.
+- Open tables are the one exception, and only a Databricks admin can set them: tables named in the bundle
+  variable `open_tables` are read as the app's service principal (on the bound warehouse), so everyone who
+  can sign in sees them whatever their own grants. Use it for data that is meant to be public within the
+  account; grant the app's service principal SELECT on each table. Every other table still runs as the
+  caller, and edits always do. Apps can't turn this on.
 
 ## Performance
 

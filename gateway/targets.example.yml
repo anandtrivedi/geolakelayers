@@ -16,6 +16,7 @@ targets:
       # catalogs: <catalog>,<catalog>          # cap on the catalogs the widget may list
       # editing: "true"                         # allow edits (apps and UC MODIFY still decide)
       # ogc_services_table: <catalog>.lakegate.ogc_services
+      # open_tables: <catalog>.<schema>.<table> # read as the app for anyone who signs in (grant the app SELECT)
       # layer_overrides_table: <catalog>.lakegate.layer_overrides
       # directory: east=https://lakegate-<id>.aws.databricksapps.com;gov=https://lakegate-<id>.aws-gov.databricksapps.us
 

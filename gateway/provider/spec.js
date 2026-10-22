@@ -193,6 +193,18 @@ function sourceFor (table, spec) {
   return `(SELECT *, ${spec.objectIdExpr} AS ${spec.objectId} FROM ${table}) AS __src`
 }
 
+/**
+ * Open tables (OPEN_TABLES, set by the gateway admin, never by an app): reads run as the app's service
+ * principal, so anyone who can reach the gateway sees them, whatever their own grants. Exact
+ * catalog.schema.table names; the service principal needs SELECT on each. Edits still run as the editor.
+ */
+function openTables () {
+  return (process.env.OPEN_TABLES || '').split(',').map(t => t.trim().toLowerCase()).filter(t => /^[a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+$/.test(t))
+}
+function isOpenTable (table) {
+  return !!table && openTables().includes(String(table).toLowerCase())
+}
+
 /** Cache scope for a caller: specs reveal column names, so they're cached per user, never shared. */
 function whoOf (userToken) {
   return userToken ? require('crypto').createHash('sha256').update(userToken).digest('hex').slice(0, 32) : 'app'
@@ -258,4 +270,4 @@ function current (defaults) {
   return store.getStore() || defaults
 }
 
-module.exports = { store, resolveSpec, current, detect, describeColumns, sourceFor, whoOf, forgetTable, sampleSql, readSample, primaryKeySql, setOverrideSource, hashInput, PLAIN_IDENTIFIER, SYNTHETIC_ID_MODULUS }
+module.exports = { store, resolveSpec, current, detect, describeColumns, sourceFor, whoOf, openTables, isOpenTable, forgetTable, sampleSql, readSample, primaryKeySql, setOverrideSource, hashInput, PLAIN_IDENTIFIER, SYNTHETIC_ID_MODULUS }
