@@ -53,7 +53,7 @@ function buildOpenApi ({ service, baseUrl, info, maxLimit, defaultLimit }) {
   }
   return {
     openapi: '3.0.3',
-    info: { title: service.title, description: service.description || `OGC API – Features from Unity Catalog, served by LakeGate`, version: '1.0.0' },
+    info: { title: service.title, description: service.description || `OGC API – Features from Unity Catalog, served by GeoLakeLayers`, version: '1.0.0' },
     servers: [{ url: baseUrl }],
     paths,
     components: {

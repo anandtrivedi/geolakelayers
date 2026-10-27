@@ -1,23 +1,67 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, layerPath } from '../api'
 import type { CatalogTable, GatewayInfo, LayerSpec, OgcService, OptimizeJob, ScanResult } from '../api'
-import { Copy, CopyToken, UrlField } from './Copy'
+import { CopyToken, UrlField } from './Copy'
 import { MapPreview } from './MapPreview'
 import { CatalogTree } from './CatalogTree'
 import { LayerSettings } from './LayerSettings'
 import { AccessHint, WriteError } from './Access'
+import { Drawer } from './Drawer'
 
-const LAST_TABLE = 'lakegate.explore.lastTable'
+const LAST_TABLE = 'geolakelayers.explore.lastTable'
 
-// Catalog ▸ schema ▸ table explorer. Picking a table shows how the gateway reads it, its layer URL and a live map.
-export function Explorer ({ info, onAddToOgc, onGuide }: { info: GatewayInfo, onAddToOgc: (table: string) => void, onGuide: () => void }) {
+const tableOf = (name: string): CatalogTable => {
+  const [catalog, schema, n] = name.split('.')
+  return { table: name, catalog, schema, name: n, idField: '', geometry: '' }
+}
+const remembered = (): CatalogTable | null => {
+  try { const t = JSON.parse(localStorage.getItem(LAST_TABLE) || 'null'); return t && typeof t.table === 'string' ? t : null } catch (_) { return null }
+}
+
+// The landing view: catalog tree | the table on a map | how to use it. Opens the last table picked here, else the
+// first open table the person can read, so a first visit starts with a map.
+export function Explorer ({ info, request, onRequestDone, onAddToOgc, onHelp, onGo }: {
+  info: GatewayInfo
+  /** A table another tab asked to show (OGC "Open on Map") */
+  request?: string
+  onRequestDone?: () => void
+  onAddToOgc: (table: string) => void
+  onHelp: () => void
+  onGo: (tab: 'arcgis' | 'ogc') => void
+}) {
   const [services, setServices] = useState<OgcService[]>([])
   useEffect(() => { if (info.ogc.enabled) api.ogcServices().then(setServices).catch(() => {}) }, [info.ogc.enabled])
-  // Reopen the last table picked here, so the page starts with a map
-  const [selected, setSelectedState] = useState<CatalogTable | null>(() => {
-    try { const t = JSON.parse(localStorage.getItem(LAST_TABLE) || 'null'); return t && typeof t.table === 'string' ? t : null } catch (_) { return null }
-  })
-  const setSelected = (t: CatalogTable | null) => { setSelectedState(t); try { if (t) localStorage.setItem(LAST_TABLE, JSON.stringify(t)) } catch (_) {} }
+  const [selected, setSelected] = useState<CatalogTable | null>(null)
+  // Set when the table on show is an open table nobody picked
+  const [shownOpen, setShownOpen] = useState<string | null>(null)
+  const [starting, setStarting] = useState(true)
+  const pick = (t: CatalogTable | null) => {
+    setSelected(t); setShownOpen(null)
+    try { if (t) localStorage.setItem(LAST_TABLE, JSON.stringify(t)) } catch (_) {}
+  }
+
+  // First table to show: the remembered one, else an open table; only one whose spec loads (access can change)
+  useEffect(() => {
+    if (request) { setStarting(false); return }
+    let cancelled = false
+    const last = remembered()
+    const candidates = [...new Set([last?.table, ...info.openTables].filter((t): t is string => !!t))]
+    ;(async () => {
+      for (const t of candidates) {
+        const spec = await api.spec(t).catch(() => null)
+        if (cancelled) return
+        if (spec) {
+          setSelected(last?.table === t ? last : tableOf(t))
+          setShownOpen(last?.table === t ? null : t)
+          break
+        }
+      }
+      if (!cancelled) setStarting(false)
+    })()
+    return () => { cancelled = true }
+  }, [])
+  useEffect(() => { if (request) { pick(tableOf(request)); onRequestDone?.() } }, [request])
+
   const [reloadKey, setReloadKey] = useState(0)
   const [byName, setByName] = useState('')
   const [scanSchema, setScanSchema] = useState('')
@@ -25,9 +69,7 @@ export function Explorer ({ info, onAddToOgc, onGuide }: { info: GatewayInfo, on
 
   const open = () => {
     const name = byName.trim()
-    if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(name)) return
-    const [catalog, schema, n] = name.split('.')
-    setSelected({ table: name, catalog, schema, name: n, idField: '', geometry: '' })
+    if (/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(name)) pick(tableOf(name))
   }
   const runScan = async () => {
     setScan({ busy: true })
@@ -40,65 +82,60 @@ export function Explorer ({ info, onAddToOgc, onGuide }: { info: GatewayInfo, on
 
   return (
     <>
-    <p className='page-intro'>
-      Preview Databricks tables the way they will look in ArcGIS Experience Builder and OGC clients. Pick a table on the left to see
-      it on a map, check how its geometry and id are read, and copy the URLs for Experience Builder, OGC clients and
-      scripts. Only tables you can read in Unity Catalog are listed.
-    </p>
-    <div className='explorer'>
-      <div className='explorer-tree card'>
-        <CatalogTree isActive={t => selected?.table === t.table} onPick={setSelected} reloadKey={reloadKey} reveal={selected?.table} />
-        <div className='tree-tools'>
-          <p className='muted small'>
-            Listed: tables with a GEOMETRY or GEOGRAPHY column, and tables with an override. Geometry stored as
-            text or binary (WKT, WKB, GeoJSON) is found by scanning a schema; tables it finds are added to this list for you.
-          </p>
-          <div className='inline-form'>
-            <input value={scanSchema} onChange={e => setScanSchema(e.target.value)} placeholder='catalog.schema' aria-label='Schema to scan' />
-            <button className='button ghost' disabled={scan.busy || !/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(scanSchema.trim())} onClick={runScan}>{scan.busy ? 'Scanning…' : 'Scan schema'}</button>
-          </div>
-          {scan.error && <p className='error small'>{scan.error}</p>}
-          {scan.result && (
-            <p className='small'>
-              Checked {scan.result.checked} tables{scan.result.skipped ? ` (${scan.result.skipped} more not checked)` : ''}: {scan.result.found.length ? scan.result.found.map(f => f.name).join(', ') : 'no text or binary geometry found'}.
-              {scan.result.failed.length > 0 && <span className='muted'> {scan.result.failed.length} could not be read.</span>}
+      <p className='map-intro muted'>
+        Live Unity Catalog tables on a map, queried as you. <button className='link' onClick={onHelp}>How it works</button>
+      </p>
+      <div className='map-layout'>
+        <aside className='map-rail card'>
+          <CatalogTree isActive={t => selected?.table === t.table} onPick={pick} reloadKey={reloadKey} reveal={shownOpen ? undefined : selected?.table} />
+          <details className='find-more'>
+            <summary>Can't find your table?</summary>
+            <p className='muted small'>
+              Listed: tables with a GEOMETRY or GEOGRAPHY column, and tables with an override. Geometry stored as
+              text or binary (WKT, WKB, GeoJSON) is found by scanning a schema; tables it finds are added to this list for you.
             </p>
-          )}
-          <div className='inline-form'>
-            <input value={byName} onChange={e => setByName(e.target.value)} onKeyDown={e => e.key === 'Enter' && open()} placeholder='catalog.schema.table' aria-label='Open a table by name' />
-            <button className='button ghost' onClick={open}>Open table</button>
-          </div>
+            <div className='inline-form'>
+              <input value={scanSchema} onChange={e => setScanSchema(e.target.value)} placeholder='catalog.schema' aria-label='Schema to scan' />
+              <button className='button ghost' disabled={scan.busy || !/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(scanSchema.trim())} onClick={runScan}>{scan.busy ? 'Scanning…' : 'Scan schema'}</button>
+            </div>
+            {scan.error && <p className='error small'>{scan.error}</p>}
+            {scan.result && (
+              <p className='small'>
+                Checked {scan.result.checked} tables{scan.result.skipped ? ` (${scan.result.skipped} more not checked)` : ''}: {scan.result.found.length ? scan.result.found.map(f => f.name).join(', ') : 'no text or binary geometry found'}.
+                {scan.result.failed.length > 0 && <span className='muted'> {scan.result.failed.length} could not be read.</span>}
+              </p>
+            )}
+            <div className='inline-form'>
+              <input value={byName} onChange={e => setByName(e.target.value)} onKeyDown={e => e.key === 'Enter' && open()} placeholder='catalog.schema.table' aria-label='Open a table by name' />
+              <button className='button ghost' onClick={open}>Open table</button>
+            </div>
+          </details>
+        </aside>
+        <div className='map-main'>
+          {selected
+            ? <TableDetail key={selected.table} t={selected} info={info} services={services} shownOpen={shownOpen === selected.table} onAddToOgc={onAddToOgc} onGo={onGo} onChanged={() => setReloadKey(k => k + 1)} />
+            : (
+              <div className='map-body'>
+                <div className='map-frame'><div className='map-overlay'>{starting ? 'Loading…' : 'Pick a table on the left to see it on the map.'}</div></div>
+                <UsePanel info={info} services={services} onAddToOgc={onAddToOgc} onGo={onGo} />
+              </div>
+              )}
         </div>
       </div>
-      <div className='explorer-detail'>
-        {selected ? <TableDetail key={selected.table} t={selected} info={info} services={services} onAddToOgc={onAddToOgc} onGuide={onGuide} onChanged={() => setReloadKey(k => k + 1)} /> : (
-          <div className='card empty-detail'>
-            <h3>Pick a table</h3>
-            <ol className='use-steps'>
-              <li>Open a catalog on the left. Only tables with geometry are listed.</li>
-              <li>Pick one. It draws on a map the way it will look in Experience Builder or QGIS.</li>
-              <li>
-                Below the map, copy what you need: the gateway URL for the{' '}
-                {info.widgetSource ? <a href={info.widgetSource} target='_blank' rel='noreferrer'>Databricks Data widget</a> : 'Databricks Data widget'}{' '}
-                in Experience Builder, an OGC service URL for QGIS, GDAL and web maps, or the layer URL for scripts.
-              </li>
-            </ol>
-          </div>
-        )}
-      </div>
-    </div>
     </>
   )
 }
 
-function TableDetail ({ t, info, services, onAddToOgc, onGuide, onChanged }: {
-  t: CatalogTable, info: GatewayInfo, services: OgcService[], onAddToOgc: (table: string) => void, onGuide: () => void, onChanged: () => void
+const changeTable = () => document.querySelector<HTMLInputElement>('.map-rail .search')?.focus()
+
+function TableDetail ({ t, info, services, shownOpen, onAddToOgc, onGo, onChanged }: {
+  t: CatalogTable, info: GatewayInfo, services: OgcService[], shownOpen: boolean, onAddToOgc: (table: string) => void, onGo: (tab: 'arcgis' | 'ogc') => void, onChanged: () => void
 }) {
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof api.specDetail>> | null>(null)
   const [error, setError] = useState('')
   const [count, setCount] = useState<number | null>(null)
   const [version, setVersion] = useState(0)
-  const url = useMemo(() => `${location.origin}${layerPath(t.table)}`, [t.table])
+  const [setup, setSetup] = useState(false)
   const spec = detail ? detail.spec : undefined
 
   useEffect(() => {
@@ -106,113 +143,105 @@ function TableDetail ({ t, info, services, onAddToOgc, onGuide, onChanged }: {
     api.specDetail(t.table).then(d => {
       setDetail(d)
       if (d.spec) api.count(t.table).then(setCount).catch(() => setCount(null))
+      else setSetup(true)
     }).catch(e => { setError(e.message); setDetail({ spec: null, columns: [], override: null }) })
   }, [t.table, version])
   const changed = () => { setVersion(v => v + 1); onChanged() }
 
   return (
-    <div className='card detail'>
-      <div className='detail-head'>
-        <div>
-          <div className='muted small'>{t.catalog}.{t.schema}</div>
+    <>
+      <div className='map-strip'>
+        <div className='strip-name'>
+          <span className='muted small'>{t.catalog}.{t.schema}</span>
           <h3>{t.name}</h3>
         </div>
-        <a className='button ghost' href={`${layerPath(t.table)}?f=pjson`} target='_blank' rel='noreferrer'>Layer JSON</a>
-      </div>
-      {error && <p className='error'>{error}</p>}
-      {spec === null && !error && (
-        <p className='muted'>No geometry found in this table: it has no GEOMETRY or GEOGRAPHY column, and none of its text or binary columns hold WKT, WKB or GeoJSON. If its geometry is in two longitude/latitude columns, or in a column that is mostly empty, pick it below.</p>
-      )}
-      {spec && (
-        <>
-          <dl className='facts'>
-            <div><dt>Features</dt><dd>{count === null ? '…' : count.toLocaleString()}</dd></div>
-            <div><dt>Geometry</dt><dd>{spec.geometryType.replace('esriGeometry', '')} <span className='muted'>from {spec.geometrySource}</span></dd></div>
-            <div><dt>Object id</dt><dd title={spec.idSource === 'derived' ? 'No integer id column, so an id is computed from each row. The layer is read-only; pick an id column under How this table is read to allow editing.' : undefined}>{spec.idSource === 'derived' ? 'derived (read-only)' : <code>{spec.objectId}</code>}</dd></div>
-          </dl>
-          <div className='next-bar'>
-            <span>This is how the table will draw. To use it, add it to</span>
-            <button className='link' onClick={() => jump('use-exb')}>an Experience Builder app</button>
-            <span>·</span>
-            <button className='link' onClick={() => jump('use-ogc')}>an OGC service</button>
-            <span>·</span>
-            <button className='link' onClick={() => jump('use-scripts')}>a script</button>
+        {spec && (
+          <div className='strip-facts'>
+            <span className='fact'>{count === null ? '…' : count.toLocaleString()} features</span>
+            <span className='fact'>{spec.geometryType.replace('esriGeometry', '')} <span className='muted'>from {spec.geometrySource}</span></span>
+            <span className='fact' title={spec.idSource === 'derived' ? 'No integer id column, so an id is computed from each row. The layer is read-only; pick an id column in Table setup to allow editing.' : undefined}>
+              id: {spec.idSource === 'derived' ? 'derived (read-only)' : <code>{spec.objectId}</code>}
+            </span>
+            {spec.bboxColumns && <span className='fact rt'>map-optimized</span>}
           </div>
-          <MapPreview key={version} table={t.table} optimized={!!spec.bboxColumns} />
-          <UseThisTable t={t} info={info} url={url} services={services} onAddToOgc={onAddToOgc} onGuide={onGuide} />
-        </>
-      )}
+        )}
+        <div className='strip-actions'>
+          <button className='button ghost' onClick={changeTable}>Change table</button>
+          {detail && <button className='button ghost' onClick={() => setSetup(true)}>Table setup</button>}
+          <a className='button ghost' href={`${layerPath(t.table)}?f=pjson`} target='_blank' rel='noreferrer'>Layer JSON</a>
+        </div>
+      </div>
+      {shownOpen && <p className='open-note small'>Showing <code>{t.table}</code>, an open table. Pick any table on the left.</p>}
+      <div className='map-body'>
+        {spec
+          ? <MapPreview key={version} table={t.table} optimized={!!spec.bboxColumns} />
+          : (
+            <div className='map-frame'>
+              <div className='map-overlay'>
+                {error || (spec === null
+                  ? <>No geometry found in this table: it has no GEOMETRY or GEOGRAPHY column, and none of its text or binary columns hold WKT, WKB or GeoJSON. If its geometry is in two longitude/latitude columns, or in a column that is mostly empty, pick it in <button className='link' onClick={() => setSetup(true)}>Table setup</button>.</>
+                  : 'Loading…')}
+              </div>
+            </div>
+            )}
+        <UsePanel info={info} t={spec ? t : undefined} services={services} onAddToOgc={onAddToOgc} onGo={onGo} />
+      </div>
       {detail && (
-        <details className='author-tools' open={spec === null}>
-          <summary>How this table is read{spec && !spec.bboxColumns ? ', and optimizing it for maps' : ''}</summary>
+        <Drawer open={setup} title={`Table setup: ${t.name}`} onClose={() => setSetup(false)}>
+          <p className='muted small'>How the gateway reads <code>{t.table}</code>, and a faster copy for maps. Changes apply to everyone who uses this table through the gateway.</p>
           <LayerSettings key={version} table={t.table} spec={spec || null} columns={detail.columns} override={detail.override} onChanged={changed} />
           {spec && (spec.bboxColumns
             ? <p className='optimized-note'><span className='chip small'>Map-optimized</span> Tile queries skip files outside the map view.</p>
             : <Optimize t={t} spec={spec} count={count} />)}
-        </details>
+        </Drawer>
       )}
-    </div>
+    </>
   )
 }
 
-const jump = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-
-// Where this table can be used, one row per kind of client
-function UseThisTable ({ t, info, url, services, onAddToOgc, onGuide }: {
-  t: CatalogTable, info: GatewayInfo, url: string, services: OgcService[], onAddToOgc: (table: string) => void, onGuide: () => void
+// Beside the map: the one string each kind of client needs for this table, and where the full steps are
+function UsePanel ({ info, t, services, onAddToOgc, onGo }: {
+  info: GatewayInfo, t?: CatalogTable, services: OgcService[], onAddToOgc: (table: string) => void, onGo: (tab: 'arcgis' | 'ogc') => void
 }) {
-  const inServices = services.flatMap(s => s.collections.filter(c => c.table === t.table).map(c => ({ s, c })))
+  const inServices = t ? services.flatMap(s => s.collections.filter(c => c.table === t.table).map(c => ({ s, c }))) : []
+  const url = useMemo(() => t ? `${location.origin}${layerPath(t.table)}` : '', [t?.table])
   return (
-    <div className='use-table'>
-      <h4>Use this table</h4>
-      <div className='use-row' id='use-exb'>
-        <div className='use-what'><b>Experience Builder</b><span className='muted small'>through the Databricks Data widget</span></div>
-        <div className='use-how'>
-          <ol className='use-steps small'>
-            <li>
-              The Databricks Data widget has to be available in your Experience Builder. An ArcGIS admin adds it once.
-              {info.widgetSource && <> <a href={info.widgetSource} target='_blank' rel='noreferrer'>Get the widget</a></>}
-            </li>
-            <li>Add the widget to your app, next to the map, and give it this gateway URL:
-              <UrlField url={info.gatewayUrl} label='Gateway URL' copyLabel='Copy gateway URL' />
-            </li>
-            <li>Sign in, then pick <code>{t.table}</code> as a start-up layer, or let viewers add it themselves.</li>
-          </ol>
+    <aside className='use-panel'>
+      <div className='use-box'>
+        <h4>Use in Experience Builder</h4>
+        <p className='small muted'>Give the Databricks Data widget this gateway URL{t ? <>, sign in, then pick <b>{t.name}</b></> : ', sign in, then pick tables'}.</p>
+        <UrlField url={info.gatewayUrl} label='Gateway URL' copyLabel='Copy' primary />
+        <div className='card-actions'>
+          {info.widgetSource && <a className='button ghost' href={info.widgetSource} target='_blank' rel='noreferrer'>Get the widget</a>}
+          <button className='link small' onClick={() => onGo('arcgis')}>All the steps →</button>
         </div>
+        {info.cdfSource && <p className='small muted teaser'>Map Viewer or ArcGIS Pro? <button className='link' onClick={() => onGo('arcgis')}>Use the Custom Data Feed</button>.</p>}
       </div>
-      <div className='use-row' id='use-ogc'>
-        <div className='use-what'><b>QGIS, GDAL, web maps</b><span className='muted small'>OGC API – Features</span></div>
-        <div className='use-how'>
-          {!info.ogc.enabled && <p className='small muted'>OGC services are off on this gateway.</p>}
-          {info.ogc.enabled && inServices.map(({ s, c }) => (
-            <div key={`${s.name}/${c.id}`}>
-              <p className='small'>In the <b>{s.title}</b> service as <code>{c.id}</code>:</p>
-              <UrlField url={`${info.gatewayUrl}/ogc/${s.name}/collections/${c.id}/items`} label={`${s.title} items URL`} />
-            </div>
-          ))}
-          {info.ogc.enabled && (
-            <div className='use-actions'>
-              <span className='small muted'>{inServices.length ? 'Or publish it in a new service.' : 'Not in an OGC service yet. A service gives OGC clients one URL for a set of tables.'}</span>
-              <button className='button ghost' onClick={() => onAddToOgc(t.table)}>Add to a new OGC service</button>
-            </div>
-          )}
-        </div>
-      </div>
-      <div className='use-row' id='use-scripts'>
-        <div className='use-what'><b>Scripts and notebooks</b><span className='muted small'>Esri FeatureServer REST</span></div>
-        <div className='use-how'>
-          <p className='small'>Send a Databricks OAuth token as <code>Authorization: Bearer</code>. Personal access tokens aren't accepted. <CopyToken /></p>
-          <div className='url-row'>
-            <input className='url' readOnly value={url} title={url} aria-label='Layer URL' spellCheck={false} />
-            <Copy text={url} label='Copy layer URL' />
+      <div className='use-box'>
+        <h4>Use in QGIS / OGC</h4>
+        {!info.ogc.enabled && <p className='small muted'>OGC services are off on this gateway.</p>}
+        {info.ogc.enabled && !t && <p className='small muted'>Pick a table to see its OGC URL.</p>}
+        {info.ogc.enabled && t && inServices.map(({ s, c }) => (
+          <div key={`${s.name}/${c.id}`}>
+            <p className='small'>In <b>{s.title}</b>:</p>
+            <UrlField url={`${info.gatewayUrl}/ogc/${s.name}/collections/${c.id}/items`} label={`${s.title} items URL`} copyLabel='Copy' />
           </div>
+        ))}
+        {info.ogc.enabled && t && !inServices.length && <p className='small muted'>Not in an OGC service yet. A service gives QGIS one URL for a set of tables.</p>}
+        <div className='card-actions'>
+          {info.ogc.enabled && t && <button className='button ghost' onClick={() => onAddToOgc(t.table)}>{inServices.length ? 'Add to a new service' : 'Add to an OGC service'}</button>}
+          <button className='link small' onClick={() => onGo('ogc')}>OGC services →</button>
         </div>
       </div>
-      <p className='small muted'>
-        ArcGIS Map Viewer and ArcGIS Pro can't use the layer URL directly yet: "add layer from URL" doesn't send a
-        Databricks sign-in. <button className='link' onClick={onGuide}>See the guide</button> for every client.
-      </p>
-    </div>
+      {t && (
+        <details className='use-box'>
+          <summary>Layer URL for scripts</summary>
+          <p className='small muted'>Esri FeatureServer REST. Send a Databricks OAuth token as <code>Authorization: Bearer</code>; personal access tokens aren't accepted.</p>
+          <UrlField url={url} label='Layer URL' copyLabel='Copy' />
+          <CopyToken />
+        </details>
+      )}
+    </aside>
   )
 }
 

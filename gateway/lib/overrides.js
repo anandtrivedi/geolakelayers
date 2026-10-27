@@ -54,8 +54,8 @@ function createTableSql (table) {
   table_name STRING NOT NULL COMMENT 'catalog.schema.table',
   geometry_column STRING, geometry_srid INT, lon_column STRING, lat_column STRING, id_column STRING,
   updated_by STRING, updated_at TIMESTAMP
-) COMMENT 'LakeGate layer overrides: geometry and id columns for tables that are not detected automatically'
-TBLPROPERTIES ('lakegate.layer_overrides' = 'true')`
+) COMMENT 'GeoLakeLayers layer overrides: geometry and id columns for tables that are not detected automatically'
+TBLPROPERTIES ('geolakelayers.layer_overrides' = 'true')`
 }
 
 const notSetUp = err => /TABLE_OR_VIEW_NOT_FOUND|cannot be found|does not exist/i.test(err?.message || '')

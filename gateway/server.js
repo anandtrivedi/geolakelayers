@@ -10,7 +10,7 @@
     /api/warehouses     allow-listed warehouses the caller can use (widget settings)
     /api/optimize       write a map-optimized copy of a table (console), job status at /api/optimize/<id>
     /auth/handoff       popup page that hands the signed-in user's token to an allowed origin
-    /                   LakeGate console (public/, built from console/)
+    /                   GeoLakeLayers console (public/, built from console/)
     /api/info           gateway status and the workspace directory (console)
     /ogc/<service>/...  OGC API – Features (ogc/), services defined at /api/ogc (console)
 
@@ -48,10 +48,10 @@ const koop = new Koop({ logLevel: process.env.LOG_LEVEL || 'info', disableCors: 
 const app = koop.server
 
 // Console-only routes: refuse CORS preflights before the cors middleware below answers them
-app.use('/api/optimize', consoleOnly('Optimize can only be started from the LakeGate console'))
-app.use('/api/overrides', consoleOnly('Layer overrides can only be changed from the LakeGate console'))
-app.use('/api/ogc', consoleOnly('OGC services can only be changed from the LakeGate console'))
-app.use('/api/token', consoleOnly('A token can only be copied from the LakeGate console'))
+app.use('/api/optimize', consoleOnly('Optimize can only be started from the GeoLakeLayers console'))
+app.use('/api/overrides', consoleOnly('Layer overrides can only be changed from the GeoLakeLayers console'))
+app.use('/api/ogc', consoleOnly('OGC services can only be changed from the GeoLakeLayers console'))
+app.use('/api/token', consoleOnly('A token can only be copied from the GeoLakeLayers console'))
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
   methods: ['GET', 'POST'],
@@ -158,7 +158,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }))
 
-// Other LakeGate gateways (one per workspace), so authors can pick a workspace instead of pasting a URL.
+// Other GeoLakeLayers gateways (one per workspace), so authors can pick a workspace instead of pasting a URL.
 // DIRECTORY = "name=url;name=url"
 const directory = parseDirectory(process.env.DIRECTORY)
 const { version } = require('./package.json')
@@ -167,7 +167,7 @@ const { version } = require('./package.json')
 app.get('/api/info', (req, res) => {
   const host = (process.env.DATABRICKS_HOST || process.env.DATABRICKS_SERVER_HOSTNAME || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
   res.json({
-    name: process.env.DATABRICKS_APP_NAME || 'lakegate',
+    name: process.env.DATABRICKS_APP_NAME || 'geolakelayers',
     version,
     user: req.headers['x-forwarded-email'] || null,
     workspaceHost: host || null,
@@ -183,7 +183,8 @@ app.get('/api/info', (req, res) => {
     overrides: { enabled: !!overrideStore, table: overridesTable },
     editing: editingEnabled,
     ogc: { enabled: !!ogcStore, table: ogcTable },
-    widgetSource: /^https:\/\//.test(process.env.WIDGET_SOURCE || '') ? process.env.WIDGET_SOURCE : null
+    widgetSource: /^https:\/\//.test(process.env.WIDGET_SOURCE || '') ? process.env.WIDGET_SOURCE : null,
+    cdfSource: /^https:\/\//.test(process.env.CDF_SOURCE || '') ? process.env.CDF_SOURCE : null
   })
 })
 
@@ -227,7 +228,7 @@ async function refusedByPreflight (req, res, action, name) {
   let result
   try { result = await accessFor(req, action, name) } catch (_) { return false }
   if (result.ok !== false) return false
-  res.status(403).json({ error: `LakeGate found no grant that lets you do this: you need ${result.missing.join(', ')}. Ask an owner or admin to grant it, or try anyway if you have access another way.`, code: 'preflight', missing: result.missing })
+  res.status(403).json({ error: `GeoLakeLayers found no grant that lets you do this: you need ${result.missing.join(', ')}. Ask an owner or admin to grant it, or try anyway if you have access another way.`, code: 'preflight', missing: result.missing })
   return true
 }
 
@@ -524,14 +525,15 @@ app.post('/api/optimize', express.json(), async (req, res) => {
   let spec
   try {
     spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), layerSpec.whoOf(obo(req)))
-    // Never replace a table LakeGate didn't write: CREATE OR REPLACE on a name the author typed
+    // Never replace a table GeoLakeLayers didn't write: CREATE OR REPLACE on a name the author typed
     // could otherwise wipe an unrelated table
     const [cat, sch] = target.split('.')
     const existing = await runSql(req, `SHOW TABLES IN ${cat}.${sch} LIKE '${name}'`, 60)
     if (existing.length) {
       const props = await runSql(req, `SHOW TBLPROPERTIES ${target}.${name}`, 60)
-      const ours = props.some(p => (p.key || Object.values(p)[0]) === 'lakegate.optimized')
-      if (!ours) return res.status(409).json({ error: `${target}.${name} already exists and was not written by LakeGate; pick another name` })
+      // lakegate.optimized: copies written before the rename to GeoLakeLayers
+      const ours = props.some(p => ['geolakelayers.optimized', 'lakegate.optimized'].includes(p.key || Object.values(p)[0]))
+      if (!ours) return res.status(409).json({ error: `${target}.${name} already exists and was not written by GeoLakeLayers; pick another name` })
     }
   } catch (err) {
     return sendExplained(res, err)
@@ -543,8 +545,8 @@ app.post('/api/optimize', express.json(), async (req, res) => {
   const sql = `
     CREATE OR REPLACE TABLE ${out}
     CLUSTER BY (_xmin, _ymin)
-    COMMENT 'Map-optimized copy of ${table}, written by LakeGate'
-    TBLPROPERTIES ('lakegate.optimized' = 'true', 'lakegate.source' = '${table}')
+    COMMENT 'Map-optimized copy of ${table}, written by GeoLakeLayers'
+    TBLPROPERTIES ('geolakelayers.optimized' = 'true', 'geolakelayers.source' = '${table}')
     AS SELECT *, ST_XMin(geom) AS _xmin, ST_YMin(geom) AS _ymin, ST_XMax(geom) AS _xmax, ST_YMax(geom) AS _ymax
     FROM (SELECT *${except}, ${geomExpr} AS geom FROM ${spec.source || table}) AS src
     WHERE geom IS NOT NULL`

@@ -1,4 +1,4 @@
-// Screenshots of the LakeGate console. The CLI token is attached only to requests for the gateway's
+// Screenshots of the GeoLakeLayers console. The CLI token is attached only to requests for the gateway's
 // own origin (never to Esri's CDN or anything else).
 // usage: node test/console-shots.mjs <gatewayUrl> <profile> <outPrefix>
 import { execFileSync } from 'child_process'

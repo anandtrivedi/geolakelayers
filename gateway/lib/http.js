@@ -16,7 +16,7 @@ function normalizeOrigin (value) {
   } catch (_) { return '' }
 }
 
-// Other LakeGate gateways (one per workspace): "name=url;name=url", https only
+// Other GeoLakeLayers gateways (one per workspace): "name=url;name=url", https only
 function parseDirectory (value) {
   return (value || '').split(';').map(s => s.trim()).filter(s => s && s !== '-')
     .map(entry => { const i = entry.indexOf('='); return i > 0 ? { name: entry.slice(0, i).trim(), url: entry.slice(i + 1).trim().replace(/\/$/, '') } : null })

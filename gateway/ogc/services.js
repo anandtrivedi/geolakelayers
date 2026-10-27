@@ -83,7 +83,7 @@ function createTableSql (table) {
   collections STRING NOT NULL COMMENT 'JSON [{id, table, title, description, timeField}]',
   warehouse STRING COMMENT 'warehouse id for reads; empty = the gateway bound warehouse',
   owner STRING, created_at TIMESTAMP, updated_by STRING, updated_at TIMESTAMP, version BIGINT
-) COMMENT 'LakeGate OGC API services' TBLPROPERTIES ('lakegate.ogc_services' = 'true')`
+) COMMENT 'GeoLakeLayers OGC API services' TBLPROPERTIES ('geolakelayers.ogc_services' = 'true')`
 }
 
 // Tables created before the engine setting have no warehouse column

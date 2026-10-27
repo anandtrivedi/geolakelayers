@@ -67,7 +67,7 @@ if (existing.ok && existing.rows.length) { console.error(`${S} already exists; p
 
 console.log(`Setting up ${S} on ${regularId}`)
 try {
-  await setup(`CREATE SCHEMA ${S} COMMENT 'LakeGate RT contract test scratch schema; safe to drop'`)
+  await setup(`CREATE SCHEMA ${S} COMMENT 'GeoLakeLayers RT contract test scratch schema; safe to drop'`)
   await setup(`CREATE TABLE ${S}.plain (
     id BIGINT NOT NULL, name STRING, geom GEOMETRY(4326), geog GEOGRAPHY(4326), wkt STRING, wkb BINARY,
     attrs STRUCT<a: INT, b: STRING>, tags ARRAY<STRING>, m MAP<STRING, INT>, ts TIMESTAMP, ts_ntz TIMESTAMP_NTZ,

@@ -27,7 +27,7 @@ describe('version manager', () => {
 
   test('1.20.3 moves single-workspace settings into a workspace and prefixes layer keys', () => {
     const out = upgrade('1.20.3', {
-      gatewayUrl: 'https://lakegate-1234567890123456.aws.databricksapps.com/',
+      gatewayUrl: 'https://geolakelayers-1234567890123456.aws.databricksapps.com/',
       warehouseId: 'abc',
       catalogs: ['main'],
       layers: ['main.geospatial.a', 'ws9::x.y.z'],
@@ -37,7 +37,7 @@ describe('version manager', () => {
     expect(out.warehouseId).toBeUndefined()
     expect(out.catalogs).toBeUndefined()
     expect(out.workspaces).toHaveLength(1)
-    expect(out.workspaces[0]).toMatchObject({ id: 'ws1', gatewayUrl: 'https://lakegate-1234567890123456.aws.databricksapps.com', warehouseId: 'abc', catalogs: ['main'] })
+    expect(out.workspaces[0]).toMatchObject({ id: 'ws1', gatewayUrl: 'https://geolakelayers-1234567890123456.aws.databricksapps.com', warehouseId: 'abc', catalogs: ['main'] })
     expect(typeof out.workspaces[0].label).toBe('string')
     expect(out.layers).toEqual(['ws1::main.geospatial.a', 'ws9::x.y.z'])
     expect(out.allowBrowse).toBe(true)

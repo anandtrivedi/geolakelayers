@@ -1,6 +1,6 @@
-# Using LakeGate
+# Using GeoLakeLayers
 
-LakeGate connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, and clients that speak OGC API – Features. Maps read the tables where they are; the only copy LakeGate ever makes is the one you ask for with **Optimize for maps**. Every request runs on a Databricks SQL warehouse as the person (or service principal) making it, so Unity Catalog grants decide what each user sees. Results are cached per person for up to five minutes, so a change to a table can take that long to show. This guide covers where LakeGate fits and what each client needs. It doesn't walk through clicks in Experience Builder or other tools, because those screens change between releases.
+GeoLakeLayers connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, and clients that speak OGC API – Features. Maps read the tables where they are; the only copy GeoLakeLayers ever makes is the one you ask for with **Optimize for maps**. Every request runs on a Databricks SQL warehouse as the person (or service principal) making it, so Unity Catalog grants decide what each user sees. Results are cached per person for up to five minutes, so a change to a table can take that long to show. This guide covers where GeoLakeLayers fits and what each client needs. It doesn't walk through clicks in Experience Builder or other tools, because those screens change between releases.
 
 ## Pick the path for your client
 
@@ -17,7 +17,7 @@ Personal access tokens aren't accepted: Databricks Apps only let OAuth tokens th
 
 Databricks Data is a custom widget. An ArcGIS administrator makes it available once, either in Experience Builder Developer Edition or by registering it as a custom widget in the organization's Experience Builder. A Databricks admin adds that Experience Builder's address to the gateway's allowed origins.
 
-App authors add the widget to an experience, usually next to the map, and give it the gateway URL shown on this console's Overview. They sign in once, then choose:
+App authors add the widget to an experience, usually next to the map, and give it the gateway URL shown on this console's Map and ArcGIS tabs. They sign in once, then choose:
 
 - the SQL warehouse the app's queries run on,
 - which catalogs viewers may browse, if any,
@@ -31,7 +31,7 @@ Several workspaces can feed one app. Each has its own gateway and its own sign-i
 
 ## OGC clients
 
-An OGC service is a named set of tables. Create one in the **OGC services** tab; each table becomes a collection. The service's landing page URL is what you give a client, and the client follows the links from there. Each service has an engine, the warehouse its queries run on. Lakehouse//RT warehouses suit interactive maps best.
+An OGC service is a named set of tables. Create one in the **OGC / QGIS** tab; each table becomes a collection. The service's landing page URL is what you give a client, and the client follows the links from there. Each service has an engine, the warehouse its queries run on. Lakehouse//RT warehouses suit interactive maps best.
 
 Anything that speaks OGC API – Features and can send an `Authorization` header works. In QGIS, that's a WFS / OGC API – Features connection to the service's landing page, with an **API Header** authentication configuration that sends `Authorization: Bearer <token>`. Tested with QGIS 4.2. A token lasts about an hour; when it expires, paste a new one into the same authentication config. That makes QGIS fine for a working session, not for a connection left open for days. Unattended jobs should use a service principal's client credentials and fetch a fresh token each run. Responses are GeoJSON in CRS84 by default, or EPSG:3857 on request. Results come in pages; clients follow the `next` link.
 
@@ -54,11 +54,11 @@ Before anything that writes to Unity Catalog (a layer override, an OGC service, 
 - **The sign-in popup closes and nothing loads.** The page's address probably isn't in the gateway's allowed origins.
 - **The sign-in popup shows "Login error" instead of closing.** This can happen the first time you sign in to
   Databricks in that browser. Close the popup and click Sign in again; you're signed in by then, so it goes
-  straight through. (When a first login lands on the LakeGate console instead, the gateway now carries on
+  straight through. (When a first login lands on the GeoLakeLayers console instead, the gateway now carries on
   with the sign-in by itself.)
 - **"Your Databricks sign-in expired."** Sign-ins last about an hour. Sign in again; layers reload.
 - **"You don't have … on …"** Unity Catalog refused the request for your account. The message names the privilege and the object; ask the object's owner or an admin to grant it.
 - **A table is missing or a layer is empty.** The user needs USE CATALOG, USE SCHEMA and SELECT on it, and CAN USE on the warehouse. "Can't use this SQL warehouse" means the warehouse grant is missing.
 - **401 from a script.** The token is missing, expired, or a personal access token.
-- **Slow maps on a big table.** Use a Lakehouse//RT warehouse, or create a map-optimized copy from Explore data. Lines and polygons are simplified to the map's zoom level on regular warehouses; Lakehouse//RT can't simplify, so those tile queries run on the bound warehouse.
+- **Slow maps on a big table.** Use a Lakehouse//RT warehouse, or create a map-optimized copy from **Table setup** on the Map tab. Lines and polygons are simplified to the map's zoom level on regular warehouses; Lakehouse//RT can't simplify, so those tile queries run on the bound warehouse.
 - **The gateway is busy or restarts.** The Server gauge in the console's top bar shows its memory and the requests it is answering. Long line layers at full detail use the most; the app runs on Large compute with an 8 GB Node heap.

@@ -34,7 +34,7 @@ export function Guide ({ widgetSource }: { widgetSource?: string | null }) {
         return <p key={i}>{inline(block.replace(/\n/g, ' '))}</p>
       })}
       {widgetSource && <p className='small'>The Databricks Data widget's source and install notes: <a href={widgetSource} target='_blank' rel='noreferrer'>{widgetSource.replace(/^https:\/\//, '')}</a></p>}
-      <p className='muted small'>This page is <code>docs/guide.md</code> in the LakeGate repository.</p>
+      <p className='muted small'>This page is <code>docs/guide.md</code> in the GeoLakeLayers repository.</p>
     </section>
   )
 }

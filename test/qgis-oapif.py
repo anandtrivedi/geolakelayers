@@ -1,4 +1,4 @@
-"""Load a LakeGate OGC service through QGIS's own OGC API – Features provider (headless).
+"""Load a GeoLakeLayers OGC service through QGIS's own OGC API – Features provider (headless).
 
 Run with QGIS's Python:
   /Applications/QGIS-final-4_2_3.app/Contents/MacOS/python3.12 test/qgis-oapif.py <service landing URL> <profile>
@@ -35,9 +35,9 @@ print('CRS84 known:', QgsCoordinateReferenceSystem('OGC:CRS84').isValid(), '| sr
 print('QGIS', Qgis.version(), '| auth methods:', ', '.join(sorted(QgsApplication.authManager().authMethodsKeys())))
 
 am = QgsApplication.authManager()
-am.setMasterPassword('lakegate-test', True)
+am.setMasterPassword('geolakelayers-test', True)
 cfg = QgsAuthMethodConfig('APIHeader')
-cfg.setName('LakeGate bearer')
+cfg.setName('GeoLakeLayers bearer')
 cfg.setConfig('Authorization', f'Bearer {token}')
 ok = am.storeAuthenticationConfig(cfg)
 if isinstance(ok, tuple):

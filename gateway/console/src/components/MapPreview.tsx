@@ -87,7 +87,7 @@ export function MapPreview ({ table, ogc, optimized }: { table: string, ogc?: { 
           if (cancelled) return
           if (lv.updating) {
             if (!ogc && !optimized && Date.now() - drawStart > 15000) {
-              setStatus('Still drawing. This table isn\'t organized by location, so each view reads a lot of it. "Optimize for maps", below the map, writes a copy that draws much faster.')
+              setStatus('Still drawing. This table isn\'t organized by location, so each view reads a lot of it. "Optimize for maps" in Table setup writes a copy that draws much faster.')
             }
             return setTimeout(watch, 300)
           }

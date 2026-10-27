@@ -17,6 +17,10 @@ export interface GatewayInfo {
   overrides: { enabled: boolean, table: string | null }
   ogc: { enabled: boolean, table: string | null }
   widgetSource: string | null
+  /** Where to get the ArcGIS Custom Data Feed provider (feature services in ArcGIS Enterprise); null = don't mention it */
+  cdfSource: string | null
+  /** Tables read as the app for anyone who signs in */
+  openTables: string[]
 }
 
 export interface Warehouse { id: string, name: string, state: string, size: string, serverless: boolean, realtime?: boolean }

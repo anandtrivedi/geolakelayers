@@ -3,7 +3,6 @@ import { api, ApiError } from '../api'
 import type { CatalogTable, GatewayInfo, OgcCollection, OgcColumns, OgcService, Warehouse } from '../api'
 import { CatalogTree } from './CatalogTree'
 import { Copy, CopyToken } from './Copy'
-import { MapPreview } from './MapPreview'
 import { AccessHint, WriteError } from './Access'
 
 // OGC services: named sets of tables served as OGC API – Features (/ogc/<name>), kept in a Unity Catalog table
@@ -13,10 +12,10 @@ function engineOf (s: OgcService, warehouses: Warehouse[], info: GatewayInfo) {
   return { name: w?.name || (s.warehouse ? s.warehouse : 'bound warehouse'), realtime: !!w?.realtime }
 }
 
-const LAST_OPEN = 'lakegate.ogc.lastOpen'
+const LAST_OPEN = 'geolakelayers.ogc.lastOpen'
 
-// startWith: a table from Explore data to open a new service with
-export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo, startWith?: string, onStarted?: () => void }) {
+// startWith: a table from the Map tab to open a new service with; onOpenOnMap shows a collection's table on the Map tab
+export function OgcServices ({ info, startWith, onStarted, onOpenOnMap }: { info: GatewayInfo, startWith?: string, onStarted?: () => void, onOpenOnMap: (table: string) => void }) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   useEffect(() => { api.warehouses().then(d => setWarehouses(d.warehouses)).catch(() => {}) }, [])
   const [services, setServices] = useState<OgcService[] | null>(null)
@@ -59,7 +58,7 @@ export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo
         <h2>OGC services</h2>
         <p className='muted'>
           OGC API – Features is off on this gateway. A Databricks admin turns it on by setting the bundle variable
-          <code>ogc_services_table</code> to a Unity Catalog table name (for example <code>main.lakegate.ogc_services</code>) and redeploying.
+          <code>ogc_services_table</code> to a Unity Catalog table name (for example <code>main.geolakelayers.ogc_services</code>) and redeploying.
         </p>
       </section>
     )
@@ -72,34 +71,33 @@ export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo
   }
 
   const shown = services?.find(s => s.name === open)
+  const newService = () => setDraft({ isNew: true, service: { name: '', title: '', description: '', collections: [], warehouse: warehouses.find(w => w.realtime)?.id || '' } })
 
   return (
-    <>
-      <section className='card'>
+    <div className='ogc-layout'>
+      <section className='card ogc-list'>
         <div className='detail-head'>
-          <div>
-            <h2>OGC services</h2>
-            <p className='muted ogc-intro'>
-              Pick tables and publish them as one OGC API – Features service: GeoJSON over plain HTTPS that QGIS, GDAL,
-              OpenLayers, Leaflet, MapLibre and ArcGIS can read. Every request runs as the caller, so Unity Catalog decides
-              what each client sees. Definitions are kept in <code>{info.ogc.table}</code>.
-            </p>
-          </div>
-          {!needsSetup && <button className='button' onClick={() => setDraft({ isNew: true, service: { name: '', title: '', description: '', collections: [], warehouse: warehouses.find(w => w.realtime)?.id || '' } })}>New service</button>}
+          <h2>OGC services</h2>
+          {!needsSetup && <button className='button' onClick={newService}>New service</button>}
         </div>
+        <p className='muted small'>
+          A service is a set of tables published as OGC API – Features: GeoJSON over HTTPS for QGIS, GDAL, OpenLayers,
+          Leaflet, MapLibre and ArcGIS. Every request runs as the caller. Definitions are kept in <code>{info.ogc.table}</code>.
+        </p>
         {needsSetup && <Setup table={info.ogc.table || ''} onDone={reload} />}
         {!needsSetup && services && <AccessHint action='MODIFY' name={info.ogc.table} doing='Creating, changing or deleting a service' />}
         {error && <p className='error'>Could not read services: {error}</p>}
         {!services && !error && <p className='muted'>Loading services…</p>}
         {services && !services.length && !needsSetup && !error && <p className='muted'>No services yet. Use New service to pick tables.</p>}
-        <div className='ws-grid'>
+        <div className='service-list'>
           {(services || []).map(s => (
             <div key={s.name} className={`ws-card${open === s.name ? ' current' : ''}`}>
-              <div className='ws-name'>{s.title}<span className='chip small'>{s.collections.length} {s.collections.length === 1 ? 'table' : 'tables'}</span>{engineOf(s, warehouses, info).realtime && <span className='chip small rt'>Lakehouse//RT</span>}</div>
-              <code className='ws-url'>/ogc/{s.name}</code>
-              <div className='muted small'>{s.updatedBy || s.owner}{s.updatedAt ? ` · ${new Date(s.updatedAt).toLocaleString()}` : ''}</div>
+              <button className='service-pick' onClick={() => setOpen(s.name)} aria-pressed={open === s.name}>
+                <span className='ws-name'>{s.title}<span className='chip small'>{s.collections.length} {s.collections.length === 1 ? 'table' : 'tables'}</span>{engineOf(s, warehouses, info).realtime && <span className='chip small rt'>Lakehouse//RT</span>}</span>
+                <code className='ws-url'>/ogc/{s.name}</code>
+                <span className='muted small'>{s.updatedBy || s.owner}{s.updatedAt ? ` · ${new Date(s.updatedAt).toLocaleString()}` : ''}</span>
+              </button>
               <div className='card-actions'>
-                <button className='button' onClick={() => setOpen(open === s.name ? null : s.name)}>{open === s.name ? 'Hide endpoints' : 'Endpoints'}</button>
                 <button className='button ghost' onClick={() => setDraft({ isNew: false, service: s })}>Edit</button>
                 <Delete name={s.name} onDone={() => { if (open === s.name) setOpen(null); reload() }} />
               </div>
@@ -107,8 +105,19 @@ export function OgcServices ({ info, startWith, onStarted }: { info: GatewayInfo
           ))}
         </div>
       </section>
-      {shown && <Endpoints key={shown.name} info={info} service={shown} engine={engineOf(shown, warehouses, info)} />}
-    </>
+      {shown
+        ? <Endpoints key={shown.name} info={info} service={shown} engine={engineOf(shown, warehouses, info)} onOpenOnMap={onOpenOnMap} />
+        : (
+          <section className='card ogc-empty'>
+            <h3>Use in QGIS, GDAL and web maps</h3>
+            <ol className='use-steps'>
+              <li>Pick a service on the left, or make one with New service: tick the tables to publish.</li>
+              <li>Give a client the service's landing page URL. In QGIS: Layer › Add WFS / OGC API – Features layer.</li>
+              <li>Send a Databricks OAuth token as <code>Authorization: Bearer</code>; copy one from the service's page. It lasts about an hour.</li>
+            </ol>
+          </section>
+          )}
+    </div>
   )
 }
 
@@ -205,6 +214,7 @@ function Editor ({ info, warehouses, draft, isNew, existing, onCancel, onSaved }
 
   return (
     <section className='card'>
+      <button className='link small back' onClick={onCancel}>← OGC services</button>
       <div className='detail-head'>
         <div>
           <div className='muted small'>{isNew ? 'New OGC service' : 'Edit OGC service'}</div>
@@ -290,9 +300,8 @@ function Editor ({ info, warehouses, draft, isNew, existing, onCancel, onSaved }
   )
 }
 
-function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: OgcService, engine: { name: string, realtime: boolean } }) {
+function Endpoints ({ info, service, engine, onOpenOnMap }: { info: GatewayInfo, service: OgcService, engine: { name: string, realtime: boolean }, onOpenOnMap: (table: string) => void }) {
   const base = `${info.gatewayUrl}/ogc/${service.name}`
-  const [preview, setPreview] = useState(service.collections[0]?.id || '')
   const first = service.collections[0]
   const host = info.workspaceHost ? `https://${info.workspaceHost}` : '<workspace URL>'
   const snippet = [
@@ -311,7 +320,6 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
     ['OpenAPI', `${base}/api`],
     ['Collections', `${base}/collections`]
   ]
-  const shown = service.collections.find(c => c.id === preview)
   return (
     <section className='card'>
       <div className='detail-head'>
@@ -347,11 +355,10 @@ function Endpoints ({ info, service, engine }: { info: GatewayInfo, service: Ogc
             <span className='endpoint-label' title={c.table}>{c.title}{c.timeField && <span className='geom-chip'>time: {c.timeField}</span>}</span>
             <input className='url' readOnly value={`${base}/collections/${c.id}/items`} title={`${base}/collections/${c.id}/items`} aria-label={`${c.title} items URL`} spellCheck={false} />
             <Copy text={`${base}/collections/${c.id}/items`} />
-            <button className={`button${preview === c.id ? '' : ' ghost'}`} onClick={() => setPreview(c.id)}>Preview</button>
+            <button className='button ghost' onClick={() => onOpenOnMap(c.table)}>Open on Map</button>
           </div>
         ))}
       </div>
-      {shown && <MapPreview key={shown.id} table={shown.table} ogc={{ url: base, collectionId: shown.id }} />}
       <h4 className='picked-head'>From a script or pipeline</h4>
       <div className='snippet-wrap'>
         <pre className='snippet'>{snippet}</pre>

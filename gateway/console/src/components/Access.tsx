@@ -17,7 +17,7 @@ export function AccessHint ({ action, name, doing }: { action: 'MODIFY' | 'CREAT
   if (!access || access.ok !== false) return null
   return (
     <p className='access-hint small'>
-      {doing} needs {access.missing!.join(', ')}. LakeGate found no grant that gives you that; ask an owner or admin, or try anyway if you have access another way.
+      {doing} needs {access.missing!.join(', ')}. GeoLakeLayers found no grant that gives you that; ask an owner or admin, or try anyway if you have access another way.
     </p>
   )
 }

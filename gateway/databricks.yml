@@ -1,4 +1,4 @@
-# LakeGate: Databricks geospatial gateway for ArcGIS (Experience Builder "Databricks Data" widget) and OGC API – Features clients.
+# GeoLakeLayers: Databricks geospatial gateway for ArcGIS (Experience Builder "Databricks Data" widget) and OGC API – Features clients.
 #
 # One gateway per Unity Catalog metastore (a Databricks sign-in is per workspace). Workspaces that share a metastore
 # see the same Unity Catalog catalogs, so one gateway can serve all of them.
@@ -7,7 +7,7 @@
 # Targets: copy targets.example.yml to targets.local.yml and set host, warehouse_id and allowed_origins.
 
 bundle:
-  name: lakegate
+  name: geolakelayers
 
 # Deployment targets live in targets.local.yml (gitignored); start from targets.example.yml
 include:
@@ -16,7 +16,7 @@ include:
 variables:
   app_name:
     description: Name of the Databricks App
-    default: lakegate
+    default: geolakelayers
   compute_size:
     description: App compute, MEDIUM (2 vCPU, 6 GB) or LARGE (4 vCPU, 12 GB, twice the DBUs). LARGE helps with long line layers at full detail
     default: MEDIUM
@@ -35,7 +35,7 @@ variables:
     description: Optional cap on the catalogs the widget may list. "-" = no cap (authors choose any catalog the user can see)
     default: "-"
   directory:
-    description: Other LakeGate gateways shown in the console and offered in the widget, "name=url;name=url". "-" = none
+    description: Other GeoLakeLayers gateways shown in the console and offered in the widget, "name=url;name=url". "-" = none
     default: "-"
   editing:
     description: Master switch for editing ("true" / "false"). Off by default; apps also have to turn it on.
@@ -54,13 +54,16 @@ variables:
     default: "-"
   widget_source:
     description: Where ArcGIS admins get the Experience Builder widget (shown in the console). "-" = don't show a link
-    default: https://github.com/anandtrivedi/lakegate/tree/main/widget/databricks-data
+    default: https://github.com/anandtrivedi/geolakelayers/tree/main/widget/databricks-data
+  cdf_source:
+    description: Where ArcGIS admins get the Databricks Custom Data Feed provider, for layers in Map Viewer and ArcGIS Pro (shown in the console). "-" = don't mention it
+    default: https://github.com/anandtrivedi/esri-customdatafeed
 
 resources:
   apps:
     gateway:
       name: ${var.app_name}
-      description: LakeGate - Databricks geospatial gateway for ArcGIS and OGC (Unity Catalog tables as FeatureServer layers and OGC API - Features)
+      description: GeoLakeLayers - Databricks geospatial gateway for ArcGIS and OGC (Unity Catalog tables as FeatureServer layers and OGC API - Features)
       source_code_path: .
       compute_size: ${var.compute_size}
       # Queries run as the signed-in user, so Unity Catalog decides what each person sees
@@ -97,6 +100,8 @@ resources:
             value: ${var.ogc_services_table}
           - name: WIDGET_SOURCE
             value: ${var.widget_source}
+          - name: CDF_SOURCE
+            value: ${var.cdf_source}
           - name: RATE_LIMIT_MAX
             value: "2000"
           # Smaller pages draw sooner; big tables only draw when zoomed in (BIG_TABLE_FEATURES)

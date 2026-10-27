@@ -15,10 +15,11 @@ targets:
       # allowed_warehouses: <id>,<id>          # extra warehouses authors and OGC services may pick
       # catalogs: <catalog>,<catalog>          # cap on the catalogs the widget may list
       # editing: "true"                         # allow edits (apps and UC MODIFY still decide)
-      # ogc_services_table: <catalog>.lakegate.ogc_services
+      # ogc_services_table: <catalog>.geolakelayers.ogc_services
       # open_tables: <catalog>.<schema>.<table> # read as the app for anyone who signs in (grant the app SELECT)
-      # layer_overrides_table: <catalog>.lakegate.layer_overrides
-      # directory: east=https://lakegate-<id>.aws.databricksapps.com;gov=https://lakegate-<id>.aws-gov.databricksapps.us
+      # layer_overrides_table: <catalog>.geolakelayers.layer_overrides
+      # cdf_source: "-"                        # hide the Custom Data Feed link (default: its GitHub repo)
+      # directory: east=https://geolakelayers-<id>.aws.databricksapps.com;gov=https://geolakelayers-<id>.aws-gov.databricksapps.us
 
   # A second metastore (another region, or GovCloud) gets its own target and its own gateway
   # gov:

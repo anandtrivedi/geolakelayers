@@ -1,8 +1,8 @@
 {
-  "name": "lakegate-browser-checks",
+  "name": "geolakelayers-browser-checks",
   "private": true,
   "type": "module",
-  "description": "Headless browser checks against a deployed LakeGate gateway",
+  "description": "Headless browser checks against a deployed GeoLakeLayers gateway",
   "devDependencies": {
     "puppeteer-core": "^24.0.0"
   }

@@ -1,14 +1,14 @@
-# LakeGate
+# GeoLakeLayers
 
 *Built on Databricks Apps by Anand Trivedi.*
 
-Databricks geospatial gateway for ArcGIS and OGC. LakeGate is a small Databricks App that serves Unity Catalog tables
+Databricks geospatial gateway for ArcGIS and OGC. GeoLakeLayers is a small Databricks App that serves Unity Catalog tables
 as live map layers, in two forms:
 
 - **ArcGIS FeatureServer layers** for Experience Builder apps, through the **Databricks Data** widget in this
   repository (`widget/databricks-data/`).
 - **OGC API – Features services** for QGIS, GDAL, OpenLayers, Leaflet, MapLibre and scripts. These need only
-  LakeGate, no widget.
+  GeoLakeLayers, no widget.
 
 Viewers sign in with Databricks and see only what Unity Catalog lets them see. Nothing is copied: every pan and
 zoom is a query on a Databricks SQL warehouse, with results cached per user for up to five minutes. (The one
@@ -17,16 +17,16 @@ exception is **Optimize for maps**, which writes a map-friendly copy of a table 
 ![Published experience with Unity Catalog layers](screenshots/published-app-layers.png)
 
 Which client uses what (Experience Builder, OGC clients like QGIS and GDAL, scripts) is covered in
-[docs/guide.md](docs/guide.md). The same page is the console's **Guide** tab.
+[docs/guide.md](docs/guide.md). The same page is the console's **Help** panel.
 
 ## How it fits
 
-![Architecture: map clients, LakeGate (one per metastore), SQL warehouse and Unity Catalog](screenshots/architecture.png)
+![Architecture: map clients, GeoLakeLayers (one per metastore), SQL warehouse and Unity Catalog](screenshots/architecture.png)
 
 - **Databricks Data widget** (`widget/databricks-data/`): signs the user in to each workspace, lists the
   tables they can use, and adds them to the map as Experience Builder data sources, so Map Layers, Legend,
   Table and Filter treat them like any other layer.
-- **LakeGate** (`gateway/`): a Databricks App, one per Unity Catalog metastore. It turns ArcGIS FeatureServer
+- **GeoLakeLayers** (`gateway/`): a Databricks App, one per Unity Catalog metastore. It turns ArcGIS FeatureServer
   requests (extent, paging, filters, counts) into SQL and runs them **as the signed-in user**. Scripts and
   ArcGIS Maps SDK apps can use its layer URLs when they send a Databricks OAuth token; ArcGIS Map Viewer and
   ArcGIS Pro can't add them by URL yet, because they can't send a Databricks sign-in. It also publishes sets of tables as **OGC API – Features**
@@ -47,7 +47,7 @@ workspace on another metastore (another region, or GovCloud) gets its own gatewa
   Unity Catalog container for a region; workspaces attached to the same one see the same catalogs.
 - **SQL warehouse**: the compute that runs queries. People need `CAN USE` on one to query through it.
 - **Databricks App**: a web app hosted inside the workspace. Databricks signs people in before a request
-  reaches it, and LakeGate runs each query with that person's identity.
+  reaches it, and GeoLakeLayers runs each query with that person's identity.
 - **OAuth token**: what scripts and QGIS send as `Authorization: Bearer <token>`. Get one with
   `databricks auth token` (Databricks CLI), or from the console's **Copy token** button. Tokens last about an
   hour. Personal access tokens don't work, because Databricks Apps only accept OAuth.
@@ -72,9 +72,9 @@ There are two paths. **OGC clients only** (QGIS, GDAL, web maps, scripts): step 
 set (below). **Experience Builder**: step 1, then install the widget (step 2, and step 3 if you use Portal's
 own Experience Builder).
 
-### 1. Deploy LakeGate (both paths)
+### 1. Deploy GeoLakeLayers (both paths)
 
-LakeGate is a Databricks Asset Bundle in `gateway/`. Your deployment targets go in
+GeoLakeLayers is a Databricks Asset Bundle in `gateway/`. Your deployment targets go in
 `gateway/targets.local.yml`, which is gitignored, so your hosts and warehouse ids stay out of the repo. Start
 from the example:
 
@@ -95,7 +95,7 @@ targets:
       # optional:
       allowed_warehouses: <id>,<id>                    # extra warehouses authors may pick
       catalogs: "-"                                    # cap on listable catalogs; "-" = none
-      directory: east=https://lakegate-<id>.aws.databricksapps.com;gov=https://lakegate-<id>.aws-gov.databricksapps.us
+      directory: east=https://geolakelayers-<id>.aws.databricksapps.com;gov=https://geolakelayers-<id>.aws-gov.databricksapps.us
 ```
 
 Then deploy and start it:
@@ -106,15 +106,17 @@ databricks bundle deploy -t myworkspace --profile <profile>
 databricks bundle run gateway -t myworkspace --profile <profile>
 ```
 
-The app is created as `lakegate`, open to account users (`CAN_USE`), with user authorization for SQL, and
+The app is created as `geolakelayers`, open to account users (`CAN_USE`), with user authorization for SQL, and
 the warehouse bound as an app resource. Its URL is printed at the end
-(`https://lakegate-<workspace-id>.<region>.databricksapps.com`). Open it in a browser to check it: the
-console shows who you are, the workspace, warehouse and allowed origins, and lets you browse tables and
-preview them on a map.
+(`https://geolakelayers-<workspace-id>.<region>.databricksapps.com`). Open it in a browser to check it: the
+console opens on a map of a table you can read, with the URLs to use it in Experience Builder, QGIS or a
+script beside it; the ArcGIS, OGC / QGIS and Admin tabs cover each client and the gateway's health.
 
-![LakeGate console](screenshots/lakegate-overview.png)
+![The console's Map tab: a Unity Catalog table drawn live, with the URLs to use it](screenshots/console-map.png)
 
-![Exploring a catalog in the console](screenshots/lakegate-explore.png)
+![The ArcGIS tab: Experience Builder steps, and when to use the Custom Data Feed instead](screenshots/console-arcgis.png)
+
+![The OGC / QGIS tab: a service's landing page, collections and token](screenshots/console-ogc.png)
 
 Who needs what. Queries run as the person, so the app's service principal needs no data grants.
 
@@ -132,7 +134,7 @@ some indirect grants don't show there. Any refusal from Databricks is shown as t
 object, not as a raw SQL error.
 
 **OGC services** are off until `ogc_services_table` names a table, for example
-`main.lakegate.ogc_services`. Set it in your target and redeploy, then open the console's **OGC services** tab
+`main.geolakelayers.ogc_services`. Set it in your target and redeploy, then open the console's **OGC / QGIS** tab
 and click **Create table** (or create it yourself), grant `SELECT` on it to everyone who reads services and
 `MODIFY` to those who define them, and click **New service** to pick tables. Layer overrides work the same
 way with `layer_overrides_table`.
@@ -232,11 +234,11 @@ SQL parameters and column names are checked against the table.
 
 ## How tables are read
 
-LakeGate works out each table's geometry and object id from column types and values, never from
+GeoLakeLayers works out each table's geometry and object id from column types and values, never from
 column names.
 
 - Geometry: a GEOMETRY or GEOGRAPHY column is used by its type (another SRID is reprojected to 4326).
-  Otherwise LakeGate samples the table's text and binary columns with `try_to_geometry`; a column whose
+  Otherwise GeoLakeLayers samples the table's text and binary columns with `try_to_geometry`; a column whose
   values parse as WKT, EWKT, GeoJSON or WKB (95% of 200 sampled values) is the geometry, in the SRID the
   values carry, else 4326.
 - Object id: the table's Unity Catalog primary key when it is a single integer column. Otherwise an id
@@ -244,7 +246,7 @@ column names.
   layers are read-only.
 - Listing: the catalog tree lists tables with a GEOMETRY/GEOGRAPHY column straight from metadata. Geometry
   stored as text or binary needs the values, so it is found when a table is opened, or for a whole schema
-  with **Scan schema** in the console's Explore tab. **Open table** opens any table by name.
+  with **Scan schema** on the console's Map tab (under "Can't find your table?"). **Open table** opens any table by name.
 
 When that isn't right (geometry in two longitude/latitude columns, a mostly empty geometry column, the
 wrong one of two geometry columns, or a real id column without a declared primary key), set an override:
@@ -261,13 +263,13 @@ To make a table editable without an override, declare its primary key:
 
 ## OGC API – Features
 
-Besides ArcGIS layers, LakeGate publishes OGC API – Features services: pick tables in the console, save
+Besides ArcGIS layers, GeoLakeLayers publishes OGC API – Features services: pick tables in the console, save
 them under a name, and each table becomes a collection at
 `https://<gateway>/ogc/<service>/collections/<table>/items`. Responses are GeoJSON. The service implements
 Part 1 (Core, GeoJSON, OpenAPI 3.0) and Part 2 (CRS84 and EPSG:3857).
 
 Turning it on (Databricks admin): set `ogc_services_table` in the bundle target to a Unity Catalog table
-name, for example `main.lakegate.ogc_services`, and redeploy. Then open the console's **OGC services**
+name, for example `main.geolakelayers.ogc_services`, and redeploy. Then open the console's **OGC / QGIS**
 tab and use **Create table** once (it needs CREATE TABLE on that schema). Grant SELECT on the table to the
 people and service principals that read services, and MODIFY to the people who define them.
 
@@ -315,7 +317,7 @@ collection list. The services are read-only.
 
 ## Lakehouse//RT (low-latency reads, optional, Beta)
 
-Nothing in LakeGate requires this; everything works on a regular SQL warehouse. A map pan sends dozens of
+Nothing in GeoLakeLayers requires this; everything works on a regular SQL warehouse. A map pan sends dozens of
 small read queries at once, which is the workload Lakehouse//RT is built for, so a gateway can offer a
 Lakehouse//RT warehouse next to its regular one:
 
@@ -326,7 +328,7 @@ Lakehouse//RT warehouse next to its regular one:
    (`users`, not `account users`):
    `databricks warehouses update-permissions <id> --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}'`
    (`update-permissions` adds to the existing permissions; `set-permissions` would replace them)
-3. Add its id to `allowed_warehouses` in the gateway's bundle target and redeploy. LakeGate recognizes
+3. Add its id to `allowed_warehouses` in the gateway's bundle target and redeploy. GeoLakeLayers recognizes
    Lakehouse//RT warehouses by their type; nothing else to configure.
 
 Then pick it as the engine:
@@ -338,7 +340,7 @@ Then pick it as the engine:
   service decides; if its warehouse is later removed from the allow-list, it reads on the bound warehouse.
 
 Reads run on Lakehouse//RT, over the Statement Execution API and as the viewer: features, counts, extents
-and also the metadata LakeGate reads to work out a table's layout (DESCRIBE, information_schema). Edits,
+and also the metadata GeoLakeLayers reads to work out a table's layout (DESCRIBE, information_schema). Edits,
 overrides and OGC service changes run on the bound warehouse, which must be a regular SQL warehouse, and so
 do simplified line and polygon tiles (no ST_Simplify on Lakehouse//RT yet). Tables with row filters or
 column masks (not supported on Lakehouse//RT yet) are detected before the first query and read on the
@@ -363,7 +365,7 @@ file reads, so expect less of a gap on big unclustered tables.
 On real tables (October 2026, Lakehouse//RT vs the regular Serverless Starter warehouse, timed from
 a client): an AIS points page (270 MB table, native GEOMETRY) 330–500 ms vs 1.5–2.0 s, and a 24-tile pan
 1.5 s vs 6.3 s; a bbox count 140 ms vs 1.1–1.4 s; the map-optimized Overture places copy 125 ms vs 1.1 s;
-AIS H3 hexes 125–160 ms vs 0.8–1.2 s. Through LakeGate's FeatureServer query (2,000 features): about
+AIS H3 hexes 125–160 ms vs 0.8–1.2 s. Through GeoLakeLayers's FeatureServer query (2,000 features): about
 300 ms vs 1.05–1.15 s. The smallest Lakehouse//RT size (Small, 12 DBU/hour) matched X-Large on all of these,
 including 24 tiles at once, so start small and let autoscaling handle concurrency.
 
@@ -380,6 +382,8 @@ rejects empty values):
 | `catalogs` | `-` | Optional cap on which catalogs can be listed |
 | `exclude_catalogs` | `system,samples,hive_metastore,__databricks_internal` | Never listed |
 | `directory` | `-` | Other gateways, `name=url;name=url`, shown in the console and the widget |
+| `widget_source` | the widget's GitHub folder | Where ArcGIS admins get the widget (linked from the console); `-` hides the link |
+| `cdf_source` | the Custom Data Feed repo | Where to get the ArcGIS Custom Data Feed provider, for layers in Map Viewer and ArcGIS Pro; `-` hides it |
 | `MAX_ROWS` | `4000` | Features per page |
 | `BIG_TABLE_FEATURES` | `250000` | Above this, layers draw only when zoomed in (about zoom 9) |
 | `editing` | `"false"` | Master switch for editing on this gateway |
@@ -387,7 +391,7 @@ rejects empty values):
 | `ogc_services_table` | `-` | Unity Catalog table holding OGC API service definitions; `-` turns OGC API off |
 | `compute_size` | `MEDIUM` | App compute: `MEDIUM` (2 vCPU, 6 GB) or `LARGE` (4 vCPU, 12 GB) |
 | `node_heap_mb` | `"3072"` | Node heap limit; about half the app's memory (`"8192"` on `LARGE`) |
-| `app_name` | `lakegate` | Name of the Databricks App |
+| `app_name` | `geolakelayers` | Name of the Databricks App |
 
 Allowed origins are compared the way browsers send them (scheme, host and port), so a trailing slash or a path
 in the setting is ignored.
@@ -403,7 +407,7 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
   in the builder they are shared between its windows, never in published apps.
 - The browser never sends SQL. Table, column and catalog names are checked as plain identifiers; `where`
   clauses are validated; bounding boxes are built from numbers.
-- Caches are per user. "Optimize for maps" only replaces tables LakeGate wrote itself.
+- Caches are per user. "Optimize for maps" only replaces tables GeoLakeLayers wrote itself.
 - The app is open to all account users on purpose: what anyone can read or change is decided by Unity Catalog.
   The catalog cap limits what the widget lists, not what people can access.
 - Open tables are the one exception, and only a Databricks admin can set them: tables named in the bundle
@@ -416,7 +420,7 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
 
 - Layers above 250,000 features draw only when zoomed in; the widget says so on the layer's row.
 - Repeated map requests are cached per user for 5 minutes; warehouse sessions are reused.
-- For big tables, use **Optimize for maps** in the console (Explore data → a table). It writes a copy with
+- For big tables, use **Optimize for maps** in the console (Map → a table → Table setup). It writes a copy with
   native GEOMETRY and per-row bounding boxes, clustered on them, so map views read only nearby files. The
   original table is not changed.
 
@@ -449,7 +453,7 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
 | Path | What it is |
 |---|---|
 | `widget/databricks-data/` | Experience Builder widget (runtime, settings, shared sign-in, tree) |
-| `gateway/` | LakeGate Databricks App and its bundle (`databricks.yml`) |
+| `gateway/` | GeoLakeLayers Databricks App and its bundle (`databricks.yml`) |
 | `gateway/console/` | Console source; built into `gateway/public/` |
 | `test/` | Browser tests and screenshot scripts |
 | `screenshots/` | Images in this README |

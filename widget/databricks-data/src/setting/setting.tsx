@@ -292,7 +292,7 @@ export default function Setting (props: AllWidgetSettingProps<IMConfig>) {
                 </div>
               )}
               <label className='field'>{directoryLeft.length ? nls('orEnterUrl') : nls('enterUrl')}
-                <TextInput size='sm' className='w-100' placeholder='https://lakegate-….databricksapps.com' value={newUrl}
+                <TextInput size='sm' className='w-100' placeholder='https://geolakelayers-….databricksapps.com' value={newUrl}
                   onChange={e => setNewUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && addWorkspace('', newUrl)} />
               </label>
               <div className='add-actions'>

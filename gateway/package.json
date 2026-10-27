@@ -1,8 +1,8 @@
 {
-  "name": "lakegate",
+  "name": "geolakelayers",
   "version": "0.2.0",
   "private": true,
-  "description": "LakeGate: serves Unity Catalog tables as ArcGIS FeatureServer layers (provider vendored from koop-provider-databricks @ a08f6e7)",
+  "description": "GeoLakeLayers: serves Unity Catalog tables as ArcGIS FeatureServer layers (provider vendored from koop-provider-databricks @ a08f6e7)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -20,6 +20,8 @@
     "uuid": "9.0.1"
   },
   "devDependencies": {
+    "@fontsource/dm-mono": "5.3.0",
+    "@fontsource/dm-sans": "5.3.0",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.3.4",

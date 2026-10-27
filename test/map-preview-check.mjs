@@ -22,7 +22,7 @@ const logs = []
 page.on('console', m => { if (['error', 'warn'].includes(m.type())) logs.push(`${m.type()}: ${m.text().slice(0, 200)}`) })
 page.on('pageerror', e => logs.push(`pageerror: ${e.message}`))
 const [catalog, schema] = table.split('.')
-await page.evaluateOnNewDocument((t, c, s, n) => localStorage.setItem('lakegate.explore.lastTable', JSON.stringify({ table: t, catalog: c, schema: s, name: n, idField: '', geometry: '' })), table, catalog, schema, table.split('.')[2])
+await page.evaluateOnNewDocument((t, c, s, n) => localStorage.setItem('geolakelayers.explore.lastTable', JSON.stringify({ table: t, catalog: c, schema: s, name: n, idField: '', geometry: '' })), table, catalog, schema, table.split('.')[2])
 await page.goto(`${gateway}/#explore`, { waitUntil: 'networkidle2', timeout: 120000 })
 await page.waitForSelector('.map-preview-status', { timeout: 120000 }).catch(() => {})
 const t0 = Date.now()

@@ -1,16 +1,16 @@
-// How LakeGate fits: map clients -> LakeGate (one per Unity Catalog metastore) -> SQL warehouse ->
-// Unity Catalog, which holds both the data and the gateway's settings. House style: teal header bands,
-// red flow arrows, green governed-access arrow, featured boxes in #fff3f0 with a Databricks-red border,
-// light-gray context boxes, Arial.
+// How GeoLakeLayers fits: map clients -> GeoLakeLayers (one per Unity Catalog metastore) -> SQL warehouse ->
+// Unity Catalog, which holds both the data and the gateway's settings. Databricks brand: Navy 900 header bands,
+// Lava 600 flow arrows, green governed-access arrow, featured boxes in a Lava tint with a Lava border,
+// Oat context boxes, DM Sans.
 
-const TEAL = '#1b3139'
+const TEAL = '#0b2026'
 const RED = '#ff3621'
 const GREEN = '#00a972'
-const GRAY_FILL = '#e9ebee'
-const BORDER = '#c9ced3'
+const GRAY_FILL = '#eeede9'
+const BORDER = '#c4ccd6'
 const FEATURE_FILL = '#fff3f0'
-const TEXT = '#1b3139'
-const MUTED = '#5a6b73'
+const TEXT = '#0b2026'
+const MUTED = '#4a5568'
 
 function Band ({ x, w, title }: { x: number, w: number, title: string }) {
   return (
@@ -51,18 +51,18 @@ function Arrow ({ d, color = RED, label, lx, ly, dashed = false }: {
   return (
     <g>
       <path d={d} fill='none' stroke={color} strokeWidth={2.5} strokeDasharray={dashed ? '6 5' : undefined} markerEnd={marker} />
-      {label && <Label x={lx!} y={ly!} color={color === GREEN ? '#00804f' : '#c22a14'}>{label}</Label>}
+      {label && <Label x={lx!} y={ly!} color={color === GREEN ? '#00804f' : '#98102a'}>{label}</Label>}
     </g>
   )
 }
 
 export function Architecture () {
   return (
-    <svg viewBox='0 0 1120 556' role='img' aria-labelledby='arch-title arch-desc' style={{ width: '100%', height: 'auto', fontFamily: 'Arial, Helvetica, sans-serif' }}>
-      <title id='arch-title'>How LakeGate fits between map clients and Databricks</title>
-      <desc id='arch-desc'>ArcGIS and OGC API clients call a LakeGate gateway, one per Unity Catalog metastore. The gateway runs FeatureServer and OGC API queries on a SQL warehouse as the signed-in user, so Unity Catalog permissions apply. Its settings and the data are Unity Catalog tables.</desc>
+    <svg viewBox='0 0 1120 556' role='img' aria-labelledby='arch-title arch-desc' style={{ width: '100%', height: 'auto', fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif" }}>
+      <title id='arch-title'>How GeoLakeLayers fits between map clients and Databricks</title>
+      <desc id='arch-desc'>ArcGIS and OGC API clients call a GeoLakeLayers gateway, one per Unity Catalog metastore. The gateway runs FeatureServer and OGC API queries on a SQL warehouse as the signed-in user, so Unity Catalog permissions apply. Its settings and the data are Unity Catalog tables.</desc>
       <defs>
-        <filter id='shadow' x='-10%' y='-10%' width='120%' height='130%'><feDropShadow dx='0' dy='2' stdDeviation='2.5' floodColor='#1b3139' floodOpacity='0.12' /></filter>
+        <filter id='shadow' x='-10%' y='-10%' width='120%' height='130%'><feDropShadow dx='0' dy='2' stdDeviation='2.5' floodColor='#0b2026' floodOpacity='0.12' /></filter>
         <marker id='redHead' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill={RED} /></marker>
         <marker id='greenHead' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill={GREEN} /></marker>
       </defs>
@@ -83,10 +83,10 @@ export function Architecture () {
 
       <Box x={430} y={82} w={280} h={70} gray title='Databricks Apps front door'
         lines={['Databricks SSO, token per workspace', 'CORS: allow-listed origins']} />
-      <Box x={430} y={196} w={280} h={170} featured title='LakeGate (this app)'
+      <Box x={430} y={196} w={280} h={170} featured title='GeoLakeLayers (this app)'
         lines={['FeatureServer layer per UC table', 'OGC API – Features services', 'queries run as the viewer (OBO)', 'geometry + id by type and content', 'warehouse allow-list, catalog scope', 'one per metastore, same bundle']} />
       <Box x={430} y={430} w={280} h={84} title='Other metastores'
-        lines={['their own LakeGate gateway', '(e.g. one in GovCloud)', 'listed in the workspace directory']} />
+        lines={['their own GeoLakeLayers gateway', '(e.g. one in GovCloud)', 'listed in the workspace directory']} />
 
       <Box x={820} y={82} w={260} h={92} title='SQL warehouse (serverless)'
         lines={['bbox pushdown with ST_Intersects', 'paging, counts, extents', 'allow-listed per gateway']} />
@@ -94,7 +94,7 @@ export function Architecture () {
         lines={['grants, row filters and column masks', 'decide what each viewer sees']} />
       <Box x={836} y={292} w={228} h={92} gray shadow={false} title='Delta tables'
         lines={['any table with geometry', 'data stays in Databricks', '(nothing copied to ArcGIS)']} />
-      <Box x={836} y={398} w={228} h={100} gray shadow={false} title='LakeGate settings'
+      <Box x={836} y={398} w={228} h={100} gray shadow={false} title='GeoLakeLayers settings'
         lines={['OGC services', 'layer overrides', 'UC tables, read as the viewer']} />
 
       <Arrow d='M300 118 L428 118' label='sign in (popup)' lx={364} ly={108} dashed />
@@ -103,8 +103,8 @@ export function Architecture () {
       <Arrow d='M300 407 C368 407 360 340 428 340' label='OGC API (GeoJSON)' lx={356} ly={392} />
       <Arrow d='M570 152 L570 194' />
       <Arrow d='M710 240 C764 240 766 128 818 128' />
-      <Label x={766} y={262} color='#c22a14'>SQL as</Label>
-      <Label x={766} y={276} color='#c22a14'>the viewer</Label>
+      <Label x={766} y={262} color='#98102a'>SQL as</Label>
+      <Label x={766} y={276} color='#98102a'>the viewer</Label>
       <Arrow d='M950 174 L950 220' color={GREEN} label='governed access' lx={1006} ly={202} />
       <path d='M570 366 L570 430' fill='none' stroke={MUTED} strokeWidth={2} strokeDasharray='2 5' strokeLinecap='round' />
       <Label x={580} y={402} color={MUTED} anchor='start'>peers, not a data path</Label>
