@@ -85,12 +85,9 @@ test('validation.validateWhereClause: case-insensitive keyword detection', async
   assert.equal(result.valid, false)
 })
 
-test('validation.validateWhereClause: keyword in string rejected (conservative)', async t => {
-  // The validation uses a simple regex that catches keywords even in strings
-  // This is conservative but effective at blocking most injection attempts
-  // Future: could parse more carefully to allow keywords in string literals
-  const result = validateWhereClause('name = \'drop\'')
-  assert.equal(result.valid, false)
+test('validation.validateWhereClause: a keyword inside a string literal is a value, not SQL', async t => {
+  assert.equal(validateWhereClause('name = \'drop\'').valid, true)
+  assert.equal(validateWhereClause('name = \'a\' OR 1=1; DROP TABLE x').valid, false)
 })
 
 test('validation.validateWhereClause: unparseable SQL rejected', async t => {
@@ -247,5 +244,16 @@ test('validation.validateWhereClause: quotes escaped the way ArcGIS and Databric
   }
   for (const w of ["x = 'it''s' AND y IN (SELECT 1)", "x = INTERVAL 'a\\'' OR x IN (SELECT s FROM c.s.t) OR ''' DAY"]) {
     assert.equal(validateWhereClause(w).valid, false, w)
+  }
+})
+
+test('validation.validateWhereClause: a keyword inside a literal does not move where literals end', async t => {
+  for (const w of ["a = 'INTERVAL' or secret(chr(115), chr(107)) = chr(120) or b = ' DAY'",
+    "a = 'INTERVAL' or 1 = (select count(*) from other.s.t) or b = ' DAY'",
+    "a = \"INTERVAL\" or x in (select 1) or b = ' DAY'", "`INTERVAL` = 'x' or x in (select 1) or b = ' DAY'"]) {
+    assert.equal(validateWhereClause(w).valid, false, w)
+  }
+  for (const w of ["status = 'Pending Update'", "note LIKE '%delete%'", "t > CURRENT_TIMESTAMP - INTERVAL '7' DAY AND n = 'O''Brien'"]) {
+    assert.equal(validateWhereClause(w).valid, true, w)
   }
 })

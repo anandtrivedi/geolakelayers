@@ -490,3 +490,8 @@ test('executeAndRecord: the operation is closed even when fetching its rows fail
   await assert.rejects(I.executeAndRecord(session, 'SELECT 1', 'test', 't'), /results download dropped/)
   assert.equal(closed, true)
 })
+
+test('buildTimeFilter: three parts are refused; decimal epoch milliseconds are read', () => {
+  assert.throws(() => I.buildTimeFilter('0,1000,5', 't0'), e => e.code === 400)
+  assert.equal(I.buildTimeFilter('0.0,1000.0', 't0'), "t0 BETWEEN TIMESTAMP '1970-01-01T00:00:00.000Z' AND TIMESTAMP '1970-01-01T00:00:01.000Z'")
+})
