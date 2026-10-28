@@ -28,7 +28,7 @@ function validateWhereClause (where) {
 
   // Attempt to parse as valid SQL
   try {
-    const ast = parser.parse(`SELECT * FROM t WHERE ${where}`)
+    const ast = parser.parse(`SELECT * FROM t WHERE ${forParser(where)}`)
 
     // Reject if the parser produced a UNION or other compound statement
     if (ast && ast.value && ast.value.type !== 'Select') {
@@ -44,6 +44,16 @@ function validateWhereClause (where) {
   }
 
   return { valid: true, error: null }
+}
+
+// Typed literals and intervals in the standardized SQL ArcGIS clients send for dates (TIMESTAMP '...',
+// DATE '...', INTERVAL '7' DAY), which Databricks runs but the parser doesn't know, read as the plain
+// literal they wrap. Only what is parsed changes; the clause that runs is the one received.
+const QUOTED = "'(?:[^']|'')*'"
+const TYPED_LITERAL = new RegExp(`\\b(?:TIMESTAMP|DATE|TIME)\\s*(${QUOTED})`, 'gi')
+const INTERVAL = new RegExp(`\\bINTERVAL\\s*${QUOTED}\\s*(?:YEAR|MONTH|DAY|HOUR|MINUTE|SECOND)S?\\b`, 'gi')
+function forParser (where) {
+  return where.replace(TYPED_LITERAL, '$1').replace(INTERVAL, '0')
 }
 
 /**

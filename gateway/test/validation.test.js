@@ -210,3 +210,13 @@ test('validation.validateColumnList: mixed valid and invalid rejected', async t 
   const result = validateColumnList('valid_col, "quoted", another_col')
   assert.equal(result.valid, false)
 })
+
+test('validation.validateWhereClause: date literals and intervals ArcGIS clients send', async t => {
+  for (const w of ["went_dark >= timestamp '2024-07-04 00:00:00'", "d BETWEEN DATE '2024-07-01' AND DATE '2024-07-07'",
+    "t BETWEEN CURRENT_TIMESTAMP - INTERVAL '7' DAY AND CURRENT_TIMESTAMP", "TIMESTAMP '2024-07-04 00:00:00' < t AND kind = 'a'"]) {
+    assert.equal(validateWhereClause(w).valid, true, w)
+  }
+  for (const w of ["t = timestamp '1' OR 1=1; DROP TABLE x", "t = timestamp 'x' UNION SELECT 1", 't = DATE (SELECT max(t) FROM x)']) {
+    assert.equal(validateWhereClause(w).valid, false, w)
+  }
+})
