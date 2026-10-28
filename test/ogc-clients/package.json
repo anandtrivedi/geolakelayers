@@ -1,0 +1,10 @@
+{
+  "name": "geolakelayers-ogc-clients",
+  "private": true,
+  "description": "OGC API – Features showcase pages (OpenLayers, MapLibre GL, Leaflet) for a GeoLakeLayers service; libraries served from node_modules, no CDN",
+  "devDependencies": {
+    "leaflet": "^1.9.4",
+    "maplibre-gl": "^5.0.0",
+    "ol": "^10.0.0"
+  }
+}

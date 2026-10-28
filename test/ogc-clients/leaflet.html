@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Leaflet · GeoLakeLayers OGC API – Features</title>
+  <link rel="stylesheet" href="node_modules/leaflet/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="node_modules/leaflet/dist/leaflet.js"></script>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="caption"></div>
+  <div id="status">Loading…</div>
+  <script type="module">
+    // Ten minutes of AIS positions in the Houston Ship Channel and Galveston Bay, using the collection's
+    // time field (OGC API – Features datetime=), colored by speed over ground
+    import { items, caption, status, done, DARK_GRAY, DARK_GRAY_ATTRIBUTION } from './common.js'
+    const BBOX = '-95.3,29.0,-94.6,29.8'
+    const WHEN = '2024-07-04T15:00:00Z/2024-07-04T15:10:00Z'
+    const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([29.42, -94.95], 11)
+    L.tileLayer(DARK_GRAY, { attribution: DARK_GRAY_ATTRIBUTION, maxZoom: 16 }).addTo(map)
+    const SPEED = [[0.5, '#5c6b73', 'Moored / drifting'], [5, '#4fc3e8', '0.5–5 kn'], [12, '#f7d154', '5–12 kn'], [Infinity, '#ff6b4a', '> 12 kn']]
+    const colorOf = sog => SPEED.find(([max]) => (sog ?? 0) <= max)[1]
+    const points = await items('points', `bbox=${BBOX}&datetime=${WHEN}`, n => status(`Loading positions… ${n.toLocaleString()}`))
+    L.geoJSON(points, {
+      pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: f.properties.sog > 0.5 ? 4 : 2.5, color: '#0b1418', weight: 0.6, fillColor: colorOf(f.properties.sog), fillOpacity: 0.9 })
+    }).addTo(map)
+    const vessels = new Set(points.features.map(f => f.properties.mmsi)).size
+    caption({
+      title: 'Houston Ship Channel, 10 minutes of AIS',
+      sub: `${points.features.length.toLocaleString()} positions from ${vessels.toLocaleString()} vessels (15:00–15:10 UTC, July 4 2024), filtered with datetime= on the server. Leaflet reading Unity Catalog through OGC API – Features.`,
+      legend: SPEED.map(([, color, label]) => [color, label])
+    })
+    setTimeout(done, 2500) // basemap tiles
+  </script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>OpenLayers · GeoLakeLayers OGC API – Features</title>
+  <link rel="stylesheet" href="node_modules/ol/ol.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="node_modules/ol/dist/ol.js"></script>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="caption"></div>
+  <div id="status">Loading…</div>
+  <script type="module">
+    // A day of vessel tracks in Puget Sound over satellite imagery, colored by vessel type
+    import { items, caption, status, done, VESSEL_GROUPS, vesselGroup, splitJumps } from './common.js'
+    const BBOX = '-123.2,47.0,-122.2,48.4'
+    const imagery = new ol.layer.Tile({
+      source: new ol.source.XYZ({
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attributions: 'Imagery © Esri, Maxar, Earthstar Geographics', maxZoom: 19
+      })
+    })
+    // Commercial traffic on top with a dark casing; pleasure craft faint underneath (they are most of the tracks)
+    const LEISURE = 'Pleasure / sailing'
+    const styles = Object.fromEntries(VESSEL_GROUPS.map(([name, color], i) => [name, name === LEISURE
+      ? [new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(255,158,199,0.35)', width: 0.8 }), zIndex: 0 })]
+      : [new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0.5)', width: 3.4 }), zIndex: 10 - i }),
+         new ol.style.Style({ stroke: new ol.style.Stroke({ color, width: 1.8 }), zIndex: 20 - i })]]))
+    const source = new ol.source.Vector()
+    const map = new ol.Map({
+      target: 'map',
+      layers: [imagery, new ol.layer.Vector({ source, renderOrder: null, style: f => styles[vesselGroup(f.get('vessel_type'))[0]] })],
+      view: new ol.View({ center: ol.proj.fromLonLat([-122.48, 47.72]), zoom: 9.6 })
+    })
+    const tracks = await items('tracks', `bbox=${BBOX}`, n => status(`Loading tracks… ${n.toLocaleString()}`))
+    source.addFeatures(new ol.format.GeoJSON().readFeatures(splitJumps(tracks), { featureProjection: 'EPSG:3857' }))
+    const counts = {}
+    tracks.features.forEach(f => { const g = vesselGroup(f.properties.vessel_type)[0]; counts[g] = (counts[g] || 0) + 1 })
+    caption({
+      title: 'Puget Sound vessel tracks, July 4 2024',
+      sub: `${tracks.features.length.toLocaleString()} AIS tracks from Unity Catalog, styled by vessel type in OpenLayers over satellite imagery.`,
+      legend: VESSEL_GROUPS.filter(([name]) => counts[name]).map(([name, color]) => [color, `${name} (${counts[name]})`])
+    })
+    map.once('rendercomplete', done)
+    map.render()
+  </script>
+</body>
+</html>

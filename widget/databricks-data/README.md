@@ -28,7 +28,7 @@ Without that, the sign-in popup closes and nothing loads.
 client's `npm start` once, since it picks up new widgets only when it starts.
 
 **Portal's own Experience Builder:** build the widget in Developer Edition, host
-`client/dist/widgets/databricks-data` on an HTTPS web server that sends CORS headers for your Portal, then
+`client/dist-download/widgets/databricks-data` (built with `npm run build:for-download`) on an HTTPS web server that sends CORS headers for your Portal, then
 register the URL of its `manifest.json` in Portal as an **Experience Builder widget** item.
 
 ## Using it

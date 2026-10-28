@@ -33,7 +33,9 @@ Which client uses what (Experience Builder, OGC clients like QGIS and GDAL, scri
 
 ## How it fits
 
-![Architecture: map clients, GeoLakeLayers (one per metastore), SQL warehouse and Unity Catalog](screenshots/architecture.png)
+![How a map request moves through GeoLakeLayers: sign-in, token handoff, query as the viewer, results back to the map](docs/architecture/geolakelayers-dataflow.png)
+
+Each numbered step is explained in [docs/architecture](docs/architecture/README.md).
 
 - **Databricks Data widget** (`widget/databricks-data/`): signs the user in to each workspace, lists the
   tables they can use, and adds them to the map as Experience Builder data sources, so Map Layers, Legend,
@@ -68,6 +70,9 @@ workspace on another metastore (another region, or GovCloud) gets its own gatewa
   Builder can use the widget once it is built and hosted (step 3).
 
 ## Deployment
+
+**Step-by-step with screenshots: [docs/install.md](docs/install.md)** (also in the console's Help). The short
+version follows.
 
 You need:
 
@@ -118,6 +123,10 @@ databricks bundle deploy -t myworkspace --profile <profile>
 databricks bundle run gateway -t myworkspace --profile <profile>
 ```
 
+> [!WARNING]
+> Changing the bundle name or `app_name` later **replaces** the app: a new URL and a new service principal, so
+> every Experience Builder app, QGIS connection and `directory` entry using the old URL breaks.
+
 The app is created as `geolakelayers`, open to account users (`CAN_USE`), with user authorization for SQL, and
 the warehouse bound as an app resource. Its URL is printed at the end
 (`https://geolakelayers-<workspace-id>.<region>.databricksapps.com`). Open it in a browser to check it: the
@@ -164,42 +173,33 @@ the new gateway to `directory` in every target so authors can pick it from a lis
 
 ### 2. Install the widget in Experience Builder Developer Edition (Experience Builder path)
 
-The widget's own install notes are in [widget/databricks-data/README.md](widget/databricks-data/README.md).
+Custom widgets are built in Developer Edition (version **1.20** pairs with ArcGIS Enterprise 12.1). Start its
+server and client, copy `widget/databricks-data` into `client/your-extensions/widgets/`, and restart the
+client once. Developer Edition signs in to Portal through a **Developer credentials → OAuth 2.0 credentials for
+user authentication** item whose redirect URL is exactly `https://localhost:3001/`.
+[docs/install.md § 3](docs/install.md#3-install-the-widget-in-developer-edition) has every screen.
 
-Custom widgets are built with Developer Edition. Pick the version that matches your Portal: Enterprise 12.1
-pairs with Developer Edition **1.20** (ArcGIS Maps SDK 5.0). Download it from Esri's Developer Edition
-downloads page (needs an ArcGIS account), unzip it, and install its two parts:
+![Portal's New item dialog: Developer credentials and Application](screenshots/install-portal-new-item.png)
 
-```bash
-cd ArcGISExperienceBuilder/server && npm ci && npm start          # https://localhost:3001
-cd ArcGISExperienceBuilder/client && npm ci && npm start          # widget compiler (watch mode)
-```
-
-Copy the widget into the client and restart the compiler once (it picks up new widgets at start):
-
-```bash
-cp -R widget/databricks-data ArcGISExperienceBuilder/client/your-extensions/widgets/
-```
-
-Developer Edition signs in to Portal with an OAuth app. In Portal, create **New item → Developer credentials →
-OAuth 2.0 credentials for user authentication**:
-
-![Choosing user authentication](screenshots/portal-developer-credentials.png)
-
-Add `https://localhost:3001/` as a redirect URL, then give Developer Edition your Portal URL and the new client
-ID the first time you open https://localhost:3001.
-
-![Redirect URLs on the credentials item](screenshots/portal-redirect-urls.png)
-
-Add `https://localhost:3001` to the gateway's `allowed_origins` and redeploy it if you haven't.
+The widget's own notes are in [widget/databricks-data/README.md](widget/databricks-data/README.md).
 
 ### 3. Use it in Portal's own Experience Builder (optional)
 
-To make the widget available to everyone in Portal's built-in Experience Builder, host the compiled widget
-(`client/dist/widgets/databricks-data`) on a web server that is anonymous, HTTPS with a publicly trusted
-certificate, and sends CORS headers for your Portal. Then, as a Portal administrator, add **New item →
-Application → Experience Builder widget** with the URL of its `manifest.json`. Add the Portal's address to
-each gateway's `allowed_origins`.
+Build the widget (`npm run build:for-download` in the Developer Edition client, output in
+`dist-download/widgets/databricks-data`), host that folder on a web server, and register its `manifest.json`
+in Portal as **New item → Application → Experience Builder widget**. Then share the item with app authors.
+
+![New item → Application → Experience Builder widget, with the manifest URL](screenshots/install-portal-widget-item.png)
+
+> [!IMPORTANT]
+> The web server must be **anonymous**, **HTTPS with a publicly trusted certificate**, and send **CORS
+> headers for your Portal's origin**, or Experience Builder can't load the widget even though the item
+> registers fine. [docs/install.md § 4](docs/install.md#4-register-the-widget-in-portals-experience-builder)
+> has a Tomcat `web.xml` and two `curl` checks.
+
+For either path, add the Experience Builder's origin (`https://localhost:3001`, your Portal) to each gateway's
+`allowed_origins` and **redeploy**; the console's **Can this Experience Builder call the gateway?** check tells
+you if it's allowed.
 
 ## Building an app
 
@@ -320,8 +320,14 @@ Databricks OAuth token. Personal access tokens are not accepted.
 ```bash
 TOKEN=$(databricks auth token --host https://<workspace> | jq -r .access_token)
 curl -H "Authorization: Bearer $TOKEN" "https://<gateway>/ogc/<service>/collections/<id>/items?limit=10&bbox=-77.2,38.8,-76.9,39.0"
-GDAL_HTTP_HEADERS="Authorization: Bearer $TOKEN" ogrinfo -ro -so "OAPIF:https://<gateway>/ogc/<service>"
+umask 077; printf 'Authorization: Bearer %s\n' "$TOKEN" > ~/.geolakelayers-header   # GDAL reads the header from a file
+ogrinfo --config GDAL_HTTP_HEADER_FILE ~/.geolakelayers-header -ro -so "OAPIF:https://<gateway>/ogc/<service>"
 ```
+
+See it in QGIS, OpenLayers, MapLibre GL, Leaflet and GDAL, with connection steps for each:
+[docs/ogc-clients.md](docs/ogc-clients.md).
+
+![AIS hexes from Unity Catalog in QGIS through OGC API – Features](screenshots/ogc-qgis.png)
 
 Queries run as the caller, exactly like the ArcGIS layers, so Unity Catalog grants (and row filters and
 column masks) decide what each client gets. Collections the caller can't read are left out of their

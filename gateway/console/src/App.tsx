@@ -6,6 +6,7 @@ import { ArcGIS } from './components/ArcGIS'
 import { OgcServices } from './components/OgcServices'
 import { Admin } from './components/Admin'
 import { Help } from './components/Help'
+import type { HelpPage } from './components/Help'
 import { LoadGauge } from './components/LoadGauge'
 
 type Tab = 'map' | 'arcgis' | 'ogc' | 'admin'
@@ -25,7 +26,7 @@ const Mark = () => (
 
 export function App () {
   const [tab, setTab] = useState<Tab>(() => tabFromHash(location.hash.slice(1)))
-  const [help, setHelp] = useState(() => location.hash === '#guide')
+  const [help, setHelp] = useState<HelpPage | null>(() => location.hash === '#guide' ? 'guide' : location.hash === '#install' ? 'install' : null)
   const [info, setInfo] = useState<GatewayInfo | null>(null)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [error, setError] = useState('')
@@ -54,7 +55,7 @@ export function App () {
           {info && <span className='chip'><span className='dot' />{here?.name || info.workspaceHost}</span>}
           <LoadGauge />
           {info && <span className='muted small'>{info.user}</span>}
-          <button className='help-link' onClick={() => setHelp(true)}>Help</button>
+          <button className='help-link' onClick={() => setHelp('guide')}>Help</button>
           <span className='built-by'>Built on Databricks Apps by Anand Trivedi</span>
         </div>
       </header>
@@ -69,17 +70,17 @@ export function App () {
 
       <main className={`content${tab === 'map' ? ' wide' : ''}`}>
         {error && <div className='card error'>Could not reach the gateway: {error}</div>}
-        {tab === 'map' && info && <Explorer info={info} request={mapRequest} onRequestDone={() => setMapRequest(undefined)} onHelp={() => setHelp(true)} onGo={setTab}
+        {tab === 'map' && info && <Explorer info={info} request={mapRequest} onRequestDone={() => setMapRequest(undefined)} onHelp={() => setHelp('guide')} onGo={setTab}
           onAddToOgc={table => { setOgcStart(table); setTab('ogc') }} />}
-        {tab === 'arcgis' && info && <ArcGIS info={info} onHelp={() => setHelp(true)} />}
+        {tab === 'arcgis' && info && <ArcGIS info={info} onHelp={() => setHelp('guide')} onInstall={() => setHelp('install')} />}
         {tab === 'ogc' && info && <OgcServices info={info} startWith={ogcStart} onStarted={() => setOgcStart(undefined)} onOpenOnMap={table => { setMapRequest(table); setTab('map') }} />}
         {tab === 'admin' && info && <Admin info={info} warehouses={warehouses} />}
       </main>
 
-      <Help open={help} onClose={() => setHelp(false)} widgetSource={info?.widgetSource} />
+      <Help page={help} onPage={setHelp} onClose={() => setHelp(null)} widgetSource={info?.widgetSource} />
 
       <footer className='footer muted small'>
-        {info ? `GeoLakeLayers ${info.version}` : 'GeoLakeLayers'} · Unity Catalog tables as ArcGIS FeatureServer layers and OGC API – Features · Built on Databricks Apps by Anand Trivedi
+        {info ? `GeoLakeLayers ${info.version}` : 'GeoLakeLayers'} · Unity Catalog tables as live map layers for Experience Builder and OGC clients, queried as each signed-in user · Built on Databricks Apps by Anand Trivedi
       </footer>
     </div>
   )

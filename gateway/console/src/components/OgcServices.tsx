@@ -310,9 +310,10 @@ function Endpoints ({ info, service, engine, onOpenOnMap }: { info: GatewayInfo,
     '',
     `curl -H "Authorization: Bearer $TOKEN" "${base}/collections/${first?.id}/items?limit=10"`,
     '',
-    '# GDAL / OGR: list the layers, then copy one to a GeoPackage',
-    `GDAL_HTTP_HEADERS="Authorization: Bearer $TOKEN" ogrinfo -ro -so "OAPIF:${base}"`,
-    `GDAL_HTTP_HEADERS="Authorization: Bearer $TOKEN" ogr2ogr -f GPKG ${first?.id || 'out'}.gpkg "OAPIF:${base}" ${first?.id || ''}`
+    '# GDAL / OGR: the header goes in a file (GDAL 3.13 refuses it from GDAL_HTTP_HEADERS with a 401)',
+    `umask 077; printf 'Authorization: Bearer %s\\n' "$TOKEN" > ~/.geolakelayers-header`,
+    `ogrinfo --config GDAL_HTTP_HEADER_FILE ~/.geolakelayers-header -ro -so "OAPIF:${base}"`,
+    `ogr2ogr --config GDAL_HTTP_HEADER_FILE ~/.geolakelayers-header -f GPKG ${first?.id || 'out'}.gpkg "OAPIF:${base}" ${first?.id || ''}`
   ].join('\n')
   const rows: [string, string][] = [
     ['Landing page', base],

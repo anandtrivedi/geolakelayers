@@ -1,6 +1,6 @@
 # Using GeoLakeLayers
 
-GeoLakeLayers connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, and clients that speak OGC API – Features. Maps read the tables where they are; the only copy GeoLakeLayers ever makes is the one you ask for with **Optimize for maps**. Every request runs on a Databricks SQL warehouse as the person (or service principal) making it, so Unity Catalog grants decide what each user sees. Results are cached per person for up to five minutes, so a change to a table can take that long to show. This guide covers where GeoLakeLayers fits and what each client needs. It doesn't walk through clicks in Experience Builder or other tools, because those screens change between releases.
+GeoLakeLayers connects Unity Catalog tables to two mapping worlds: ArcGIS Experience Builder apps, and clients that speak OGC API – Features. Maps read the tables where they are; the only copy GeoLakeLayers ever makes is the one you ask for with **Optimize for maps**. Every request runs on a Databricks SQL warehouse as the person (or service principal) making it, so Unity Catalog grants decide what each user sees. Results are cached per person for up to five minutes, so a change to a table can take that long to show. This guide covers where GeoLakeLayers fits and what each client needs. For installing the gateway and the widget step by step, with screenshots, see **Installing GeoLakeLayers** (`docs/install.md`).
 
 ## Pick the path for your client
 
@@ -15,7 +15,7 @@ Personal access tokens aren't accepted: Databricks Apps only let OAuth tokens th
 
 ## Experience Builder
 
-Databricks Data is a custom widget. An ArcGIS administrator makes it available once, either in Experience Builder Developer Edition or by registering it as a custom widget in the organization's Experience Builder. A Databricks admin adds that Experience Builder's address to the gateway's allowed origins.
+Databricks Data is a custom widget. An ArcGIS administrator makes it available once, either in Experience Builder Developer Edition or by hosting it and registering it in Portal as an **Experience Builder widget** item (Installing GeoLakeLayers, steps 3 and 4). A Databricks admin adds that Experience Builder's address to the gateway's allowed origins and redeploys.
 
 App authors add the widget to an experience, usually next to the map, and give it the gateway URL shown on this console's Map and ArcGIS tabs. They sign in once, then choose:
 

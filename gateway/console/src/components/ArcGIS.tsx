@@ -4,7 +4,7 @@ import { OriginCheck } from './OriginCheck'
 
 // Everything an ArcGIS author or admin pastes somewhere else: the widget path first, the Custom Data Feed
 // for Map Viewer / Pro, then FeatureServer REST for scripts
-export function ArcGIS ({ info, table, onHelp }: { info: GatewayInfo, table?: string, onHelp: () => void }) {
+export function ArcGIS ({ info, table, onHelp, onInstall }: { info: GatewayInfo, table?: string, onHelp: () => void, onInstall: () => void }) {
   const example = table || '<catalog>.<schema>.<table>'
   const layerUrl = `${info.gatewayUrl}/databricks/rest/services/${example}/FeatureServer/0`
   const host = info.workspaceHost ? `https://${info.workspaceHost}` : '<workspace URL>'
@@ -27,7 +27,8 @@ export function ArcGIS ({ info, table, onHelp }: { info: GatewayInfo, table?: st
           <li>
             <b>An ArcGIS admin adds the widget to Experience Builder, once.</b>{' '}
             {info.widgetSource ? <><a href={info.widgetSource} target='_blank' rel='noreferrer'>Get the widget</a>.</> : 'Ask the person who deployed this gateway for it.'}{' '}
-            Its Portal or Experience Builder address must be allowed to call this gateway; check it below.
+            Its Portal or Experience Builder address must be allowed to call this gateway; check it below.{' '}
+            <button className='link' onClick={onInstall}>Install steps, with screenshots</button>
           </li>
           <li>
             <b>Add the widget to your app, next to the map, and give it this gateway URL:</b>
