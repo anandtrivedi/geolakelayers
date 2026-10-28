@@ -12,7 +12,7 @@ widget for OGC clients such as QGIS and GDAL.
 | Experience Builder Developer Edition | 1.20 |
 | ArcGIS Enterprise | 12.1 (pairs with Developer Edition 1.20) |
 | ArcGIS Maps SDK for JavaScript | 5.0 |
-| GeoLakeLayers | 0.2.0 |
+| GeoLakeLayers | 0.1.0 |
 
 Widget version: see `manifest.json`. Other Experience Builder versions may work but haven't been tried.
 

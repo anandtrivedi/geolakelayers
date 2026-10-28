@@ -1,4 +1,4 @@
-# GeoLakeLayers: Databricks geospatial gateway for ArcGIS (Experience Builder "Databricks Data" widget) and OGC API – Features clients.
+# GeoLakeLayers: Unity Catalog tables as live map layers for Experience Builder (the "Databricks Data" widget) and OGC API – Features clients.
 #
 # One gateway per Unity Catalog metastore (a Databricks sign-in is per workspace). Workspaces that share a metastore
 # see the same Unity Catalog catalogs, so one gateway can serve all of them.
@@ -63,7 +63,7 @@ resources:
   apps:
     gateway:
       name: ${var.app_name}
-      description: GeoLakeLayers - Databricks geospatial gateway for ArcGIS and OGC (Unity Catalog tables as FeatureServer layers and OGC API - Features)
+      description: GeoLakeLayers - Unity Catalog tables as live map layers for Experience Builder and OGC clients, queried as each signed-in user
       source_code_path: .
       compute_size: ${var.compute_size}
       # Queries run as the signed-in user, so Unity Catalog decides what each person sees

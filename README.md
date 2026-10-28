@@ -2,8 +2,8 @@
 
 *Built on Databricks Apps by Anand Trivedi.*
 
-Databricks geospatial gateway for ArcGIS and OGC. GeoLakeLayers is a small Databricks App that serves Unity Catalog tables
-as live map layers, in two forms:
+Unity Catalog tables as live map layers for Experience Builder and OGC clients (QGIS, GDAL, web maps), served by
+a Databricks App and queried as each signed-in user. Nothing to install in ArcGIS. The layers come in two forms:
 
 - **ArcGIS FeatureServer layers** for Experience Builder apps, through the **Databricks Data** widget in this
   repository (`widget/databricks-data/`).
@@ -13,6 +13,18 @@ as live map layers, in two forms:
 Viewers sign in with Databricks and see only what Unity Catalog lets them see. Nothing is copied: every pan and
 zoom is a query on a Databricks SQL warehouse, with results cached per user for up to five minutes. (The one
 exception is **Optimize for maps**, which writes a map-friendly copy of a table when you ask for it.)
+
+**GeoLakeLayers or the Custom Data Feed?** Both put Databricks tables on ArcGIS maps; they sit on opposite sides.
+
+| | GeoLakeLayers | [Custom Data Feed](https://github.com/anandtrivedi/esri-customdatafeed) |
+|---|---|---|
+| Runs | on the Databricks side, as a Databricks App | on the ArcGIS side, in ArcGIS Server 11.4+ |
+| Who sees what | each viewer's own Unity Catalog grants | one Databricks identity per service; Portal sharing decides |
+| Clients | Experience Builder (widget), OGC API clients, scripts | every Esri app: Map Viewer, ArcGIS Pro, Field Maps |
+| Set up by | a Databricks admin | an ArcGIS Server admin |
+
+Use the Custom Data Feed when layers have to open in Map Viewer, ArcGIS Pro or Field Maps; use GeoLakeLayers for
+per-user access, OGC clients, or when nothing can be installed in ArcGIS.
 
 ![Published experience with Unity Catalog layers](screenshots/published-app-layers.png)
 

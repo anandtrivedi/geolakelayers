@@ -1,8 +1,8 @@
 {
   "name": "geolakelayers",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "GeoLakeLayers: serves Unity Catalog tables as ArcGIS FeatureServer layers (provider vendored from koop-provider-databricks @ a08f6e7)",
+  "description": "GeoLakeLayers: Unity Catalog tables as live map layers for Experience Builder and OGC clients, queried as each signed-in user (provider vendored from koop-provider-databricks @ a08f6e7)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

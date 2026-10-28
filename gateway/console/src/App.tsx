@@ -47,7 +47,7 @@ export function App () {
           <Mark />
           <div>
             <div className='brand-name'>GeoLakeLayers</div>
-            <div className='brand-sub'>Databricks geospatial gateway for ArcGIS and OGC</div>
+            <div className='brand-sub'>Unity Catalog layers for Experience Builder and OGC, queried as you</div>
           </div>
         </div>
         <div className='topbar-meta'>
