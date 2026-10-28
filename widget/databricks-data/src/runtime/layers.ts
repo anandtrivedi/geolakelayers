@@ -49,15 +49,20 @@ function setStatus (id: string, status: DataSourceStatus): void {
   getAppStore().dispatch(appActions.dataSourceStatusChanged(id, status))
 }
 
-// Draw what the widgets connected to the output data source asked for: the where of its output view
+// Draw what the widgets connected to the output data source asked for: the where of its output view, and
+// its time ([start, end] in ms, set by a Timeline) on a time-aware layer
 function followOutputView (outputId: string, layer: __esri.FeatureLayer): () => void {
   let last = ''
   const apply = () => {
     const view: any = DataSourceManager.getInstance().getDataSource(`${outputId}-output`)
-    const where = view?.getRealQueryParams?.({}, 'query')?.where || '1=1'
-    if (where === last) return
-    last = where
+    const query = view?.getRealQueryParams?.({}, 'query') || {}
+    const where = query.where || '1=1'
+    const time: number[] | null = Array.isArray(query.time) && query.time.length === 2 ? query.time : null
+    const key = `${where}|${time ? time.join(',') : ''}`
+    if (key === last) return
+    last = key
     layer.definitionExpression = where === '1=1' ? null : where
+    if (layer.timeInfo) layer.timeExtent = (time ? { start: new Date(time[0]), end: new Date(time[1]) } : null) as any
   }
   apply()
   return getAppStore().subscribe(apply)
