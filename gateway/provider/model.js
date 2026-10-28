@@ -1082,7 +1082,7 @@ function translateWithSTFunctions (rows, query, { stringifyComplex = true } = {}
         const v = properties[k]
         if (v === null || typeof v !== 'object') continue
         if (Buffer.isBuffer(v) || v instanceof Uint8Array) delete properties[k]
-        else if (v instanceof Date) continue
+        else if (v instanceof Date) { if (stringifyComplex) properties[k] = v.getTime() } // ArcGIS dates: epoch ms
         else if (stringifyComplex) properties[k] = JSON.stringify(v, bigintToNumber)
         else properties[k] = JSON.parse(JSON.stringify(v, bigintToNumber))
       }
@@ -1193,24 +1193,17 @@ function getAllCoordinates (geometry) {
 }
 
 // Helper: Map Databricks types to Esri field types
+// Field types in Koop's vocabulary (it maps them to esriFieldType*; anything else becomes String), by the
+// base type, so a STRUCT/ARRAY/MAP of numbers stays text. Koop has no BigInteger: BIGINT is a Double.
 function mapDatabricksToEsriFieldType (databricksType) {
-  const lowerType = (databricksType || '').toLowerCase()
+  const base = (databricksType || '').toLowerCase().split(/[<(]/)[0].trim()
 
-  if (lowerType.includes('int') || lowerType.includes('long')) {
-    if (lowerType.includes('big')) return 'esriFieldTypeBigInteger'
-    return 'esriFieldTypeInteger'
-  }
-  if (lowerType.includes('double') || lowerType.includes('float') || lowerType.includes('decimal')) {
-    return 'esriFieldTypeDouble'
-  }
-  if (lowerType.includes('date') || lowerType.includes('timestamp')) {
-    return 'esriFieldTypeDate'
-  }
-  if (lowerType.includes('boolean')) {
-    return 'esriFieldTypeSmallInteger'
-  }
+  if (['tinyint', 'byte', 'smallint', 'short', 'int', 'integer'].includes(base)) return 'Integer'
+  if (['bigint', 'long', 'double', 'float', 'real', 'decimal', 'numeric', 'dec'].includes(base)) return 'Double'
+  if (['date', 'timestamp', 'timestamp_ntz', 'timestamp_ltz'].includes(base)) return 'Date'
+  if (base === 'boolean') return 'SmallInteger'
 
-  return 'esriFieldTypeString' // Default for STRING, VARCHAR, etc.
+  return 'String' // STRING, VARCHAR, STRUCT, ARRAY, MAP, VARIANT, ...
 }
 
 // Helper: Get field metadata from DESCRIBE TABLE with TTL-based caching
@@ -1237,7 +1230,7 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId, who =
     }
 
     const derived = S().objectIdExpr
-      ? [{ name: S().objectId, type: 'esriFieldTypeBigInteger', alias: S().objectId, sqlType: 'bigint', nullable: false, editable: false, domain: null, defaultValue: null }]
+      ? [{ name: S().objectId, type: 'Integer', alias: S().objectId, sqlType: 'bigint', nullable: false, editable: false, domain: null, defaultValue: null }]
       : []
     const fields = derived.concat(columnRows
       .filter(row => row.col_name !== S().geometryColumn && !(S().bboxColumns && /^_[xy](min|max)$/.test(row.col_name)))

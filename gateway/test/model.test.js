@@ -105,7 +105,7 @@ test('translateWithSTFunctions: geometry parsed, helper columns dropped, complex
     assert.deepEqual(esri.features[0].geometry, { type: 'Point', coordinates: [1, 2] })
     assert.equal(p.names, '{"primary":"A","n":3}')
     assert.ok(!('geometry_wkt' in p) && !('_xmin' in p) && !('blob' in p) && !('__geojson__' in p))
-    assert.ok(p.when instanceof Date)
+    assert.equal(p.when, 0, 'ArcGIS dates are epoch ms')
     const ogc = I.translateWithSTFunctions(rows, {}, { stringifyComplex: false })
     assert.deepEqual(ogc.features[0].properties.names, { primary: 'A', n: 3 })
     assert.equal(I.translateWithSTFunctions([{ __geojson__: 'not json' }], {}).features[0].geometry, null)
@@ -280,7 +280,8 @@ test('getData (Esri path): layer info fetches one row; a query fetches a page; s
   assert.equal(info.metadata.idField, 'objectid')
   assert.equal(info.metadata.geometryType, 'esriGeometryPoint')
   assert.deepEqual(info.metadata.extent.xmin, -77)
-  assert.equal(info.metadata.fields.find(f => f.name === 'names').type, 'esriFieldTypeString')
+  assert.equal(info.metadata.fields.find(f => f.name === 'names').type, 'String')
+  assert.equal(info.metadata.fields.find(f => f.name === 'seen_at').type, 'Date', 'Koop\'s vocabulary, so the layer says esriFieldTypeDate')
   const page = await call({ url: `/databricks/rest/services/${table}/FeatureServer/0/query`, query: { resultRecordCount: '7', resultOffset: '7', where: '1=1' } })
   assert.equal(page.features.length, 7)
   assert.equal(page.features[0].properties.names, '{"primary":"n8"}', 'Esri attributes stay scalar')
@@ -385,6 +386,25 @@ test('getData: statistics come back precalculated, distinct values as features w
   await assert.rejects(call({ outFields: 'kind', returnDistinctValues: 'true', geometry: polygon, geometryType: 'esriGeometryPolygon', spatialRel: 'esriSpatialRelContains' }),
     e => e.code === 400, 'a spatial filter SQL can\'t apply is refused, not ignored')
 }))
+
+test('mapDatabricksToEsriFieldType: Koop type names by base type; complex types stay text', () => {
+  const m = I.mapDatabricksToEsriFieldType
+  for (const [t, want] of [['int', 'Integer'], ['SMALLINT', 'Integer'], ['bigint', 'Double'], ['long', 'Double'], ['double', 'Double'],
+    ['decimal(10,2)', 'Double'], ['timestamp', 'Date'], ['timestamp_ntz', 'Date'], ['date', 'Date'], ['boolean', 'SmallInteger'],
+    ['string', 'String'], ['struct<a:int>', 'String'], ['array<bigint>', 'String'], ['map<string,int>', 'String'], ['interval day', 'String'], [null, 'String']]) {
+    assert.equal(m(t), want, String(t))
+  }
+})
+
+test('translateWithSTFunctions: dates are epoch ms for ArcGIS and ISO for GeoJSON', () => {
+  inSpec(WKT_SPEC, () => {
+    const at = new Date('2024-07-04T12:00:00Z')
+    const esri = I.translateWithSTFunctions([{ objectid: 1, at }], {})
+    assert.equal(esri.features[0].properties.at, at.getTime())
+    const ogc = I.translateWithSTFunctions([{ objectid: 1, at }], {}, { stringifyComplex: false })
+    assert.equal(JSON.parse(JSON.stringify(ogc.features[0].properties)).at, '2024-07-04T12:00:00.000Z')
+  })
+})
 
 test('parseLayerProps: renderer, labeling and time columns from table properties; bad values ignored', () => {
   const rows = o => Object.entries(o).map(([key, value]) => ({ key, value }))
