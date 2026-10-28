@@ -235,6 +235,8 @@ function setOverrideSource (fn) { overrideSource = fn }
  * exec(sql, kind) -> rows. Returns the spec, or null when the table has no geometry.
  */
 async function resolveSpec (table, exec, who = 'app') {
+  // The name goes into SQL as is; callers check it, and so does this
+  if (!/^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){1,2}$/.test(String(table))) throw Object.assign(new Error('Invalid table name'), { code: 400, status: 400 })
   const key = `${who}|${table}`
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < TTL_MS) return hit.spec

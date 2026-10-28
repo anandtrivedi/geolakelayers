@@ -430,7 +430,9 @@ test('buildTimeFilter: with an end column, features whose span overlaps the time
   assert.equal(I.buildTimeFilter('1000', 't0', 't1'), "t0 <= TIMESTAMP '1970-01-01T00:00:01.000Z' AND COALESCE(t1, t0) >= TIMESTAMP '1970-01-01T00:00:01.000Z'")
   assert.equal(I.buildTimeFilter('0,1000', 't0'), "t0 BETWEEN TIMESTAMP '1970-01-01T00:00:00.000Z' AND TIMESTAMP '1970-01-01T00:00:01.000Z'")
   assert.throws(() => I.buildTimeFilter('0,1000', 't0', 'x y'))
-  assert.ok(!/DROP/.test(I.buildTimeFilter("0,1000'); DROP TABLE x; --", 't0', 't1')), 'times reach SQL only as ISO strings')
+  assert.throws(() => I.buildTimeFilter("0,1000'); DROP TABLE x; --", 't0', 't1'), e => e.code === 400, 'only epoch milliseconds are accepted')
+  assert.throws(() => I.buildTimeFilter('abc', 't0'), e => e.code === 400, 'a bad time is refused, not dropped')
+  assert.throws(() => I.buildTimeFilter('0,99999999999999999999', 't0'), e => e.code === 400, 'out-of-range times are refused')
 })
 
 const STYLED = {
@@ -479,3 +481,12 @@ test('open tables (OPEN_TABLES): read as the app on the bound warehouse; every o
     connectionManager.getSession = fake
   }
 }))
+
+test('executeAndRecord: the operation is closed even when fetching its rows fails', async () => {
+  let closed = false
+  const session = {
+    executeStatement: async () => ({ fetchAll: async () => { throw new Error('results download dropped') }, close: async () => { closed = true } })
+  }
+  await assert.rejects(I.executeAndRecord(session, 'SELECT 1', 'test', 't'), /results download dropped/)
+  assert.equal(closed, true)
+})

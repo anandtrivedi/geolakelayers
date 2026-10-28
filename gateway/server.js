@@ -283,9 +283,11 @@ async function runSql (req, sql, timeout = 60, namedParameters, warehouseId = re
   const session = await connectionManager.getSession(obo(req), warehouseId)
   try {
     const op = await session.executeStatement(sql, namedParameters ? { queryTimeout: timeout, namedParameters } : { queryTimeout: timeout })
-    const rows = await op.fetchAll()
-    await op.close()
-    return rows
+    try {
+      return await op.fetchAll()
+    } finally {
+      await op.close().catch(() => {})
+    }
   } finally {
     await session.close()
   }

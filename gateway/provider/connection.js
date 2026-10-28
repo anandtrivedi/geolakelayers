@@ -222,7 +222,7 @@ class ConnectionManager {
         token: userToken,
         userAgentEntry: `esri_databricks-koop-provider/${version}`
       })
-      entry = { client, connected, at: Date.now(), idle: [] }
+      entry = { client, connected, at: Date.now(), idle: [], busy: 0 }
       this.userClients.set(key, entry)
     }
     entry.at = Date.now()
@@ -246,6 +246,9 @@ class ConnectionManager {
   pooledSession (entry, session) {
     let broken = false
     let open = 0 // operations not yet closed; a session with one still open is never reused
+    let returned = false
+    // Checked out: the sweep leaves this user's client alone, however long the statement runs (Optimize)
+    entry.busy = (entry.busy || 0) + 1
     return {
       executeStatement: async (...args) => {
         let op
@@ -263,6 +266,10 @@ class ConnectionManager {
         return op
       },
       close: async () => {
+        if (returned) return
+        returned = true
+        entry.busy--
+        entry.at = Date.now()
         if (!broken && open === 0 && entry.idle.length < SESSION_POOL_SIZE && this.userClients && [...this.userClients.values()].includes(entry)) {
           entry.idle.push({ session, at: Date.now() })
         } else {
@@ -418,6 +425,7 @@ class ConnectionManager {
     const now = Date.now()
     let oldest = null
     for (const [key, entry] of this.userClients) {
+      if (entry.busy > 0) continue
       if (now - entry.at > USER_CLIENT_TTL_MS) {
         this.userClients.delete(key)
         for (const p of entry.idle || []) p.session.close().catch(() => {})

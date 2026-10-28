@@ -220,3 +220,32 @@ test('validation.validateWhereClause: date literals and intervals ArcGIS clients
     assert.equal(validateWhereClause(w).valid, false, w)
   }
 })
+
+test('validation.validateWhereClause: functions that reach beyond the table are refused', async t => {
+  for (const w of ["secret('scope', 'key') LIKE 'a%'", "try_secret('s', 'k') = 'x'", "`ai_query`('m', 'p') = 'x'",
+    "AI_GEN('x') = 'y'", "reflect('java.lang.Thread', 'sleep', 100000) IS NULL", "java_method('a', 'b') = 1",
+    "http_request('c', 'GET') IS NOT NULL", "kind = 'a' AND (secret('s', 'k') = 'x' OR 1 = 1)"]) {
+    assert.equal(validateWhereClause(w).valid, false, w)
+  }
+  for (const w of ["UPPER(name) LIKE 'A%'", "LOWER(kind) = 'a' AND COALESCE(n, 0) > 1", "name = 'secret(1)'"]) {
+    assert.equal(validateWhereClause(w).valid, true, w)
+  }
+})
+
+test('validation.validateWhereClause: comments and trailing clauses are refused', async t => {
+  for (const w of ['1=1 -- x', '1=1 /* x */', 'x = 1 /*! OR y IN (SELECT 1) */', 'x = 1 # y', '1=1 ORDER BY 1', '1=1 LIMIT 1', '1=1 GROUP BY x']) {
+    assert.equal(validateWhereClause(w).valid, false, w)
+  }
+  for (const w of ["name = 'a--b'", "tag = '#1' AND note = '/* not a comment */'", '`odd--name` = 1']) {
+    assert.equal(validateWhereClause(w).valid, true, w)
+  }
+})
+
+test('validation.validateWhereClause: quotes escaped the way ArcGIS and Databricks do', async t => {
+  for (const w of ["name = 'O''Brien'", "x = ''", "x = 'a\\\\' OR y = 1"]) {
+    assert.equal(validateWhereClause(w).valid, true, w)
+  }
+  for (const w of ["x = 'it''s' AND y IN (SELECT 1)", "x = INTERVAL 'a\\'' OR x IN (SELECT s FROM c.s.t) OR ''' DAY"]) {
+    assert.equal(validateWhereClause(w).valid, false, w)
+  }
+})

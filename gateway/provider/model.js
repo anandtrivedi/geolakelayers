@@ -55,8 +55,13 @@ async function executeAndRecord (session, sql, kind, taskId, params) {
   const options = { queryTimeout: queryTimeoutSeconds }
   if (params && Object.keys(params).length) options.namedParameters = params
   const op = await session.executeStatement(sql, options)
-  const rows = await op.fetchAll()
-  await op.close()
+  let rows
+  try {
+    rows = await op.fetchAll()
+  } finally {
+    // Closed even when the fetch fails, so the warehouse doesn't keep the operation open
+    await op.close().catch(err => logger.warn(`${taskId}> Closing operation failed: ${err.message}`))
+  }
   recordQuery({
     at: new Date(started).toISOString(),
     taskId,
@@ -123,8 +128,12 @@ Model.prototype.getData = function (req, callback) {
 
   // Rate limiting. Behind a load balancer req.ip is the LB address (Express
   // 'trust proxy' is not set by Koop), so prefer the first X-Forwarded-For hop.
+  // The Databricks Apps front door sets X-Forwarded-Email to the signed-in user (a client can't), whereas the
+  // first X-Forwarded-For hop is whatever the client sent; key on the user when there is one.
   const forwardedFor = req.headers && req.headers['x-forwarded-for']
-  const clientIp = (typeof forwardedFor === 'string' && forwardedFor.split(',')[0].trim()) ||
+  const forwardedEmail = req.headers && req.headers['x-forwarded-email']
+  const clientIp = (typeof forwardedEmail === 'string' && forwardedEmail && `user:${forwardedEmail}`) ||
+    (typeof forwardedFor === 'string' && forwardedFor.split(',')[0].trim()) ||
     req.ip || req.socket?.remoteAddress || 'unknown'
   if (!checkRateLimit(clientIp)) {
     logger.warn(`${thisTask}> Rate limit exceeded for ${clientIp}`)
@@ -1004,7 +1013,12 @@ function buildTimeFilter (timeParam, timeField, endField) {
     // Either end may be "null" for an open-ended range (ArcGIS convention).
     // Can also be a single timestamp.
     const parts = timeParam.split(',').map(t => t.trim())
-    const toTimestamp = part => new Date(parseInt(part, 10)).toISOString()
+    // Not epoch milliseconds: refuse rather than drop the filter and answer for all time
+    const toTimestamp = part => {
+      const d = new Date(/^-?\d+$/.test(part) ? parseInt(part, 10) : NaN)
+      if (isNaN(d)) throw Object.assign(new Error(`Invalid time parameter: ${timeParam}`), { code: 400 })
+      return d.toISOString()
+    }
     const isOpen = part => part === '' || part.toLowerCase() === 'null'
 
     if (parts.length === 1 && !isOpen(parts[0])) {
@@ -1031,6 +1045,7 @@ function buildTimeFilter (timeParam, timeField, endField) {
     logger.warn('Invalid time parameter format:', timeParam)
     return null
   } catch (error) {
+    if (error.code === 400) throw error
     logger.error('Error building time filter:', error)
     return null
   }

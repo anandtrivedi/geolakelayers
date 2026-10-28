@@ -259,3 +259,33 @@ test('connection: stale session not reused', async t => {
     require.cache[require.resolve('@databricks/sql')] = origDBSQL
   }
 })
+
+test('connection: the idle sweep leaves a user client alone while one of its sessions is checked out', async t => {
+  const origDBSQL = require.cache[require.resolve('@databricks/sql')]
+  require.cache[require.resolve('@databricks/sql')] = { exports: { DBSQLClient: FakeDBSQLClient } }
+  delete require.cache[require.resolve('../provider/connection')]
+
+  const ConnectionManager = require('../provider/connection').ConnectionManager
+  process.env.DATABRICKS_HOST = 'test.cloud.databricks.com'
+  process.env.DATABRICKS_WAREHOUSE_ID = 'wh1'
+
+  try {
+    const cm = new ConnectionManager()
+    const session = await cm.getUserSession('long_running_user')
+    const [entry] = cm.userClients.values()
+    entry.at = Date.now() - 24 * 3600 * 1000 // idle "for a day" while a long statement runs (Optimize)
+    cm.sweepUserClients()
+    assert.equal(cm.userClients.size, 1, 'a client with a session in use is not swept')
+    assert.equal(entry.client.connected, true)
+    await session.close()
+    await session.close() // closing twice doesn't unbalance the count
+    assert.equal(entry.busy, 0)
+    entry.at = Date.now() - 24 * 3600 * 1000
+    cm.sweepUserClients()
+    assert.equal(cm.userClients.size, 0, 'swept once the session is back and the client is idle')
+  } finally {
+    delete process.env.DATABRICKS_HOST
+    delete process.env.DATABRICKS_WAREHOUSE_ID
+    require.cache[require.resolve('@databricks/sql')] = origDBSQL
+  }
+})
