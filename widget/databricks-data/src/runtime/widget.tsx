@@ -185,7 +185,10 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       entry.gl = gl
       const layer = gl.layer
       await layer.load()
-      layer.renderer = rendererFor(layer.geometryType, colorIndex.current++) as any
+      // Keep a data-driven style the table's owner set (table property geolakelayers.renderer); a plain
+      // simple renderer (the gateway's default) becomes this layer's palette colour
+      const served = (layer as any).sourceJSON?.drawingInfo?.renderer?.type
+      if (!served || served === 'simple') layer.renderer = rendererFor(layer.geometryType, colorIndex.current++) as any
       layer.outFields = ['*']
       layer.popupTemplate = { title, content: [{ type: 'fields' }] } as any
       // Editing needs both: the app allows it, and the gateway advertises it for this table

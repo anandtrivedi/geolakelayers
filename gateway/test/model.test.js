@@ -134,7 +134,7 @@ test('query cache: per user and warehouse, params change the key, TTL-free hit, 
 })
 
 // Fake DBSQL session answering by SQL shape, recording every statement and its named parameters
-function fakeDb ({ rows = 30, count = 30, describe, pk = ['objectid'] } = {}) {
+function fakeDb ({ rows = 30, count = 30, describe, pk = ['objectid'], props = {} } = {}) {
   const log = []
   const cols = describe || [
     { col_name: 'objectid', data_type: 'bigint' },
@@ -145,6 +145,7 @@ function fakeDb ({ rows = 30, count = 30, describe, pk = ['objectid'] } = {}) {
   ]
   const answer = sql => {
     if (/^DESCRIBE/.test(sql)) return cols
+    if (/^SHOW TBLPROPERTIES/.test(sql)) return Object.entries(props).map(([key, value]) => ({ key, value }))
     // Primary key: objectid; content sample: geometry_wkt parses as WKT, other text columns don't
     if (/PRIMARY KEY/.test(sql)) return pk.map(c => ({ c }))
     if (/AS sample$/.test(sql)) {
@@ -383,6 +384,57 @@ test('getData: statistics come back precalculated, distinct values as features w
   assert.ok(db.log.some(e => /ST_Intersects\(.*'POLYGON \(\(0 0, 0 1, 1 1, 0 0\)\)'/.test(e.sql)), 'a drawn polygon filters in SQL')
   await assert.rejects(call({ outFields: 'kind', returnDistinctValues: 'true', geometry: polygon, geometryType: 'esriGeometryPolygon', spatialRel: 'esriSpatialRelContains' }),
     e => e.code === 400, 'a spatial filter SQL can\'t apply is refused, not ignored')
+}))
+
+test('parseLayerProps: renderer, labeling and time columns from table properties; bad values ignored', () => {
+  const rows = o => Object.entries(o).map(([key, value]) => ({ key, value }))
+  const renderer = { type: 'classBreaks', field: 'score', classBreakInfos: [] }
+  assert.deepEqual(I.parseLayerProps(rows({
+    'geolakelayers.renderer': JSON.stringify(renderer),
+    'geolakelayers.labeling': '[{"labelExpressionInfo":{"expression":"$feature.name"}}]',
+    'geolakelayers.time': ' t0 , t1 ',
+    'delta.minReaderVersion': '3'
+  }), 't'), { renderer, labelingInfo: [{ labelExpressionInfo: { expression: '$feature.name' } }], time: ['t0', 't1'] })
+  assert.deepEqual(I.parseLayerProps(rows({
+    'geolakelayers.renderer': '{not json',
+    'geolakelayers.labeling': '{"a":1}',
+    'geolakelayers.time': 't0; DROP TABLE x'
+  }), 't'), {})
+  assert.deepEqual(I.parseLayerProps(rows({ 'geolakelayers.renderer': '{"symbol":{}}', 'geolakelayers.time': 'a,b,c' }), 't'), {}, 'a renderer needs a type; at most two time columns')
+  assert.deepEqual(I.parseLayerProps([], 't'), {})
+})
+
+test('buildTimeFilter: with an end column, features whose span overlaps the time match', () => {
+  assert.equal(I.buildTimeFilter('0,1000', 't0', 't1'), "t0 <= TIMESTAMP '1970-01-01T00:00:01.000Z' AND COALESCE(t1, t0) >= TIMESTAMP '1970-01-01T00:00:00.000Z'")
+  assert.equal(I.buildTimeFilter('null,1000', 't0', 't1'), "t0 <= TIMESTAMP '1970-01-01T00:00:01.000Z'")
+  assert.equal(I.buildTimeFilter('1000', 't0', 't1'), "t0 <= TIMESTAMP '1970-01-01T00:00:01.000Z' AND COALESCE(t1, t0) >= TIMESTAMP '1970-01-01T00:00:01.000Z'")
+  assert.equal(I.buildTimeFilter('0,1000', 't0'), "t0 BETWEEN TIMESTAMP '1970-01-01T00:00:00.000Z' AND TIMESTAMP '1970-01-01T00:00:01.000Z'")
+  assert.throws(() => I.buildTimeFilter('0,1000', 't0', 'x y'))
+  assert.ok(!/DROP/.test(I.buildTimeFilter("0,1000'); DROP TABLE x; --", 't0', 't1')), 'times reach SQL only as ISO strings')
+})
+
+const STYLED = {
+  'geolakelayers.renderer': '{"type":"uniqueValue","field1":"kind","uniqueValueInfos":[]}',
+  'geolakelayers.labeling': '[{"labelPlacement":"esriServerPointLabelPlacementAboveCenter"}]',
+  'geolakelayers.time': 'seen_at'
+}
+test('getData: an owner-styled, time-aware table serves its renderer, labels and timeInfo; time= filters on its column', withDb({ props: STYLED }, async (db, table) => {
+  const model = new Model()
+  const call = (url, query) => new Promise((resolve, reject) => model.getData({ headers: { 'x-forwarded-access-token': 'tok' }, params: { id: table }, url, query }, (e, d) => e ? reject(e) : resolve(d)))
+  const info = await call('/x/FeatureServer/0', {})
+  assert.equal(info.metadata.renderer.type, 'uniqueValue')
+  assert.equal(info.metadata.labelingInfo.length, 1)
+  assert.deepEqual(info.metadata.timeInfo, { startTimeField: 'seen_at', timeExtent: [Date.parse('2024-01-01T00:00:00Z'), Date.parse('2024-02-01T00:00:00Z')], timeReference: { timeZone: 'UTC' } })
+  await call('/x/FeatureServer/0/query', { where: '1=1', time: '0,1000', returnCountOnly: 'true' })
+  assert.ok(db.log.some(e => /^SELECT COUNT.*seen_at BETWEEN TIMESTAMP '1970-01-01T00:00:00.000Z'/.test(e.sql)), 'time= becomes SQL on the owner\'s column')
+  assert.equal(db.log.filter(e => /^SHOW TBLPROPERTIES/.test(e.sql)).length, 1, 'properties are cached')
+}))
+
+test('getData: a table without layer properties keeps the default drawing and no timeInfo', withDb({}, async (db, table) => {
+  const model = new Model()
+  const info = await new Promise((resolve, reject) => model.getData({ headers: { 'x-forwarded-access-token': 'tok' }, params: { id: table }, url: '/x/FeatureServer/0', query: {} }, (e, d) => e ? reject(e) : resolve(d)))
+  assert.equal(info.metadata.renderer, undefined)
+  assert.equal(info.metadata.timeInfo, undefined)
 }))
 
 test('open tables (OPEN_TABLES): read as the app on the bound warehouse; every other table as the caller', withDb({}, async (db, table) => {

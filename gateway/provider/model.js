@@ -157,6 +157,12 @@ Model.prototype.getData = function (req, callback) {
           return callback(err)
         }
         layerSpec.store.enterWith(spec)
+        // A time-aware table filters ArcGIS time= queries on the columns its owner named
+        const props = await layerProps(table, session, thisTask, who)
+        if (props.time) {
+          req.query.timeField = props.time[0]
+          req.query.timeEndField = props.time[1]
+        }
         // Check for special query types
         const returnCountOnly = req.query.returnCountOnly === 'true'
         const returnIdsOnly = req.query.returnIdsOnly === 'true'
@@ -292,6 +298,12 @@ Model.prototype.getData = function (req, callback) {
         if (isLayerInfo) {
           const extent = await tableExtent(table, session, thisTask, who)
           if (extent) geojson.metadata.extent = extent
+          if (props.renderer) geojson.metadata.renderer = props.renderer
+          if (props.labelingInfo) geojson.metadata.labelingInfo = props.labelingInfo
+          if (props.time) {
+            const timeInfo = await tableTimeInfo(table, props.time, session, thisTask, who)
+            if (timeInfo) geojson.metadata.timeInfo = timeInfo
+          }
           // Editable layers (gateway EDITING on, real integer id, not a map-optimized copy) say so
           if (process.env.EDITING === 'true' && require('../edits').editableSpec(spec)) {
             geojson.metadata.capabilities = 'Query,Create,Update,Delete,Editing'
@@ -412,7 +424,7 @@ function buildWhereClauses (query, extra = []) {
   }
 
   if (query.time) {
-    const timeFilter = buildTimeFilter(query.time, query.timeField)
+    const timeFilter = buildTimeFilter(query.time, query.timeField, query.timeEndField)
     if (timeFilter) {
       whereClauses.push(timeFilter)
     }
@@ -613,7 +625,8 @@ function queryCachePut (key, rows) {
 /** Drop cached rows, counts, extents and fields for a table that was replaced. */
 function forgetTable (table) {
   layerSpec.forgetTable(table)
-  for (const m of [countCache, extentCache]) for (const k of m.keys()) if (k.endsWith(`|${table}`)) m.delete(k)
+  for (const m of [countCache, extentCache, layerPropsCache]) for (const k of m.keys()) if (k.endsWith(`|${table}`)) m.delete(k)
+  for (const k of timeInfoCache.keys()) if (k.includes(`|${table}|`)) timeInfoCache.delete(k)
   for (const k of temporalCache.keys()) if (k.includes(`|${table}|`)) temporalCache.delete(k)
   for (const k of Object.keys(fieldsCache)) if (k.endsWith(`|${table}`)) delete fieldsCache[k]
   // Query-cache keys are hashes of the SQL; replacing a table is rare, so clear them all
@@ -656,6 +669,73 @@ async function tableExtent (table, session, taskId, who = 'app') {
     logger.warn(`${taskId}> Extent query failed for ${table}: ${error.message}`)
     return null
   }
+}
+
+// Table properties a table's owner sets for its layer: geolakelayers.renderer (an Esri renderer, JSON),
+// geolakelayers.labeling (Esri labelingInfo, a JSON array) and geolakelayers.time ("start_column" or
+// "start_column,end_column", which makes the layer time-aware). Bad values are ignored with a warning.
+const layerPropsCache = new Map()
+const MAX_STYLE_JSON = 65536
+function parseLayerProps (rows, table) {
+  const get = k => {
+    const r = rows.find(r => (r.key ?? Object.values(r)[0]) === k)
+    return r ? String(r.value ?? Object.values(r)[1] ?? '') : ''
+  }
+  const json = (k, ok) => {
+    const v = get(k)
+    if (!v) return undefined
+    try {
+      if (v.length > MAX_STYLE_JSON) throw new Error('too long')
+      const parsed = JSON.parse(v)
+      if (ok(parsed)) return parsed
+      throw new Error('wrong shape')
+    } catch (error) {
+      logger.warn(`Ignoring ${k} on ${table}: ${error.message}`)
+    }
+  }
+  const out = {}
+  const renderer = json('geolakelayers.renderer', r => r && typeof r === 'object' && typeof r.type === 'string')
+  if (renderer) out.renderer = renderer
+  const labeling = json('geolakelayers.labeling', l => Array.isArray(l))
+  if (labeling) out.labelingInfo = labeling
+  const time = get('geolakelayers.time').split(',').map(c => c.trim()).filter(Boolean)
+  if (time.length && time.length <= 2 && time.every(c => validateColumnName(c).valid)) out.time = time
+  else if (time.length) logger.warn(`Ignoring geolakelayers.time on ${table}: one or two column names`)
+  return out
+}
+
+async function layerProps (table, session, taskId, who = 'app') {
+  const key = `${who}|${table}`
+  const hit = layerPropsCache.get(key)
+  if (hit && Date.now() - hit.at < cacheTTLMs) return hit.props
+  let props = {}
+  try {
+    props = parseLayerProps(await executeAndRecord(session, `SHOW TBLPROPERTIES ${table}`, 'properties', taskId), table)
+  } catch (error) {
+    logger.warn(`${taskId}> Table properties unreadable for ${table}: ${error.message}`)
+  }
+  layerPropsCache.set(key, { props, at: Date.now() })
+  return props
+}
+
+// Esri timeInfo for a time-aware layer: its fields and the range the data covers (for time sliders)
+const timeInfoCache = new Map()
+async function tableTimeInfo (table, [start, end], session, taskId, who = 'app') {
+  const key = `${who}|${table}|${start}|${end || ''}`
+  const hit = timeInfoCache.get(key)
+  if (hit && Date.now() - hit.at < cacheTTLMs * 6) return hit.info
+  const ms = v => v === null || v === undefined ? null : new Date(v).getTime()
+  let info = null
+  try {
+    const rows = await executeAndRecord(session, `SELECT MIN(${start}) AS t0, MAX(${end || start}) AS t1 FROM ${table}`, 'time', taskId)
+    const r = rows[0] || {}
+    info = { startTimeField: start, timeExtent: [ms(r.t0), ms(r.t1)], timeReference: { timeZone: 'UTC' } }
+    if (end) info.endTimeField = end
+  } catch (error) {
+    logger.warn(`${taskId}> Time range query failed for ${table}: ${error.message}`)
+  }
+  timeInfoCache.set(key, { info, at: Date.now() })
+  return info
 }
 
 // Build SQL query with ST functions and filters
@@ -905,17 +985,19 @@ function buildH3Filter (query) {
 }
 
 // Build time filter for temporal queries
-function buildTimeFilter (timeParam, timeField) {
+// With an end field, a feature matches when its [start, end] span overlaps the requested time
+function buildTimeFilter (timeParam, timeField, endField) {
   // Default time field if not specified
   const field = timeField || 'created_at'
 
   // Validate timeField column name if user-provided
-  if (timeField) {
-    const result = validateColumnName(timeField)
+  for (const f of [timeField, endField].filter(Boolean)) {
+    const result = validateColumnName(f)
     if (!result.valid) {
       throw new Error(`Invalid timeField: ${result.error}`)
     }
   }
+  const end = endField ? `COALESCE(${endField}, ${field})` : field
 
   try {
     // Time parameter format: "startTime,endTime" in milliseconds since epoch.
@@ -926,17 +1008,23 @@ function buildTimeFilter (timeParam, timeField) {
     const isOpen = part => part === '' || part.toLowerCase() === 'null'
 
     if (parts.length === 1 && !isOpen(parts[0])) {
-      // Single timestamp - exact match
-      return `${field} = TIMESTAMP '${toTimestamp(parts[0])}'`
+      // Single timestamp - exact match (or inside the feature's span)
+      const t = `TIMESTAMP '${toTimestamp(parts[0])}'`
+      return endField ? `${field} <= ${t} AND ${end} >= ${t}` : `${field} = ${t}`
     } else if (parts.length === 2) {
       const hasStart = !isOpen(parts[0])
       const hasEnd = !isOpen(parts[1])
+      const t0 = hasStart && `TIMESTAMP '${toTimestamp(parts[0])}'`
+      const t1 = hasEnd && `TIMESTAMP '${toTimestamp(parts[1])}'`
+      if (endField && (hasStart || hasEnd)) {
+        return [hasEnd && `${field} <= ${t1}`, hasStart && `${end} >= ${t0}`].filter(Boolean).join(' AND ')
+      }
       if (hasStart && hasEnd) {
-        return `${field} BETWEEN TIMESTAMP '${toTimestamp(parts[0])}' AND TIMESTAMP '${toTimestamp(parts[1])}'`
+        return `${field} BETWEEN ${t0} AND ${t1}`
       } else if (hasStart) {
-        return `${field} >= TIMESTAMP '${toTimestamp(parts[0])}'`
+        return `${field} >= ${t0}`
       } else if (hasEnd) {
-        return `${field} <= TIMESTAMP '${toTimestamp(parts[1])}'`
+        return `${field} <= ${t1}`
       }
     }
 
@@ -1313,6 +1401,7 @@ Model._internals = {
   buildBboxFilter,
   parseBbox,
   parseShape,
+  parseLayerProps,
   webMercatorToWgs84,
   parseResultRecordCount,
   parseResultOffset,
