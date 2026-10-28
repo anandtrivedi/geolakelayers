@@ -11,6 +11,7 @@ const config = require('../config/default.json')
 const logger = require('./logger')
 const connectionManager = require('./connection')
 const layerSpec = require('./spec')
+const { toWkt } = require('../edits')
 const { validateWhereClause, validateColumnName, validateColumnList } = require('./validation')
 
 // Environment variables take precedence over config/default.json
@@ -278,14 +279,14 @@ Model.prototype.getData = function (req, callback) {
 
         // Tell Koop that we've already applied these filters server-side
         // This prevents Koop from re-applying pagination on already-paginated results.
-        // Only claim the geometry filter when we actually built one — for unsupported
-        // geometry shapes (e.g. polygon filters) Koop falls back to filtering in-memory.
+        // Only claim the geometry filter when we actually built one — for ones SQL can't take
+        // (relations other than intersects, other spatial references) Koop filters in memory.
         geojson.filtersApplied = {
           offset: true, // We handle resultOffset with SQL OFFSET
           limit: true, // We handle resultRecordCount with SQL LIMIT
           where: true, // We handle WHERE clauses in SQL
           geometry: !req.query.geometry ||
-            buildBboxFilter(req.query.geometry, req.query.geometryType, req.query.inSR) !== null
+            buildBboxFilter(req.query.geometry, req.query.geometryType, req.query.inSR, req.query.spatialRel) !== null
         }
 
         if (isLayerInfo) {
@@ -397,7 +398,7 @@ function buildWhereClauses (query, extra = []) {
   pushValidatedWhere(whereClauses, query.where)
 
   if (query.geometry) {
-    const bboxFilter = buildBboxFilter(query.geometry, query.geometryType, query.inSR)
+    const bboxFilter = buildBboxFilter(query.geometry, query.geometryType, query.inSR, query.spatialRel)
     if (bboxFilter) {
       whereClauses.push(bboxFilter)
     }
@@ -516,10 +517,10 @@ function columnList (value, what) {
 }
 
 // Statistics and distinct values are filtered only in SQL: reject a spatial filter we can't translate
-// (e.g. a polygon) instead of answering for the whole table
+// (e.g. a spatial relation other than intersects) instead of answering for the whole table
 function assertSqlGeometryFilter (query) {
-  if (query.geometry && buildBboxFilter(query.geometry, query.geometryType, query.inSR) === null) {
-    throw Object.assign(new Error('Statistics and distinct values support envelope and point spatial filters only'), { code: 400 })
+  if (query.geometry && buildBboxFilter(query.geometry, query.geometryType, query.inSR, query.spatialRel) === null) {
+    throw Object.assign(new Error('Statistics and distinct values support intersects spatial filters in WGS84 or Web Mercator only'), { code: 400 })
   }
 }
 
@@ -807,12 +808,38 @@ function parseBbox (geometryParam, inSR) {
   return coords
 }
 
+// Polygon, polyline or multipoint filter (Select by drawing, Query buffers) -> { wkt, box } in 4326, or null.
+// Intersects only; other relations are left to Koop's in-memory filter.
+const MAX_FILTER_VERTICES = 20000
+function parseShape (geometryParam, inSR, spatialRel) {
+  if (spatialRel && spatialRel !== 'esriSpatialRelIntersects') return null
+  let g = geometryParam
+  if (typeof g === 'string') {
+    if (!g.trim().startsWith('{')) return null
+    try { g = JSON.parse(g) } catch (error) { return null }
+  }
+  if (!g || typeof g !== 'object' || !['rings', 'paths', 'points'].some(k => Array.isArray(g[k]))) return null
+  if (!g.spatialReference && parseInt(inSR)) g = { ...g, spatialReference: { wkid: parseInt(inSR) } }
+  const wkid = g.spatialReference && (g.spatialReference.latestWkid || g.spatialReference.wkid)
+  if (wkid && ![4326, 102100, 3857, 900913].includes(Number(wkid))) return null
+  const vertices = (g.rings || g.paths || [g.points]).reduce((n, part) => n + (Array.isArray(part) ? part.length : 0), 0)
+  if (!vertices || vertices > MAX_FILTER_VERTICES) return null
+  let wkt
+  try { wkt = toWkt(Number(wkid) === 900913 ? { ...g, spatialReference: { wkid: 3857 } } : g) } catch (error) { return null }
+  const nums = wkt.match(/-?\d+(\.\d+)?(e[-+]?\d+)?/gi).map(Number)
+  const xs = nums.filter((_, i) => i % 2 === 0)
+  const ys = nums.filter((_, i) => i % 2 === 1)
+  return { wkt, box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] }
+}
+
 // Build bbox filter using ST_Intersects
-function buildBboxFilter (geometryString, geometryType, inSR) {
+function buildBboxFilter (geometryString, geometryType, inSR, spatialRel) {
   try {
     const coords = parseBbox(geometryString, inSR)
 
     if (!coords) {
+      const shape = parseShape(geometryString, inSR, spatialRel)
+      if (shape) return shapeFilter(shape)
       logger.warn('Unsupported or invalid geometry filter, skipping SQL bbox filter:', geometryString)
       return null
     }
@@ -833,6 +860,12 @@ function buildBboxFilter (geometryString, geometryType, inSR) {
     logger.error('Error building bbox filter:', error)
     return null
   }
+}
+
+function shapeFilter ({ wkt, box: [xmin, ymin, xmax, ymax] }) {
+  const intersects = `ST_Intersects(${buildGeometryExpression()}, ST_GeomFromText('${wkt}', ${S().spatialReference}))`
+  if (!S().bboxColumns) return intersects
+  return `(_xmax >= ${xmin} AND _xmin <= ${xmax} AND _ymax >= ${ymin} AND _ymin <= ${ymax} AND ${intersects})`
 }
 
 // Build H3 filter (legacy support for existing queries)
@@ -1279,6 +1312,7 @@ Model._internals = {
   buildWhereClauses,
   buildBboxFilter,
   parseBbox,
+  parseShape,
   webMercatorToWgs84,
   parseResultRecordCount,
   parseResultOffset,

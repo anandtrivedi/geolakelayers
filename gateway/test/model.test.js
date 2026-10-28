@@ -36,6 +36,29 @@ test('buildBboxFilter: ST_Intersects with numbers only, plus the bounding-box pr
   })
 })
 
+test('parseShape: drawn polygons, lines and points become 4326 WKT with their box; others are left to Koop', () => {
+  const tri = { rings: [[[0, 0], [0, 2], [2, 2], [0, 0]]] }
+  assert.deepEqual(I.parseShape(JSON.stringify(tri)), { wkt: 'POLYGON ((0 0, 0 2, 2 2, 0 0))', box: [0, 0, 2, 2] })
+  const merc = I.parseShape({ paths: [[[0, 0], [111319.49, 0]]] }, '102100')
+  assert.match(merc.wkt, /^LINESTRING \(0 0, 1(\.0+\d*)? 0\)$|^LINESTRING \(0 0, 0\.9999/)
+  assert.deepEqual(I.parseShape({ points: [[1, 2], [3, -4]] }).box, [1, -4, 3, 2])
+  assert.equal(I.parseShape(tri, null, 'esriSpatialRelWithin'), null, 'only intersects')
+  assert.equal(I.parseShape({ ...tri, spatialReference: { wkid: 2263 } }), null, 'other spatial references')
+  assert.equal(I.parseShape({ rings: [[[0, 0], ['1; DROP', 0], [1, 1]]] }), null, 'numbers only')
+  assert.equal(I.parseShape({ rings: [] }), null)
+  assert.equal(I.parseShape('-77,38,-76,39'), null)
+})
+
+test('buildBboxFilter: a polygon is an ST_Intersects filter, with the box prefilter for optimized copies', () => {
+  const tri = JSON.stringify({ rings: [[[0, 0], [0, 2], [2, 2], [0, 0]]] })
+  inSpec(WKT_SPEC, () => {
+    assert.equal(I.buildBboxFilter(tri, 'esriGeometryPolygon'), "ST_Intersects(ST_GeomFromText(geometry_wkt, 4326), ST_GeomFromText('POLYGON ((0 0, 0 2, 2 2, 0 0))', 4326))")
+  })
+  inSpec(OPT_SPEC, () => {
+    assert.match(I.buildBboxFilter(tri, 'esriGeometryPolygon'), /^\(_xmax >= 0 AND _xmin <= 2 AND _ymax >= 0 AND _ymin <= 2 AND ST_Intersects\(geom, /)
+  })
+})
+
 test('buildQuery: Esri SQL is unchanged by an empty extra list; extra clauses are ANDed', () => {
   inSpec(WKT_SPEC, () => {
     const q = { where: "kind = 'a'", geometry: '-77,38,-76,39', resultRecordCount: '10', resultOffset: '20' }
@@ -355,8 +378,10 @@ test('getData: statistics come back precalculated, distinct values as features w
   const n = await call({ where: '1=1', outFields: 'kind', returnDistinctValues: 'true', returnCountOnly: 'true' })
   assert.ok(n.count !== undefined)
   assert.ok(db.log.some(e => /^SELECT COUNT\(\*\) AS cnt FROM \(SELECT DISTINCT kind /.test(e.sql)), 'counts distinct values, not rows')
-  const polygon = JSON.stringify({ rings: [[[0, 0], [1, 0], [1, 1], [0, 0]]] })
-  await assert.rejects(call({ outFields: 'kind', returnDistinctValues: 'true', geometry: polygon, geometryType: 'esriGeometryPolygon' }),
+  const polygon = JSON.stringify({ rings: [[[0, 0], [0, 1], [1, 1], [0, 0]]] })
+  await call({ outFields: 'kind', returnDistinctValues: 'true', geometry: polygon, geometryType: 'esriGeometryPolygon' })
+  assert.ok(db.log.some(e => /ST_Intersects\(.*'POLYGON \(\(0 0, 0 1, 1 1, 0 0\)\)'/.test(e.sql)), 'a drawn polygon filters in SQL')
+  await assert.rejects(call({ outFields: 'kind', returnDistinctValues: 'true', geometry: polygon, geometryType: 'esriGeometryPolygon', spatialRel: 'esriSpatialRelContains' }),
     e => e.code === 400, 'a spatial filter SQL can\'t apply is refused, not ignored')
 }))
 

@@ -88,6 +88,16 @@ test('edits.toWkt: polygon', async t => {
   assert.match(wkt, /POLYGON/)
 })
 
+test('edits.toWkt: clockwise outers with their holes; two outers make a MULTIPOLYGON; rings get closed', async t => {
+  const outer = (x, y, s) => [[x, y], [x, y + s], [x + s, y + s], [x + s, y], [x, y]]
+  const hole = [[1, 1], [2, 1], [2, 2], [1, 2], [1, 1]]
+  assert.equal(edits.toWkt({ rings: [outer(0, 0, 4), hole] }),
+    'POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1))')
+  assert.equal(edits.toWkt({ rings: [outer(0, 0, 1), outer(5, 5, 1)] }),
+    'MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)), ((5 5, 5 6, 6 6, 6 5, 5 5)))')
+  assert.equal(edits.toWkt({ rings: [[[0, 0], [0, 1], [1, 1]]] }), 'POLYGON ((0 0, 0 1, 1 1, 0 0))')
+})
+
 test('edits.toWkt: non-finite coordinates throw', async t => {
   const geom = {
     x: Infinity,

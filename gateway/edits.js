@@ -32,8 +32,36 @@ function toWkt (g) {
   if (Array.isArray(g.paths)) {
     return g.paths.length === 1 ? `LINESTRING (${ring(g.paths[0])})` : `MULTILINESTRING (${g.paths.map(p => `(${ring(p)})`).join(', ')})`
   }
-  if (Array.isArray(g.rings)) return `POLYGON (${g.rings.map(r => `(${ring(r)})`).join(', ')})`
+  if (Array.isArray(g.rings)) {
+    const parts = polygonParts(g.rings.filter(r => Array.isArray(r) && r.length >= 3))
+    if (!parts.length) throw new Error('Polygon without rings')
+    const poly = rings => `(${rings.map(r => `(${ring(closed(r))})`).join(', ')})`
+    return parts.length === 1 ? `POLYGON ${poly(parts[0])}` : `MULTIPOLYGON (${parts.map(poly).join(', ')})`
+  }
   throw new Error('Unsupported geometry')
+}
+
+const closed = r => (r[0][0] === r[r.length - 1][0] && r[0][1] === r[r.length - 1][1]) ? r : [...r, r[0]]
+// Twice the signed area, positive for clockwise rings (Esri's outer rings)
+const clockwise = r => r.reduce((a, p, i) => { const q = r[(i + 1) % r.length]; return a + (q[0] - p[0]) * (q[1] + p[1]) }, 0) > 0
+function inside ([x, y], r) {
+  let hit = false
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    if ((r[i][1] > y) !== (r[j][1] > y) && x < (r[j][0] - r[i][0]) * (y - r[i][1]) / (r[j][1] - r[i][1]) + r[i][0]) hit = !hit
+  }
+  return hit
+}
+
+/** Esri rings -> [[outer, ...holes], ...]: clockwise rings are outers, the rest holes of the outer holding them. */
+function polygonParts (rings) {
+  const outers = rings.filter(clockwise)
+  if (!outers.length) return rings.map(r => [r]) // no orientation to go by: every ring is its own polygon
+  const parts = outers.map(r => [r])
+  for (const r of rings.filter(r => !clockwise(r))) {
+    const part = parts.find(([o]) => inside(r[0], o))
+    if (part) part.push(r); else parts.push([r])
+  }
+  return parts
 }
 
 function parseList (v) {
