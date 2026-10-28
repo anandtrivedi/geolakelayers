@@ -187,7 +187,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       await layer.load()
       // Keep a data-driven style the table's owner set (table property geolakelayers.renderer); a plain
       // simple renderer (the gateway's default) becomes this layer's palette colour
-      const served = (layer as any).sourceJSON?.drawingInfo?.renderer?.type
+      const served = gl.servedRenderer || (layer as any).sourceJSON?.drawingInfo?.renderer?.type
       if (!served || served === 'simple') layer.renderer = rendererFor(layer.geometryType, colorIndex.current++) as any
       layer.outFields = ['*']
       layer.popupTemplate = { title, content: [{ type: 'fields' }] } as any

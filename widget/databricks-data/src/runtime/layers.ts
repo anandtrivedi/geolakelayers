@@ -34,6 +34,8 @@ export interface GatewayLayer {
   output?: boolean
   /** Stops applying the output view's filters to the layer */
   stopSync?: () => void
+  /** Renderer type in the layer definition the gateway served (from the table's geolakelayers.renderer) */
+  servedRenderer?: string
 }
 
 export { layerUrl }
@@ -62,7 +64,8 @@ function followOutputView (outputId: string, layer: __esri.FeatureLayer): () => 
     if (key === last) return
     last = key
     layer.definitionExpression = where === '1=1' ? null : where
-    if (layer.timeInfo) layer.timeExtent = (time ? { start: new Date(time[0]), end: new Date(time[1]) } : null) as any
+    // Set even before the layer has loaded its timeInfo; a layer that isn't time-aware ignores it
+    layer.timeExtent = (time ? { start: new Date(time[0]), end: new Date(time[1]) } : null) as any
   }
   apply()
   return getAppStore().subscribe(apply)
@@ -97,6 +100,7 @@ export async function addGatewayLayer (opts: {
     const r = await fetch(`${url}?f=json`, { headers: gatewayHeaders(gateway) })
     const definition = await r.json()
     if (!r.ok || definition.error) throw new Error(definition.error?.message || `HTTP ${r.status}`)
+    const servedRenderer: string | undefined = definition.drawingInfo?.renderer?.type
 
     // Hand Experience Builder the definition we fetched with the token. Some of its data-source code
     // fetches service info itself without going through the SDK interceptors, so that request would go
@@ -125,10 +129,10 @@ export async function addGatewayLayer (opts: {
     const jimuLayerView = await jmv.addLayerAndCreateJimuLayerView(layer, ds)
     if (outputId) {
       setStatus(outputId, DataSourceStatus.Unloaded)
-      return { layer, dataSource: ds, jimuLayerView, output: true, stopSync: followOutputView(outputId, layer) }
+      return { layer, dataSource: ds, jimuLayerView, output: true, stopSync: followOutputView(outputId, layer), servedRenderer }
     }
     publish(widgetId, DataSourcesChangeType.Create, ds)
-    return { layer, dataSource: ds, jimuLayerView }
+    return { layer, dataSource: ds, jimuLayerView, servedRenderer }
   } catch (err) {
     // Undo whatever got created before falling back, so nothing leaks or is drawn twice
     if (createdLayer) jmv.view.map.remove(createdLayer)
