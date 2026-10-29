@@ -286,7 +286,7 @@ async function runSql (req, sql, timeout = 60, namedParameters, warehouseId = re
     try {
       return await op.fetchAll()
     } finally {
-      await op.close().catch(() => {})
+      await op.close().catch(err => console.warn(`Closing a statement failed: ${err.message}`))
     }
   } finally {
     await session.close()

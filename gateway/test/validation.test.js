@@ -257,3 +257,12 @@ test('validation.validateWhereClause: a keyword inside a literal does not move w
     assert.equal(validateWhereClause(w).valid, true, w)
   }
 })
+
+test('validation.validateWhereClause: raw, hex and Unicode literals are refused', async t => {
+  for (const w of ["x = r'\\' OR secret('s', 'k') = 'x' OR y = '", "x = R'abc'", "x = X'41'", "x = U&'\\' UESCAPE '!' OR secret('s', 'k') = '"]) {
+    assert.equal(validateWhereClause(w).valid, false, w)
+  }
+  for (const w of ["name='ArcGIS'", "t >= DATE'2024-01-01'", 'x="abc"']) {
+    assert.equal(validateWhereClause(w).valid, true, w)
+  }
+})
