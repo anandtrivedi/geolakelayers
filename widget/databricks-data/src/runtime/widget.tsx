@@ -24,7 +24,7 @@ import { workspacesOf, layerKey, parseLayerKey } from '../workspaces'
 import { TableTree } from '../table-tree'
 import { announceLayer } from '../sync'
 import { addGatewayLayer, removeGatewayLayer, forgetGatewayLayer } from './layers'
-import { outputDataSourceId } from '../outputs'
+import { outputDataSourceId, popupFieldInfos } from '../outputs'
 import type { GatewayLayer } from './layers'
 import { versionManager } from '../version-manager'
 import defaultMessages from './translations/default'
@@ -190,7 +190,8 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       const served = gl.servedRenderer || (layer as any).sourceJSON?.drawingInfo?.renderer?.type
       if (!served || served === 'simple') layer.renderer = rendererFor(layer.geometryType, colorIndex.current++) as any
       layer.outFields = ['*']
-      layer.popupTemplate = { title, content: [{ type: 'fields' }] } as any
+      // A layer added without a data source has no popup yet (layers.ts sets it on the others)
+      if (!layer.popupTemplate) layer.popupTemplate = { title, content: [{ type: 'fields', fieldInfos: popupFieldInfos(undefined, layer.fields.filter(f => f.type !== 'geometry')) }] } as any
       // Editing needs both: the app allows it, and the gateway advertises it for this table
       const editable = props.config.allowEditing === true && !!(layer as any).capabilities?.operations?.supportsEditing
       layer.editingEnabled = editable
@@ -203,6 +204,8 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       // Zooming to the whole extent of a zoom-limited layer would hide it; leave the view where it is
       if (isCurrent(entry) && layer.fullExtent && !(layer.minScale > 0)) await jmv.view.goTo(layer.fullExtent.expand(1.2)).catch(() => {})
       await reactiveUtils.whenOnce(() => !lv.updating)
+      // Drawn, so a Timeline has set its time by now: widgets that missed it while signing in catch up
+      gl.requery?.()
       update(entry, { state: 'ready', info: `${summary}, ${((performance.now() - t0) / 1000).toFixed(1)} s` })
     } catch (err) {
       update(entry, { state: 'failed', info: err.message })

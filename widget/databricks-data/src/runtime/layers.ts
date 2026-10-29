@@ -22,7 +22,7 @@ import type { DataSource } from 'jimu-core'
 import type { JimuMapView, JimuLayerView } from 'jimu-arcgis'
 import FeatureLayer from 'esri/layers/FeatureLayer'
 import { gatewayHeaders } from '../auth'
-import { layerUrl, outputDataSourceId } from '../outputs'
+import { layerUrl, outputDataSourceId, popupFieldInfos } from '../outputs'
 
 export interface GatewayLayer {
   layer: __esri.FeatureLayer
@@ -34,6 +34,8 @@ export interface GatewayLayer {
   output?: boolean
   /** Stops applying the output view's filters to the layer */
   stopSync?: () => void
+  /** Makes widgets connected to the output view query again */
+  requery?: () => void
   /** Renderer type in the layer definition the gateway served (from the table's geolakelayers.renderer) */
   servedRenderer?: string
 }
@@ -69,6 +71,18 @@ function followOutputView (outputId: string, layer: __esri.FeatureLayer): () => 
   }
   apply()
   return getAppStore().subscribe(apply)
+}
+
+// Widgets connected to the output view that read its query while the layer waited for sign-in (e.g. a
+// Chart) can miss the time or filter set on it then, and keep querying without it. A no-op query from this
+// widget (alternating, so each call is a change) makes them all query again with the view's current query.
+function requeryConnectedWidgets (outputId: string, widgetId: string): () => void {
+  let on = false
+  return () => {
+    on = !on
+    const view: any = DataSourceManager.getInstance().getDataSource(`${outputId}-output`)
+    view?.updateQueryParams?.(on ? { where: '1=1' } : {}, widgetId)
+  }
 }
 
 function publish (widgetId: string, type: DataSourcesChangeType, ds: DataSource): void {
@@ -125,11 +139,18 @@ export async function addGatewayLayer (opts: {
     }
     const layer = (await (ds as any).createJSAPILayerByDataSource()) as __esri.FeatureLayer
     layer.title = title
+    // Before the layer is on the map, so widgets that build from it (e.g. a Table) get the titles and number
+    // formats in the app's data settings
+    const schemaFields = (ds as any).getSchema?.()?.fields?.asMutable?.({ deep: true })
+    const fieldInfos = popupFieldInfos(schemaFields, (definition.fields || []).filter((f: any) => f.type !== 'esriFieldTypeGeometry'))
+    layer.popupTemplate = { title, content: [{ type: 'fields', fieldInfos }] } as any
+    // The Table widget reads them from the data source's popup info
+    ;(ds as any).setPopupInfo?.({ title, fieldInfos, popupElements: [{ type: 'fields', fieldInfos }] })
     createdLayer = layer
     const jimuLayerView = await jmv.addLayerAndCreateJimuLayerView(layer, ds)
     if (outputId) {
       setStatus(outputId, DataSourceStatus.Unloaded)
-      return { layer, dataSource: ds, jimuLayerView, output: true, stopSync: followOutputView(outputId, layer), servedRenderer }
+      return { layer, dataSource: ds, jimuLayerView, output: true, stopSync: followOutputView(outputId, layer), requery: requeryConnectedWidgets(outputId, widgetId), servedRenderer }
     }
     publish(widgetId, DataSourcesChangeType.Create, ds)
     return { layer, dataSource: ds, jimuLayerView, servedRenderer }

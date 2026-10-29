@@ -41,6 +41,23 @@ export function outputDataSourceJson (id: string, url: string, title: string, de
 }
 
 /**
+ * Popup field infos from a data source schema: each field's title, and for numbers the format set in the
+ * app's data settings (e.g. an MMSI without thousands separators), so popups read like the Table widget.
+ */
+export function popupFieldInfos (schemaFields: { [name: string]: any } | undefined, layerFields: Array<{ name: string, alias?: string }>): any[] {
+  return layerFields.map(f => {
+    const s = schemaFields?.[f.name]
+    const info: any = { fieldName: f.name, label: s?.alias || f.alias || f.name, visible: true }
+    const fmt = s?.fieldFormat
+    if (s?.type === 'NUMBER' && fmt) {
+      info.format = { digitSeparator: fmt.useGrouping !== 'never' && fmt.useGrouping !== false }
+      if (Number.isInteger(fmt.maximumFractionDigits)) info.format.places = fmt.maximumFractionDigits
+    }
+    return info
+  })
+}
+
+/**
  * Output data sources for the start-up layers. A layer whose workspace isn't signed in keeps the JSON
  * already saved for it (if any), so opening the settings without signing in changes nothing.
  */

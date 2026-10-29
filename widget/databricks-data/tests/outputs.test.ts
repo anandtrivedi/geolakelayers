@@ -2,7 +2,7 @@
   outputs.test.ts — the widget's output data sources (src/outputs.ts): stable ids, the saved JSON,
   and which layers get rebuilt or keep their saved JSON.
 */
-import { outputDataSourceId, outputDataSourceJson, buildOutputDataSources, layerUrl } from '../src/outputs'
+import { outputDataSourceId, outputDataSourceJson, buildOutputDataSources, layerUrl, popupFieldInfos } from '../src/outputs'
 import type { Workspace } from '../src/config'
 
 const ws: Workspace = { id: 'ws1', label: 'Production', gatewayUrl: 'https://gw.example.com', warehouseId: '', catalogs: [] }
@@ -78,5 +78,21 @@ describe('buildOutputDataSources', () => {
   })
   test('a layer of a removed workspace with nothing saved is dropped', async () => {
     expect(await buildOutputDataSources(opts({ workspaces: [], saved: () => undefined }))).toEqual([])
+  })
+})
+
+describe('popupFieldInfos', () => {
+  const layerFields = [{ name: 'mmsi', alias: 'mmsi' }, { name: 'hours_dark', alias: 'Hours dark' }, { name: 'contact', alias: 'contact' }]
+  test('uses the schema title and number format the app saved', () => {
+    const infos = popupFieldInfos({
+      mmsi: { type: 'NUMBER', alias: 'MMSI', fieldFormat: { type: 'number', useGrouping: 'never', maximumFractionDigits: 0 } },
+      hours_dark: { type: 'NUMBER', alias: 'Hours dark', fieldFormat: { type: 'number', useGrouping: 'auto', maximumFractionDigits: 1 } }
+    }, layerFields)
+    expect(infos[0]).toEqual({ fieldName: 'mmsi', label: 'MMSI', visible: true, format: { digitSeparator: false, places: 0 } })
+    expect(infos[1]).toEqual({ fieldName: 'hours_dark', label: 'Hours dark', visible: true, format: { digitSeparator: true, places: 1 } })
+    expect(infos[2]).toEqual({ fieldName: 'contact', label: 'contact', visible: true })
+  })
+  test('without a schema: the layer aliases, no formats', () => {
+    expect(popupFieldInfos(undefined, layerFields).map(i => i.label)).toEqual(['mmsi', 'Hours dark', 'contact'])
   })
 })
