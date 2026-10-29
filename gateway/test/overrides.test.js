@@ -61,8 +61,10 @@ const log = []
 let grantRows = []
 let grantFails = false
 connectionManager.getSession = async () => ({
-  async executeStatement (sql, opts) {
-    log.push({ sql, params: opts.namedParameters })
+  async executeStatement (tagged, opts) {
+    // The protocol tag (taggedSession) is logged apart, so the assertions below look at the SQL itself
+    const [, sql, tag] = /^([\s\S]*?)(?: \/\* geolakelayers:([^*]*) \*\/)?$/.exec(tagged)
+    log.push({ sql, tag, params: opts.namedParameters })
     const rows = (() => {
       if (/is_account_group_member/.test(sql)) return grantRows
       if (/^GRANT /.test(sql) && grantFails) throw new Error("PERMISSION_DENIED: User does not have MANAGE on Table 'c.s.layer_overrides'.")

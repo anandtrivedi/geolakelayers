@@ -166,8 +166,10 @@ function fakeDb ({ rows = 30, count = 30, describe, pk = ['objectid'], props = {
     }))
   }
   const session = {
-    async executeStatement (sql, opts) {
-      log.push({ sql, params: opts.namedParameters })
+    async executeStatement (tagged, opts) {
+      // The protocol tag (taggedSession) is logged apart, so the assertions below look at the SQL itself
+      const [, sql, tag] = /^([\s\S]*?)(?: \/\* geolakelayers:([^*]*) \*\/)?$/.exec(tagged)
+      log.push({ sql, tag, params: opts.namedParameters })
       return { fetchAll: async () => answer(sql), close: async () => {} }
     },
     close: async () => {}
@@ -497,3 +499,45 @@ test('buildTimeFilter: three parts are refused; decimal epoch milliseconds are r
   assert.throws(() => I.buildTimeFilter('0,1000,5', 't0'), e => e.code === 400)
   assert.equal(I.buildTimeFilter('0.0,1000.0', 't0'), "t0 BETWEEN TIMESTAMP '1970-01-01T00:00:00.000Z' AND TIMESTAMP '1970-01-01T00:00:01.000Z'")
 })
+
+test('taggedSession: statements carry a trailing protocol tag; the query log records the protocol', async () => {
+  const sent = []
+  const raw = { executeStatement: async (sql) => { sent.push(sql); return { fetchAll: async () => [], close: async () => {} } }, close: async () => {} }
+  const ogc = I.taggedSession(raw, 'ogc', 'service=roads */ DROP')
+  await I.executeAndRecord(ogc, 'SELECT 1', 'test', 't1')
+  assert.equal(sent[0], 'SELECT 1 /* geolakelayers:ogc service=roadsDROP */', 'tag at the end, no way to close the comment early')
+  assert.ok(/^\s*SELECT\b/.test(sent[0]), 'routing still sees SELECT first')
+  assert.equal(Model.recentQueries.at(-1).protocol, 'ogc')
+  assert.equal(Model.recentQueries.at(-1).sql, 'SELECT 1', 'the log keeps the untagged SQL')
+  await I.executeAndRecord(I.taggedSession(raw, 'esri'), 'DESCRIBE a.b.c', 'test', 't2')
+  assert.equal(sent[1], 'DESCRIBE a.b.c /* geolakelayers:esri */')
+})
+
+test('protocol tags: every statement of an Esri request says esri, of an OGC request ogc and its service', withDb({}, async (db, table) => {
+  const model = new Model()
+  await new Promise((resolve, reject) => model.getData({ headers: { 'x-forwarded-access-token': 'tok-esri' }, params: { id: table }, url: `/databricks/rest/services/${table}/FeatureServer/0/query`, query: { where: '1=1' } }, (e, d) => e ? reject(e) : resolve(d)))
+  assert.ok(db.log.length > 0)
+  assert.deepEqual([...new Set(db.log.map(e => e.tag))], ['esri'])
+  db.log.length = 0
+  await Model.queryFeatures({ table, userToken: 'tok-ogc', limit: 5, service: 'roads' })
+  await Model.collectionInfo({ table, userToken: 'tok-ogc', service: 'roads' })
+  assert.ok(db.log.length > 0)
+  assert.deepEqual([...new Set(db.log.map(e => e.tag))], ['ogc service=roads'])
+}))
+
+test('robustness: spatial references however clients send them; time given twice; counts with a filter SQL cannot take', withDb({}, async (db, table) => {
+  const merc = [-8575000, 4705000, -8570000, 4710000]
+  for (const sr of ['102100', '{"wkid":102100}', { latestWkid: 3857 }]) {
+    const box = I.parseBbox(merc.join(','), sr)
+    assert.ok(box[0] > -78 && box[0] < -76, `degrees, not meters: ${JSON.stringify(sr)}`)
+  }
+  const env = JSON.stringify({ xmin: merc[0], ymin: merc[1], xmax: merc[2], ymax: merc[3], spatialReference: { wkid: '102100' } })
+  assert.ok(I.parseBbox(env)[0] > -78, 'a string wkid in the envelope')
+  assert.throws(() => I.buildTimeFilter(['0', '1000'], 't0'), e => e.code === 400)
+  const model = new Model()
+  const call = query => new Promise(resolve => model.getData({ headers: { 'x-forwarded-access-token': 'tok' }, params: { id: table }, url: `/databricks/rest/services/${table}/FeatureServer/0/query`, query }, e => resolve(e)))
+  for (const mode of ['returnCountOnly', 'returnIdsOnly', 'returnExtentOnly']) {
+    const err = await call({ [mode]: 'true', geometry: '{"xmin":0,"ymin":0,"xmax":1,"ymax":1,"spatialReference":{"wkid":2263}}' })
+    assert.equal(err && err.code, 400, mode)
+  }
+}))

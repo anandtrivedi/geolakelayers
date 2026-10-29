@@ -94,7 +94,7 @@ function ogcRouter (deps) {
     }
   }
   const base = (req, service) => `${selfOrigin(req)}/ogc/${service}`
-  const ctx = (req, service) => ({ userToken: obo(req), warehouseId: readWarehouse(req, service) })
+  const ctx = (req, service) => ({ userToken: obo(req), warehouseId: readWarehouse(req, service), protocol: 'ogc', service: service && service.name })
 
   async function serviceOf (req) {
     if (!store) throw new OgcError(404, 'NotFound', 'OGC services are not turned on for this gateway (bundle variable ogc_services_table)')
@@ -316,7 +316,7 @@ function consoleApi (deps) {
     }
   }
   const off = () => { throw new OgcError(404, 'NotFound', 'OGC services are not turned on (bundle variable ogc_services_table)') }
-  const ctx = req => ({ userToken: obo(req), warehouseId: req.warehouseId })
+  const ctx = req => ({ userToken: obo(req), warehouseId: req.warehouseId, protocol: 'console' })
 
   // Every table must be map-ready for the author, a time field must be a date/timestamp column, and the
   // engine must be an allowed warehouse

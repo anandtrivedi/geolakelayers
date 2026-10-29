@@ -102,6 +102,7 @@ app.post('/databricks/rest/services/:id/FeatureServer/:layer/applyEdits', async 
   if (!origin || (origin !== self && !allowedOrigins.includes(origin))) return fail(403, 'Edits are accepted only from allow-listed apps')
   const table = req.params.id
   if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(table)) return fail(400, 'catalog.schema.table expected')
+  req.glProtocol = 'esri'
   try {
     const who = layerSpec.whoOf(obo(req))
     const spec = await layerSpec.resolveSpec(table, sql => runSql(req, sql), who)
@@ -131,7 +132,7 @@ const ogcTable = list(process.env.OGC_SERVICES_TABLE)[0] || null
 const ogcStore = ogcTable ? ogc.createStore({
   table: ogcTable,
   // A warehouse the request names wins over the service's engine, as for the service's reads
-  run: (req, sql, params, warehouse) => runSql(req, sql, 60, params, req.warehouseId || warehouse),
+  run: (req, sql, params, warehouse) => runSql(Object.assign(Object.create(req), { glProtocol: 'ogc' }), sql, 60, params, req.warehouseId || warehouse),
   obo,
   allowed: w => allowedWarehouses.includes(w)
 }) : null
@@ -279,8 +280,10 @@ app.get('/api/load', (req, res) => {
   })
 })
 
+// Statements are tagged with the protocol they serve (see taggedSession in provider/model.js): edits are
+// esri, the OGC service table is ogc, and everything else here is the console's
 async function runSql (req, sql, timeout = 60, namedParameters, warehouseId = req.warehouseId) {
-  const session = await connectionManager.getSession(obo(req), warehouseId)
+  const session = Model._internals.taggedSession(await connectionManager.getSession(obo(req), warehouseId), req.glProtocol || 'console')
   try {
     const op = await session.executeStatement(sql, namedParameters ? { queryTimeout: timeout, namedParameters } : { queryTimeout: timeout })
     try {

@@ -48,6 +48,20 @@ function recordQuery (entry) {
   if (recentQueries.length > RECENT_QUERIES_MAX) recentQueries.shift()
 }
 
+// Which protocol a statement serves (esri FeatureServer, ogc API – Features, console), as a trailing comment
+// Databricks keeps in query history (filter system.query.history on statement_text LIKE '%geolakelayers:ogc%').
+// Trailing, so routing that reads the start of a statement still sees SELECT/DESCRIBE; added below the query
+// cache, so Esri and OGC pages of the same table still share cached rows.
+function taggedSession (session, protocol, detail) {
+  const clean = String(detail || '').replace(/[^A-Za-z0-9_.=-]/g, '')
+  const tag = ` /* geolakelayers:${protocol}${clean ? ' ' + clean : ''} */`
+  return {
+    protocol,
+    executeStatement: (sql, opts) => session.executeStatement(sql + tag, opts),
+    close: () => session.close()
+  }
+}
+
 // Execute a statement, fetch all rows, and record it in the query log
 // (params: named SQL parameters, only sent when there are some)
 async function executeAndRecord (session, sql, kind, taskId, params) {
@@ -66,6 +80,7 @@ async function executeAndRecord (session, sql, kind, taskId, params) {
     at: new Date(started).toISOString(),
     taskId,
     kind,
+    protocol: session.protocol || null,
     sql,
     durationMs: Date.now() - started,
     rows: rows.length
@@ -75,11 +90,19 @@ async function executeAndRecord (session, sql, kind, taskId, params) {
 
 // Simple sliding-window rate limiter (per IP)
 const rateLimitStore = {}
+// Clients tracked at once: past this, the longest-tracked is dropped, so spraying made-up addresses can't fill memory
+const RATE_LIMIT_MAX_CLIENTS = 10000
+let rateLimitClients = 0
 
 function checkRateLimit (ip) {
   const now = Date.now()
   if (!rateLimitStore[ip]) {
+    if (rateLimitClients >= RATE_LIMIT_MAX_CLIENTS) {
+      delete rateLimitStore[Object.keys(rateLimitStore)[0]]
+      rateLimitClients--
+    }
     rateLimitStore[ip] = []
+    rateLimitClients++
   }
   // Remove expired timestamps
   rateLimitStore[ip] = rateLimitStore[ip].filter(t => now - t < rateLimitWindowMs)
@@ -129,11 +152,11 @@ Model.prototype.getData = function (req, callback) {
   // Rate limiting. Behind a load balancer req.ip is the LB address (Express
   // 'trust proxy' is not set by Koop), so prefer the first X-Forwarded-For hop.
   // The Databricks Apps front door sets X-Forwarded-Email to the signed-in user (a client can't), whereas the
-  // first X-Forwarded-For hop is whatever the client sent; key on the user when there is one.
+  // earlier X-Forwarded-For hops are whatever the client sent; key on the user, else the last (proxy-added) hop.
   const forwardedFor = req.headers && req.headers['x-forwarded-for']
   const forwardedEmail = req.headers && req.headers['x-forwarded-email']
   const clientIp = (typeof forwardedEmail === 'string' && forwardedEmail && `user:${forwardedEmail}`) ||
-    (typeof forwardedFor === 'string' && forwardedFor.split(',')[0].trim()) ||
+    (typeof forwardedFor === 'string' && forwardedFor.split(',').pop().trim()) ||
     req.ip || req.socket?.remoteAddress || 'unknown'
   if (!checkRateLimit(clientIp)) {
     logger.warn(`${thisTask}> Rate limit exceeded for ${clientIp}`)
@@ -155,7 +178,8 @@ Model.prototype.getData = function (req, callback) {
   const userToken = !open && process.env.USE_OBO !== 'false' ? req.headers && req.headers['x-forwarded-access-token'] : null
   const warehouseId = open ? undefined : req.warehouseId
   connectionManager.getSession(userToken, warehouseId)
-    .then(async session => {
+    .then(async raw => {
+      const session = taggedSession(raw, 'esri')
       try {
         // Inspect the table once (cached) and scope its spec to this request
         const who = layerSpec.whoOf(userToken)
@@ -180,6 +204,10 @@ Model.prototype.getData = function (req, callback) {
         let queryString
         let result
 
+        // Koop can't filter a count, id list or extent by geometry afterwards: a spatial filter SQL can't take
+        // is refused rather than answered for the whole table
+        if (returnExtentOnly || returnCountOnly || returnIdsOnly) assertSqlGeometryFilter(req.query)
+
         if (returnExtentOnly) {
           // Return only extent (bounding box). queryExtent() in the ArcGIS JS API (map "Zoom to" actions)
           // also sets returnCountOnly and expects { count, extent }, as ArcGIS Server answers.
@@ -196,7 +224,6 @@ Model.prototype.getData = function (req, callback) {
           return callback(null, returnCountOnly ? { count: Number(row.cnt) || 0, extent } : { extent })
         } else if (returnCountOnly) {
           // Return only count (of distinct values when returnDistinctValues is set, as Filter/Select paging asks)
-          if (isTrue(req.query.returnDistinctValues)) assertSqlGeometryFilter(req.query)
           queryString = isTrue(req.query.returnDistinctValues) && req.query.outFields && req.query.outFields !== '*'
             ? buildDistinctCountQuery(table, req.query)
             : buildCountQuery(table, req.query)
@@ -850,9 +877,19 @@ function webMercatorToWgs84 (x, y) {
 // (e.g. {"xmin":...,"spatialReference":{"wkid":102100}}). Koop core may have
 // already parsed the JSON form into an object before getData is called.
 // Returns null for unsupported geometry filters (e.g. polygon).
+// A spatial reference as ArcGIS clients send it: 102100, "102100", {"wkid":102100}, {"latestWkid":3857} or its
+// JSON text -> the wkid as a number, or null
+function parseWkid (sr) {
+  if (typeof sr === 'string' && sr.trim().startsWith('{')) {
+    try { sr = JSON.parse(sr) } catch (error) { return null }
+  }
+  if (sr && typeof sr === 'object') sr = sr.latestWkid || sr.wkid
+  return parseInt(sr) || null
+}
+
 function parseBbox (geometryParam, inSR) {
   let coords
-  let wkid = parseInt(inSR) || null
+  let wkid = parseWkid(inSR)
   let envelope = null
 
   if (geometryParam && typeof geometryParam === 'object') {
@@ -879,14 +916,17 @@ function parseBbox (geometryParam, inSR) {
     } else {
       return null
     }
-    if (envelope.spatialReference && envelope.spatialReference.wkid) {
-      wkid = envelope.spatialReference.wkid
+    if (envelope.spatialReference) {
+      wkid = parseWkid(envelope.spatialReference) || wkid
     }
   }
 
   if (!coords || coords.length !== 4 || coords.some(c => typeof c !== 'number' || isNaN(c))) {
     return null
   }
+  // Only WGS84 and Web Mercator are understood; other coordinates (state plane feet, UTM meters) read as
+  // degrees would filter on the wrong place
+  if (wkid && ![4326, 102100, 3857, 900913].includes(wkid)) return null
 
   if (wkid === 102100 || wkid === 3857 || wkid === 900913) {
     const [xmin, ymin] = webMercatorToWgs84(coords[0], coords[1])
@@ -908,7 +948,7 @@ function parseShape (geometryParam, inSR, spatialRel) {
     try { g = JSON.parse(g) } catch (error) { return null }
   }
   if (!g || typeof g !== 'object' || !['rings', 'paths', 'points'].some(k => Array.isArray(g[k]))) return null
-  if (!g.spatialReference && parseInt(inSR)) g = { ...g, spatialReference: { wkid: parseInt(inSR) } }
+  if (!g.spatialReference && parseWkid(inSR)) g = { ...g, spatialReference: { wkid: parseWkid(inSR) } }
   const wkid = g.spatialReference && (g.spatialReference.latestWkid || g.spatialReference.wkid)
   if (wkid && ![4326, 102100, 3857, 900913].includes(Number(wkid))) return null
   const vertices = (g.rings || g.paths || [g.points]).reduce((n, part) => n + (Array.isArray(part) ? part.length : 0), 0)
@@ -996,6 +1036,8 @@ function buildH3Filter (query) {
 // Build time filter for temporal queries
 // With an end field, a feature matches when its [start, end] span overlaps the requested time
 function buildTimeFilter (timeParam, timeField, endField) {
+  // time given twice arrives as an array: refuse it rather than drop the filter
+  if (typeof timeParam !== 'string') throw Object.assign(new Error('Invalid time parameter: one "start,end" value expected'), { code: 400 })
   // Default time field if not specified
   const field = timeField || 'created_at'
 
@@ -1298,10 +1340,10 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId, who =
 //   time: { field, startMs, endMs } (either end may be null)
 //   cursor: last objectId of the previous page (keyset paging); featureId: one feature
 // Returns { features, numberMatched?, lastId, spec }; throws err.code 400 for tables that can't be served.
-async function queryFeatures ({ table, userToken, warehouseId, bbox = [], propertyFilters = [], params = {}, time, featureId, limit, offset = 0, cursor, count = 'none', taskId = uuidv4() }) {
+async function queryFeatures ({ table, userToken, warehouseId, bbox = [], propertyFilters = [], params = {}, time, featureId, limit, offset = 0, cursor, count = 'none', taskId = uuidv4(), protocol = 'ogc', service }) {
   if (!isValidTableName(table)) throw Object.assign(new Error('Invalid table name'), { code: 400 })
   if (layerSpec.isOpenTable(table)) { userToken = null; warehouseId = undefined } // open tables: read as the app
-  const session = await connectionManager.getSession(userToken, warehouseId)
+  const session = taggedSession(await connectionManager.getSession(userToken, warehouseId), protocol, service && `service=${service}`)
   try {
     const who = layerSpec.whoOf(userToken)
     const spec = await layerSpec.resolveSpec(table, (sql, kind) => executeAndRecord(session, sql, kind, taskId), who)
@@ -1356,10 +1398,10 @@ async function countMatched (table, session, taskId, who, extra, params) {
 
 // OGC collection metadata for one table: spec, fields (with SQL types), extent, count and time range
 const temporalCache = new Map()
-async function collectionInfo ({ table, userToken, warehouseId, timeField, taskId = uuidv4() }) {
+async function collectionInfo ({ table, userToken, warehouseId, timeField, taskId = uuidv4(), protocol = 'ogc', service }) {
   if (!isValidTableName(table)) throw Object.assign(new Error('Invalid table name'), { code: 400 })
   if (layerSpec.isOpenTable(table)) { userToken = null; warehouseId = undefined } // open tables: read as the app
-  const session = await connectionManager.getSession(userToken, warehouseId)
+  const session = taggedSession(await connectionManager.getSession(userToken, warehouseId), protocol, service && `service=${service}`)
   try {
     const who = layerSpec.whoOf(userToken)
     const spec = await layerSpec.resolveSpec(table, (sql, kind) => executeAndRecord(session, sql, kind, taskId), who)
@@ -1429,6 +1471,7 @@ Model._internals = {
   mapDatabricksToEsriFieldType,
   checkRateLimit,
   executeAndRecord,
+  taggedSession,
   isLayerInfoPath,
   runFeatureQuery,
   parseStatistics,
