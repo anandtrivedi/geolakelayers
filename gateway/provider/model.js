@@ -1222,6 +1222,11 @@ function mapDatabricksToEsriFieldType (databricksType) {
   return 'String' // STRING, VARCHAR, STRUCT, ARRAY, MAP, VARIANT, ...
 }
 
+function fieldAlias (row) {
+  const c = typeof row.comment === 'string' ? row.comment.trim() : ''
+  return c && c.length <= 64 && !/[\r\n]/.test(c) ? c : row.col_name
+}
+
 // Helper: Get field metadata from DESCRIBE TABLE with TTL-based caching
 Model.prototype.getFieldMetadata = async function (table, session, taskId, who = 'app') {
   const cacheKey = `${who}|${table}`
@@ -1253,7 +1258,8 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId, who =
       .map(row => ({
         name: row.col_name,
         type: mapDatabricksToEsriFieldType(row.data_type),
-        alias: row.col_name,
+        // The column's Unity Catalog comment is its display title (one line, short), else the name
+        alias: fieldAlias(row),
         sqlType: row.data_type,
         nullable: true,
         editable: false,

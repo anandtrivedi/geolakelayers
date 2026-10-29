@@ -138,7 +138,7 @@ function fakeDb ({ rows = 30, count = 30, describe, pk = ['objectid'], props = {
   const log = []
   const cols = describe || [
     { col_name: 'objectid', data_type: 'bigint' },
-    { col_name: 'kind', data_type: 'string' },
+    { col_name: 'kind', data_type: 'string', comment: 'Contact type' },
     { col_name: 'names', data_type: 'struct<primary:string>' },
     { col_name: 'seen_at', data_type: 'timestamp' },
     { col_name: 'geometry_wkt', data_type: 'string' }
@@ -282,6 +282,8 @@ test('getData (Esri path): layer info fetches one row; a query fetches a page; s
   assert.deepEqual(info.metadata.extent.xmin, -77)
   assert.equal(info.metadata.fields.find(f => f.name === 'names').type, 'String')
   assert.equal(info.metadata.fields.find(f => f.name === 'seen_at').type, 'Date', 'Koop\'s vocabulary, so the layer says esriFieldTypeDate')
+  assert.equal(info.metadata.fields.find(f => f.name === 'kind').alias, 'Contact type', 'the column comment is the title')
+  assert.equal(info.metadata.fields.find(f => f.name === 'seen_at').alias, 'seen_at', 'no comment: the name')
   const page = await call({ url: `/databricks/rest/services/${table}/FeatureServer/0/query`, query: { resultRecordCount: '7', resultOffset: '7', where: '1=1' } })
   assert.equal(page.features.length, 7)
   assert.equal(page.features[0].properties.names, '{"primary":"n8"}', 'Esri attributes stay scalar')
