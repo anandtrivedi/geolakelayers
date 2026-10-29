@@ -564,11 +564,12 @@ function columnList (value, what) {
   return result.fields
 }
 
-// Statistics and distinct values are filtered only in SQL: reject a spatial filter we can't translate
-// (e.g. a spatial relation other than intersects) instead of answering for the whole table
+// Counts, ids, extents, statistics and distinct values are filtered only in SQL: reject a spatial filter we
+// can't translate (a relation other than intersects, another spatial reference) instead of answering for the
+// whole table
 function assertSqlGeometryFilter (query) {
   if (query.geometry && buildBboxFilter(query.geometry, query.geometryType, query.inSR, query.spatialRel) === null) {
-    throw Object.assign(new Error('Statistics and distinct values support intersects spatial filters in WGS84 or Web Mercator only'), { code: 400 })
+    throw Object.assign(new Error('Unsupported spatial filter: intersects, in WGS84 or Web Mercator, is supported'), { code: 400 })
   }
 }
 
