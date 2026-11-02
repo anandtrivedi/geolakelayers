@@ -261,6 +261,7 @@ async function resolveSpec (table, exec, who = 'app') {
     const t = rows[0] && String(rows[0].t || '').replace(/^st_/, '')
     spec.geometryType = ESRI_TYPE[t] || 'esriGeometryPoint'
     spec.columns = cols.map(c => ({ name: c.name, type: c.type }))
+    spec.table = table
   }
   cache.set(key, { spec, at: Date.now() })
   if (cache.size > 5000) cache.delete(cache.keys().next().value)

@@ -14,9 +14,13 @@ const DANGEROUS_KEYWORDS = /\b(DROP|CREATE|ALTER|TRUNCATE|INSERT|UPDATE|DELETE|U
  * Validate a WHERE clause string for SQL injection.
  * Rejects dangerous keywords, unparseable SQL, and subqueries.
  * @param {string} where - The WHERE clause to validate
+ * @param {{ restrictFunctions?: boolean }} [options] - restrictFunctions: only functions on the allow-list
+ *   (comparison, string, number, date and spatial functions) may be called. Used for filters that run as the
+ *   app's service principal (open tables), where a function that reaches beyond the table would run with the
+ *   app's grants rather than the caller's; the deny-list alone would leave any new such builtin open.
  * @returns {{ valid: boolean, error: string|null }}
  */
-function validateWhereClause (where) {
+function validateWhereClause (where, options = {}) {
   if (!where || typeof where !== 'string') {
     return { valid: false, error: 'WHERE clause must be a non-empty string' }
   }
@@ -57,6 +61,13 @@ function validateWhereClause (where) {
     const fn = disallowedFunction(ast.value.where)
     if (fn) {
       return { valid: false, error: `WHERE clause uses disallowed function ${fn}` }
+    }
+
+    if (options.restrictFunctions) {
+      const other = unlistedFunction(ast.value.where)
+      if (other) {
+        return { valid: false, error: `WHERE clause uses function ${other}, which is not allowed on this table` }
+      }
     }
   } catch (e) {
     return { valid: false, error: 'WHERE clause failed SQL parsing validation' }
@@ -112,6 +123,23 @@ function disallowedFunction (node) {
   }
   for (const child of Object.values(node)) {
     const hit = Array.isArray(child) ? child.map(disallowedFunction).find(Boolean) : disallowedFunction(child)
+    if (hit) return hit
+  }
+  return null
+}
+
+// Functions a map filter may call on a table read as the app (open tables): comparison and null handling,
+// strings, numbers, dates and times, casts, and spatial (ST_*, H3) functions. Everything else is refused
+// there, including functions that merely aren't on this list yet.
+const ALLOWED_FUNCTIONS = /^(coalesce|nvl|nvl2|ifnull|nullif|isnull|isnotnull|if|iff|greatest|least|upper|lower|ucase|lcase|trim|ltrim|rtrim|length|char_length|character_length|substr|substring|left|right|concat|concat_ws|replace|instr|locate|position|startswith|endswith|contains|regexp_like|like|ilike|abs|round|floor|ceil|ceiling|mod|pmod|sqrt|power|pow|exp|ln|log|log10|sign|cast|try_cast|date|timestamp|to_date|to_timestamp|try_to_timestamp|date_trunc|trunc|date_add|dateadd|date_sub|datediff|date_diff|date_format|year|quarter|month|day|dayofmonth|dayofweek|dayofyear|weekofyear|hour|minute|second|current_date|current_timestamp|now|unix_timestamp|to_unix_timestamp|from_unixtime|extract|try_to_geometry|to_geometry|try_to_geography|st_[a-z0-9_]+|h3_[a-z0-9_]+)$/i
+function unlistedFunction (node) {
+  if (!node || typeof node !== 'object') return null
+  if (node.type === 'FunctionCall') {
+    const name = String(node.name || '').replace(/`/g, '').split('.').pop()
+    if (!ALLOWED_FUNCTIONS.test(name)) return name
+  }
+  for (const child of Object.values(node)) {
+    const hit = Array.isArray(child) ? child.map(unlistedFunction).find(Boolean) : unlistedFunction(child)
     if (hit) return hit
   }
   return null

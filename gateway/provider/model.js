@@ -6,7 +6,7 @@
   Documentation: http://koopjs.github.io/docs/usage/provider
 */
 
-const { v4: uuidv4 } = require('uuid')
+const crypto = require('crypto')
 const config = require('../config/default.json')
 const logger = require('./logger')
 const connectionManager = require('./connection')
@@ -146,7 +146,7 @@ function Model (koop) {
 // req.params.layer - layer index (not used, leave as '0')
 // req.params.method - method name (e.g., 'query')
 Model.prototype.getData = function (req, callback) {
-  const thisTask = uuidv4()
+  const thisTask = crypto.randomUUID()
   logger.info(`${thisTask}> Received request: ${req.url}`)
 
   // Rate limiting. Behind a load balancer req.ip is the LB address (Express
@@ -425,10 +425,11 @@ function parseResultOffset (value) {
   return parsed
 }
 
-// Validate and push WHERE clause, throwing on injection attempts
+// Validate and push WHERE clause, throwing on injection attempts. Filters on an open table run as the app's
+// service principal, so there only allow-listed functions may be called (validation.js).
 function pushValidatedWhere (whereClauses, where) {
   if (where && where !== '1=1') {
-    const result = validateWhereClause(where)
+    const result = validateWhereClause(where, { restrictFunctions: layerSpec.isOpenTable(S().table) })
     if (!result.valid) {
       throw new Error(`Invalid WHERE clause: ${result.error}`)
     }
@@ -1341,7 +1342,7 @@ Model.prototype.getFieldMetadata = async function (table, session, taskId, who =
 //   time: { field, startMs, endMs } (either end may be null)
 //   cursor: last objectId of the previous page (keyset paging); featureId: one feature
 // Returns { features, numberMatched?, lastId, spec }; throws err.code 400 for tables that can't be served.
-async function queryFeatures ({ table, userToken, warehouseId, bbox = [], propertyFilters = [], params = {}, time, featureId, limit, offset = 0, cursor, count = 'none', taskId = uuidv4(), protocol = 'ogc', service }) {
+async function queryFeatures ({ table, userToken, warehouseId, bbox = [], propertyFilters = [], params = {}, time, featureId, limit, offset = 0, cursor, count = 'none', taskId = crypto.randomUUID(), protocol = 'ogc', service }) {
   if (!isValidTableName(table)) throw Object.assign(new Error('Invalid table name'), { code: 400 })
   if (layerSpec.isOpenTable(table)) { userToken = null; warehouseId = undefined } // open tables: read as the app
   const session = taggedSession(await connectionManager.getSession(userToken, warehouseId), protocol, service && `service=${service}`)
@@ -1399,7 +1400,7 @@ async function countMatched (table, session, taskId, who, extra, params) {
 
 // OGC collection metadata for one table: spec, fields (with SQL types), extent, count and time range
 const temporalCache = new Map()
-async function collectionInfo ({ table, userToken, warehouseId, timeField, taskId = uuidv4(), protocol = 'ogc', service }) {
+async function collectionInfo ({ table, userToken, warehouseId, timeField, taskId = crypto.randomUUID(), protocol = 'ogc', service }) {
   if (!isValidTableName(table)) throw Object.assign(new Error('Invalid table name'), { code: 400 })
   if (layerSpec.isOpenTable(table)) { userToken = null; warehouseId = undefined } // open tables: read as the app
   const session = taggedSession(await connectionManager.getSession(userToken, warehouseId), protocol, service && `service=${service}`)

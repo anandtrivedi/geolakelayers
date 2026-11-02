@@ -7,6 +7,8 @@
   Values come back as JSON text and are converted by column type, the way the driver returns them.
 */
 
+/* global fetch */
+
 const POLL_START_MS = 100
 const POLL_MAX_MS = 1000
 
@@ -48,7 +50,7 @@ function parametersOf (named) {
  * A session on one warehouse for one caller. fetchImpl is injectable for tests.
  * host: workspace host without scheme; token: the caller's OAuth token.
  */
-function seaSession ({ host, token, warehouseId, fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+function seaSession ({ host, token, warehouseId, fetchImpl = fetch, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const base = `https://${host}`
   const call = async (method, path, body) => {
     const r = await fetchImpl(`${base}${path}`, {

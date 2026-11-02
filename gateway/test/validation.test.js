@@ -266,3 +266,24 @@ test('validation.validateWhereClause: raw, hex and Unicode literals are refused'
     assert.equal(validateWhereClause(w).valid, true, w)
   }
 })
+
+test('validation.validateWhereClause: restrictFunctions allows only comparison, string, number, date and spatial functions', async t => {
+  const strict = w => validateWhereClause(w, { restrictFunctions: true })
+  for (const w of ["upper(name) = 'X'", "coalesce(a, b) > 1", "ST_Intersects(g, ST_GeomFromText('POINT(0 0)', 4326))", 'h3_longlatash3(lon, lat, 7) = 1',
+    "date_trunc('day', ts) = DATE'2024-01-01'", 'abs(x) < 3 AND length(trim(n)) > 0', "try_to_geometry(wkt) IS NOT NULL", "status = 'Pending Update'"]) {
+    assert.deepEqual(strict(w), { valid: true, error: null }, w)
+  }
+  for (const w of ["chr(115) = 's'", "current_user() = 'x'", "reverse(name) = 'x'", 'x = input_file_name()']) {
+    const r = strict(w)
+    assert.equal(r.valid, false, w)
+    assert.match(r.error, /not allowed on this table/, w)
+  }
+  // Qualified names (Unity Catalog functions, system.builtin.*) don't parse at all, so they are refused everywhere
+  for (const w of ['cat.sch.my_udf(x) = 1', '`cat`.`sch`.`fn`(x) = 1', "system.builtin.secret('s', 'k') = 'x'"]) {
+    assert.equal(strict(w).valid, false, w)
+    assert.equal(validateWhereClause(w).valid, false, w)
+  }
+  // Without the option the deny-list alone applies, as for tables read as the caller
+  assert.equal(validateWhereClause("chr(115) = 's'").valid, true)
+  assert.equal(validateWhereClause("secret('s', 'k') = 'x'", { restrictFunctions: true }).valid, false, 'the deny-list still applies first')
+})

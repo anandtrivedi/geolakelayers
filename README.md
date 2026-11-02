@@ -1,6 +1,6 @@
 # GeoLakeLayers
 
-*Built on Databricks Apps by Anand Trivedi.*
+*Built on Databricks Apps by Anand Trivedi. Licensed under the [Databricks License](LICENSE): free to use with Databricks services.*
 
 Unity Catalog tables as live map layers for Experience Builder and OGC clients (QGIS, GDAL, web maps), served by
 a Databricks App and queried as each signed-in user. Nothing to install in ArcGIS. The layers come in two forms:
@@ -9,6 +9,20 @@ a Databricks App and queried as each signed-in user. Nothing to install in ArcGI
   repository (`widget/databricks-data/`).
 - **OGC API – Features services** for QGIS, GDAL, OpenLayers, Leaflet, MapLibre and scripts. These need only
   GeoLakeLayers, no widget.
+
+## Screenshots
+
+![Published Experience Builder app with Unity Catalog layers, Map Layers and Legend](screenshots/published-app-layers.png)
+*Published experience: Unity Catalog tables as live layers, with Map Layers and Legend treating them like any other layer.*
+
+![The GeoLakeLayers console's Map tab drawing a Unity Catalog table live, with its ArcGIS and OGC URLs](screenshots/console-map.png)
+*The console's Map tab: a table drawn live as the signed-in user, with the URLs to use it in Experience Builder, QGIS or a script.*
+
+![AIS hexes from Unity Catalog in QGIS through OGC API – Features](screenshots/ogc-qgis.png)
+*QGIS reading an OGC API – Features service, one collection per Unity Catalog table.*
+
+![Workspace card in the Databricks Data widget settings: gateway, warehouse, catalogs, start-up layers](screenshots/settings-workspace-card.png)
+*The widget's settings: one card per workspace with its gateway, warehouse, catalogs and start-up layers.*
 
 Viewers sign in with Databricks and see only what Unity Catalog lets them see. Nothing is copied: every pan and
 zoom is a query on a Databricks SQL warehouse, with results cached per user for up to five minutes. (The one

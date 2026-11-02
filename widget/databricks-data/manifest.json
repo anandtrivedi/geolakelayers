@@ -7,7 +7,7 @@
   "author": "Databricks Field Engineering",
   "description": "Browse Unity Catalog tables and add them to a map as live layers served by the Databricks feature gateway",
   "copyright": "",
-  "license": "Apache-2.0",
+  "license": "Databricks License",
   "dependency": [
     "jimu-arcgis"
   ],

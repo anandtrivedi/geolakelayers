@@ -36,6 +36,7 @@ const { createOverrideStore, validateOverride, OverrideError } = require('./lib/
 const { sendExplained, explain } = require('./lib/errors')
 const access = require('./lib/access')
 const { isTransientNetworkError, PLAIN, THREE_PART, list, parseDirectory, requestedCatalogs: scopedCatalogs, obo, selfOrigin, consoleOnly, normalizeOrigin, handoffPage } = require('./lib/http')
+const { listingSql } = require('./lib/listing')
 
 // Origins compare exactly, so a trailing slash or a stray space in the setting would never match
 const allowedOrigins = list(process.env.ALLOWED_ORIGINS).map(normalizeOrigin).filter(Boolean)
@@ -333,30 +334,8 @@ async function listTables (req) {
   const hit = catalogCache.get(key)
   if (hit && Date.now() - hit.at < CATALOG_TTL_MS) return hit.tables
   for (const [k, v] of catalogCache) if (Date.now() - v.at >= CATALOG_TTL_MS) catalogCache.delete(k)
-  const quote = names => names.map(c => `'${c.replace(/'/g, '')}'`).join(',')
-  const where = col => [
-    scoped.length ? `${col} IN (${quote(scoped)})` : null,
-    excludeCatalogs.length ? `${col} NOT IN (${quote(excludeCatalogs)})` : null
-  ].filter(Boolean).join(' AND ') || 'TRUE'
-  const sql = `
-    WITH g AS (
-      SELECT table_catalog cat, table_schema sch, table_name tbl, min(column_name) geom, min(lower(data_type)) dt
-      FROM system.information_schema.columns
-      WHERE ${where('table_catalog')} AND table_schema <> 'information_schema' AND table_name NOT LIKE '\\_\\_%'
-        AND (lower(data_type) LIKE 'geometry%' OR lower(data_type) LIKE 'geography%')
-      GROUP BY 1, 2, 3
-    ),
-    pk AS (
-      SELECT t.table_catalog cat, t.table_schema sch, t.table_name tbl, min(k.column_name) col, count(*) n
-      FROM system.information_schema.table_constraints t
-      JOIN system.information_schema.key_column_usage k
-        ON k.constraint_catalog = t.constraint_catalog AND k.constraint_schema = t.constraint_schema AND k.constraint_name = t.constraint_name
-      WHERE ${where('t.table_catalog')} AND t.constraint_type = 'PRIMARY KEY'
-      GROUP BY 1, 2, 3
-    )
-    SELECT g.cat, g.sch, g.tbl, g.geom, g.dt, CASE WHEN pk.n = 1 THEN pk.col END AS pk
-    FROM g LEFT JOIN pk ON pk.cat = g.cat AND pk.sch = g.sch AND pk.tbl = g.tbl
-    ORDER BY 1, 2, 3`
+  // The key column counts as the id only when it is a single integer column, the rule spec.js applies too
+  const sql = listingSql({ scoped, excludeCatalogs })
   const inScope = t => {
     const cat = t.split('.')[0]
     return (!scoped.length || scoped.includes(cat)) && !excludeCatalogs.includes(cat)
