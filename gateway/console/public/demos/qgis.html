@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The layer QGIS reads · GeoLakeLayers live demo</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="vendor/maplibre-gl.js"></script>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="caption"></div>
+  <div id="status">Loading…</div>
+  <div id="connect">
+    <h2>Connect QGIS</h2>
+    <ol>
+      <li><b>Settings → Options → Authentication → +</b>. Pick <b>API Header</b>, add a header named
+        <code>Authorization</code> with the value <code>Bearer &lt;token&gt;</code>, and save it as <i>GeoLakeLayers</i>.
+        <a href="/#ogc" style="color:#4fc3e8">Copy a token</a> on the console's OGC / QGIS tab.</li>
+      <li><b>Layer → Data Source Manager → WFS / OGC API – Features → New</b>. Paste this landing page URL and pick
+        the auth config from step 1:
+        <div class="url"><input id="landing" readonly spellcheck="false" aria-label="Landing page URL"><button id="copy">Copy</button></div></li>
+      <li><b>Connect</b>, select <code>hex_r7</code>, then <b>Add</b>. The token lasts about an hour; paste a new one into
+        the same auth config when it expires.</li>
+    </ol>
+  </div>
+  <script type="module">
+    // The same layer and styling as the QGIS render (screenshots/ogc-qgis.png), drawn live in the browser:
+    // H3 r7 hexes across the northern Gulf of Mexico in a magma ramp by AIS pings, over Esri Dark Gray
+    import { checkService, items, caption, status, done, fail, nav, landingUrl, RAMP, breaks, DARK_GRAY, DARK_GRAY_ATTRIBUTION } from './common.js'
+    nav()
+    const landing = document.getElementById('landing')
+    landing.value = landingUrl
+    document.getElementById('copy').onclick = async e => {
+      try { await navigator.clipboard.writeText(landingUrl); e.target.textContent = 'Copied' } catch (_) { landing.select() }
+    }
+    const BBOX = '-95.6,27.6,-88.6,30.6'
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: {
+        version: 8,
+        sources: { dark: { type: 'raster', tileSize: 256, attribution: DARK_GRAY_ATTRIBUTION, tiles: [DARK_GRAY] } },
+        layers: [{ id: 'dark', type: 'raster', source: 'dark' }]
+      },
+      bounds: [[-95.6, 27.6], [-88.6, 30.6]], attributionControl: { compact: true }
+    })
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-left')
+    map.on('load', async () => {
+      try {
+        await checkService()
+        const hexes = await items('hex_r7', `bbox=${BBOX}`, n => status(`Loading hexes… ${n.toLocaleString()}`))
+        const cuts = breaks(hexes.features.map(f => f.properties.ping_count))
+        const step = ['step', ['get', 'ping_count'], RAMP[0], ...cuts.flatMap((c, i) => [c + 1, RAMP[i + 1]])]
+        map.addSource('hexes', { type: 'geojson', data: hexes })
+        map.addLayer({ id: 'hexes', type: 'fill', source: 'hexes', paint: { 'fill-color': step, 'fill-opacity': 0.92, 'fill-outline-color': 'rgba(0,0,0,0)' } })
+        const lo = [1, ...cuts.map(c => c + 1)]
+        caption({
+          client: 'MapLibre GL, styled like the QGIS map',
+          title: 'The layer QGIS reads, live in your browser',
+          sub: `Northern Gulf of Mexico AIS traffic on July 4 2024: ${hexes.features.length.toLocaleString()} H3 r7 hexes colored by AIS pings, the same collection QGIS adds through its OGC API – Features provider.`,
+          legend: RAMP.map((c, i) => [c, i < RAMP.length - 1 ? `${lo[i]}–${cuts[i]}` : `${lo[i]}+`])
+        })
+        map.once('idle', done)
+      } catch (err) { fail(err) }
+    })
+  </script>
+</body>
+</html>

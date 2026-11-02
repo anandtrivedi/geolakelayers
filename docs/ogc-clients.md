@@ -14,6 +14,10 @@ straight from Unity Catalog. Nothing was exported or copied first.
 | ![OpenLayers: Puget Sound tracks over satellite imagery](../screenshots/ogc-openlayers.png) | ![Leaflet: ten minutes of AIS in the Houston Ship Channel](../screenshots/ogc-leaflet.png) |
 | **OpenLayers**: a day of Puget Sound vessel tracks over satellite imagery, by vessel type (commercial on top). | **Leaflet**: ten minutes of AIS positions in Galveston Bay, picked on the server with `datetime=`, colored by speed. |
 
+**Live versions.** The gateway serves these maps itself at `<gateway>/demos/` (`qgis.html`, `maplibre.html`,
+`openlayers.html`, `leaflet.html`). They read `ais-demo` (or `?service=<name>`) as whoever opens them; no token
+needed, because the Databricks sign-in covers the page.
+
 ## What every client needs
 
 - **The service's landing page URL**: `https://<gateway>/ogc/<service>`. Copy it from the console's **OGC / QGIS**

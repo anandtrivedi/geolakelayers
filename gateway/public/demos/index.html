@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live OGC demos · GeoLakeLayers</title>
+  <link rel="icon" href="/favicon.svg">
+  <style>
+    body { margin: 0; font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; background: #0b1418; color: #eef2f3; }
+    main { max-width: 1100px; margin: 0 auto; padding: 48px 24px; }
+    header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+    header img { width: 36px; height: 36px; }
+    h1 { font-size: 28px; margin: 0; letter-spacing: -0.01em; }
+    p.lead { color: rgba(238, 242, 243, 0.75); line-height: 1.5; max-width: 760px; margin: 8px 0 32px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+    a.card { display: block; text-decoration: none; color: inherit; background: #11262d; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 18px; transition: border-color .15s; }
+    a.card:hover { border-color: #4fc3e8; }
+    a.card b { display: block; font-size: 17px; margin-bottom: 6px; }
+    a.card span { color: rgba(238, 242, 243, 0.7); font-size: 14px; line-height: 1.45; }
+    a.card em { display: block; margin-top: 12px; color: #4fc3e8; font-style: normal; font-size: 13px; }
+    footer { margin-top: 32px; font-size: 14px; }
+    footer a { color: #4fc3e8; }
+  </style>
+</head>
+<body>
+  <main>
+    <header><img src="/favicon.svg" alt=""><h1>Live OGC API – Features demos</h1></header>
+    <p class="lead">Four map clients reading the same Unity Catalog tables through this gateway's OGC API – Features
+      service, live, with your own Databricks permissions. Nothing is copied: every map loads its features from
+      <code id="svc"></code> when you open it.</p>
+    <div class="grid">
+      <a class="card" href="qgis.html"><b>QGIS</b><span>The Gulf of Mexico hex layer QGIS adds, drawn the same way in the browser, with the steps to connect QGIS.</span><em>Open the live map →</em></a>
+      <a class="card" href="maplibre.html"><b>MapLibre GL</b><span>AIS hexes off the U.S. Northeast extruded in 3D by ping count, over the day's vessel tracks.</span><em>Open the live map →</em></a>
+      <a class="card" href="openlayers.html"><b>OpenLayers</b><span>A day of Puget Sound vessel tracks over satellite imagery, colored by vessel type.</span><em>Open the live map →</em></a>
+      <a class="card" href="leaflet.html"><b>Leaflet</b><span>Ten minutes of positions in the Houston Ship Channel, filtered by time on the server, colored by speed.</span><em>Open the live map →</em></a>
+    </div>
+    <footer><a href="/#ogc">Open the GeoLakeLayers console</a> to see the service's URLs, copy a token, or publish your own tables.</footer>
+  </main>
+  <script>
+    // Keep ?service= on the links, and show which service the maps read
+    try {
+      var q = location.search, s = new URLSearchParams(q).get('service') || 'ais-demo'
+      document.getElementById('svc').textContent = '/ogc/' + s
+      if (q) document.querySelectorAll('a.card').forEach(function (a) { a.href += q })
+    } catch (e) {}
+  </script>
+</body>
+</html>
