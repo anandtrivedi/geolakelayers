@@ -276,7 +276,9 @@ app.get('/api/load', (req, res) => {
     inFlight,
     cpu,
     cores,
-    uptime: Math.round(process.uptime())
+    uptime: Math.round(process.uptime()),
+    // The runtime's Node.js, to check against security releases (e.g. CVE-2026-111497, fixed in 22.23.4 / 24.22.1)
+    node: process.version
   })
 })
 
