@@ -16,7 +16,7 @@ straight from Unity Catalog. Nothing was exported or copied first.
 
 **Live versions.** The gateway serves these maps itself at `<gateway>/demos/` (`qgis.html`, `maplibre.html`,
 `openlayers.html`, `leaflet.html`). They read `ais-demo` (or `?service=<name>`) as whoever opens them; no token
-needed, because the Databricks sign-in covers the page.
+needed, because the Databricks sign-in covers the page. Click any feature on any of them for its attributes (the GeoJSON properties the API returned), with a link to that feature's own `/items/<id>` request.
 
 ## What every client needs
 

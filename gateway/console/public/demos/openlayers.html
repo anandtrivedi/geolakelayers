@@ -13,9 +13,10 @@
   <div id="map"></div>
   <div id="caption"></div>
   <div id="status">Loading…</div>
+  <div id="ol-popup" hidden></div>
   <script type="module">
     // A day of vessel tracks in Puget Sound over satellite imagery, colored by vessel type
-    import { checkService, items, caption, status, done, fail, nav, VESSEL_GROUPS, vesselGroup, splitJumps } from './common.js'
+    import { checkService, items, caption, status, done, fail, nav, popupHtml, VESSEL_GROUPS, vesselGroup, splitJumps } from './common.js'
     nav()
     const BBOX = '-123.2,47.0,-122.2,48.4'
     const imagery = new ol.layer.Tile({
@@ -36,6 +37,20 @@
       layers: [imagery, new ol.layer.Vector({ source, renderOrder: null, style: f => styles[vesselGroup(f.get('vessel_type'))[0]] })],
       view: new ol.View({ center: ol.proj.fromLonLat([-122.48, 47.72]), zoom: 9.6 })
     })
+    // Identify: an overlay anchored where the track was clicked
+    const popupEl = document.getElementById('ol-popup')
+    const popup = new ol.Overlay({ element: popupEl, positioning: 'bottom-center', offset: [0, -10], autoPan: { animation: { duration: 200 } } })
+    map.addOverlay(popup)
+    const HIT = { hitTolerance: 6 }
+    map.on('singleclick', e => {
+      const f = map.forEachFeatureAtPixel(e.pixel, f => f, HIT)
+      if (!f) { popupEl.hidden = true; popup.setPosition(undefined); return }
+      popupEl.innerHTML = `<button class="close" type="button" aria-label="Close">×</button>` + popupHtml('tracks', f.getProperties())
+      popupEl.querySelector('.close').onclick = () => { popupEl.hidden = true; popup.setPosition(undefined) }
+      popupEl.hidden = false
+      popup.setPosition(e.coordinate)
+    })
+    map.on('pointermove', e => { if (!e.dragging) map.getTargetElement().style.cursor = map.hasFeatureAtPixel(e.pixel, HIT) ? 'pointer' : '' })
     try {
       await checkService()
       const tracks = await items('tracks', `bbox=${BBOX}`, n => status(`Loading tracks… ${n.toLocaleString()}`))
@@ -46,7 +61,8 @@
         client: 'OpenLayers',
         title: 'Puget Sound vessel tracks, July 4 2024',
         sub: `${tracks.features.length.toLocaleString()} AIS tracks from Unity Catalog, styled by vessel type over satellite imagery.`,
-        legend: VESSEL_GROUPS.filter(([name]) => counts[name]).map(([name, color]) => [color, `${name} (${counts[name]})`])
+        legend: VESSEL_GROUPS.filter(([name]) => counts[name]).map(([name, color]) => [color, `${name} (${counts[name]})`]),
+        hint: 'Click a track for the vessel\u2019s attributes.'
       })
       map.once('rendercomplete', done)
       map.render()

@@ -15,7 +15,7 @@
   <div id="status">Loading…</div>
   <script type="module">
     // AIS H3 r7 hexes off the U.S. Northeast, extruded by ping count, with the day's tracks underneath
-    import { checkService, items, caption, status, done, fail, nav, RAMP, breaks, splitJumps, DARK_GRAY, DARK_GRAY_ATTRIBUTION } from './common.js'
+    import { checkService, items, caption, status, done, fail, nav, popupHtml, RAMP, breaks, splitJumps, DARK_GRAY, DARK_GRAY_ATTRIBUTION } from './common.js'
     nav()
     const BBOX = '-76.5,38,-69,42'
     const map = new maplibregl.Map({
@@ -46,11 +46,22 @@
           id: 'hexes', type: 'fill-extrusion', source: 'hexes',
           paint: { 'fill-extrusion-color': color, 'fill-extrusion-height': ['*', ln, 1600], 'fill-extrusion-opacity': 0.9 }
         })
+        // Identify: a hex where there is one, else the track under the pointer
+        const LAYERS = ['hexes', 'tracks'], COLLECTION = { hexes: 'hex_r7', tracks: 'tracks' }
+        let popup
+        map.on('click', e => {
+          const f = map.queryRenderedFeatures(e.point, { layers: LAYERS })[0]
+          if (popup) popup.remove()
+          if (!f) return
+          popup = new maplibregl.Popup({ maxWidth: '340px' }).setLngLat(e.lngLat).setHTML(popupHtml(COLLECTION[f.layer.id], f.properties)).addTo(map)
+        })
+        map.on('mousemove', e => { map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: LAYERS }).length ? 'pointer' : '' })
         caption({
           client: 'MapLibre GL',
           title: 'AIS traffic off the U.S. Northeast, July 4 2024',
           sub: `${hexes.features.length.toLocaleString()} H3 r7 hexes extruded by AIS pings, over ${tracks.features.length.toLocaleString()} vessel tracks. Drag with the right mouse button to tilt and turn.`,
-          legend: [[RAMP[0], `${cuts[0]} pings`], [RAMP[2], `${cuts[2]}`], [RAMP[3], `${cuts[3]}`], [RAMP[4], `${cuts[3] * 4}+`]]
+          legend: [[RAMP[0], `${cuts[0]} pings`], [RAMP[2], `${cuts[2]}`], [RAMP[3], `${cuts[3]}`], [RAMP[4], `${cuts[3] * 4}+`]],
+          hint: 'Click a hex or a track for its attributes.'
         })
         map.once('idle', done)
       } catch (err) { fail(err) }

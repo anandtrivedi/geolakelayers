@@ -39,11 +39,12 @@ export async function items (collection, query = '', onProgress) {
   return { type: 'FeatureCollection', features }
 }
 
-// The caption card every page shows: title, a line about where the data came from, and a legend
-export function caption ({ title, sub, legend = [], client }) {
+// The caption card every page shows: title, a line about where the data came from, a legend, and the identify hint
+export function caption ({ title, sub, legend = [], client, hint = 'Click a feature for its attributes.' }) {
   const el = document.getElementById('caption')
   el.innerHTML = `<h1>${title}</h1><p>${sub}</p>` +
     (legend.length ? `<ul>${legend.map(([color, label]) => `<li><i style="background:${color}"></i>${label}</li>`).join('')}</ul>` : '') +
+    (hint ? `<p class="gll-hint">${hint}</p>` : '') +
     `<p class="src">${client} · OGC API – Features · <code>${serviceUrl}</code> · Unity Catalog, queried live as you</p>`
 }
 
@@ -110,4 +111,53 @@ export function splitJumps (fc, maxKm = 3) {
     f.geometry = { type: 'MultiLineString', coordinates: parts }
   }
   return fc
+}
+
+// ---- Identify: click a feature, see its attributes ----
+// Every page shows the same card: a title line per collection, then the feature's fields as the OGC API
+// returned them, and a link to that one feature's JSON (/items/<id>), which is the OGC API – Features request
+// a script or QGIS would make for it.
+const HIDDEN = new Set(['objectid', 'bigid', 'h3_cell', 'h3_r7', 'h3_r9', 'geometry'])
+const LABELS = {
+  mmsi: 'MMSI', imo: 'IMO', sog: 'Speed (kn)', cog: 'Course (°)', heading: 'Heading (°)', avg_sog: 'Avg speed (kn)',
+  max_sog: 'Max speed (kn)', ping_count: 'AIS pings', vessel_count: 'Vessels', point_count: 'Positions',
+  h3_cell_hex: 'H3 cell', h3_r7_hex: 'H3 r7', h3_r9_hex: 'H3 r9', base_datetime: 'Reported', event_date: 'Day',
+  start_time: 'First position', end_time: 'Last position', vessel_name: 'Vessel', call_sign: 'Call sign',
+  vessel_type: 'Vessel type', transceiver_class: 'Transceiver', length: 'Length (m)', width: 'Width (m)',
+  draft: 'Draft (m)', status: 'Nav status', cargo: 'Cargo code', lat: 'Latitude', lon: 'Longitude'
+}
+// AIS navigational status codes (ITU-R M.1371)
+const NAV_STATUS = ['Under way using engine', 'At anchor', 'Not under command', 'Restricted manoeuvrability', 'Constrained by draught',
+  'Moored', 'Aground', 'Engaged in fishing', 'Under way sailing']
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
+const IDS = new Set(['mmsi', 'imo', 'cargo', 'h3_cell_hex', 'h3_r7_hex', 'h3_r9_hex']) // identifiers: no digit grouping
+function fmt (key, v) {
+  if (v == null || v === '') return '—'
+  if (IDS.has(key)) return String(v)
+  if (key === 'lat' || key === 'lon') return Number(v).toFixed(5)
+  if (key === 'status' && NAV_STATUS[v] != null) return `${v} · ${NAV_STATUS[v]}`
+  if (key === 'vessel_type') return `${v} · ${vesselGroup(v)[0]}`
+  if (key === 'event_date') return new Date(v).toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' })
+  if (typeof v === 'string' && ISO.test(v)) return new Date(v).toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) + ' UTC'
+  if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 })
+  if (typeof v === 'object') return '—'
+  return String(v)
+}
+const label = key => LABELS[key] || key.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())
+
+// What the title line says, per collection
+const TITLES = {
+  hex_r7: p => [`H3 cell ${p.h3_cell_hex || ''}`.trim(), `${fmt('ping_count', p.ping_count)} AIS pings from ${fmt('vessel_count', p.vessel_count)} vessel${p.vessel_count === 1 ? '' : 's'}`],
+  tracks: p => [p.vessel_name || `MMSI ${p.mmsi}`, `${vesselGroup(p.vessel_type)[0]} · MMSI ${p.mmsi} · ${fmt('point_count', p.point_count)} positions`],
+  points: p => [p.vessel_name || `MMSI ${p.mmsi}`, `${vesselGroup(p.vessel_type)[0]} · MMSI ${p.mmsi} · ${fmt('sog', p.sog)} kn`]
+}
+export function popupHtml (collection, props) {
+  const [title, sub] = (TITLES[collection] || (() => [collection, '']))(props)
+  const rows = Object.entries(props).filter(([k, v]) => !HIDDEN.has(k) && (v === null || typeof v !== 'object'))
+    .map(([k, v]) => `<tr><th>${esc(label(k))}</th><td>${esc(fmt(k, v))}</td></tr>`).join('')
+  const id = props.objectid
+  const link = id != null ? `<a href="${serviceUrl}/collections/${encodeURIComponent(collection)}/items/${encodeURIComponent(id)}?f=json" target="_blank" rel="noopener">Feature JSON ↗</a> · ` : ''
+  return `<div class="gll-popup"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}<table>${rows}</table>` +
+    `<p class="src">${link}<code>${esc(collection)}</code> · queried as you</p></div>`
 }

@@ -29,7 +29,7 @@
   <script type="module">
     // The same layer and styling as the QGIS render (screenshots/ogc-qgis.png), drawn live in the browser:
     // H3 r7 hexes across the northern Gulf of Mexico in a magma ramp by AIS pings, over Esri Dark Gray
-    import { checkService, items, caption, status, done, fail, nav, landingUrl, RAMP, breaks, DARK_GRAY, DARK_GRAY_ATTRIBUTION } from './common.js'
+    import { checkService, items, caption, status, done, fail, nav, popupHtml, landingUrl, RAMP, breaks, DARK_GRAY, DARK_GRAY_ATTRIBUTION } from './common.js'
     nav()
     const landing = document.getElementById('landing')
     landing.value = landingUrl
@@ -55,12 +55,21 @@
         const step = ['step', ['get', 'ping_count'], RAMP[0], ...cuts.flatMap((c, i) => [c + 1, RAMP[i + 1]])]
         map.addSource('hexes', { type: 'geojson', data: hexes })
         map.addLayer({ id: 'hexes', type: 'fill', source: 'hexes', paint: { 'fill-color': step, 'fill-opacity': 0.92, 'fill-outline-color': 'rgba(0,0,0,0)' } })
+        // Identify, like QGIS's Identify Features tool on the same collection
+        let popup
+        map.on('click', 'hexes', e => {
+          if (popup) popup.remove()
+          popup = new maplibregl.Popup({ maxWidth: '340px' }).setLngLat(e.lngLat).setHTML(popupHtml('hex_r7', e.features[0].properties)).addTo(map)
+        })
+        map.on('mouseenter', 'hexes', () => { map.getCanvas().style.cursor = 'pointer' })
+        map.on('mouseleave', 'hexes', () => { map.getCanvas().style.cursor = '' })
         const lo = [1, ...cuts.map(c => c + 1)]
         caption({
           client: 'MapLibre GL, styled like the QGIS map',
           title: 'The layer QGIS reads, live in your browser',
           sub: `Northern Gulf of Mexico AIS traffic on July 4 2024: ${hexes.features.length.toLocaleString()} H3 r7 hexes colored by AIS pings, the same collection QGIS adds through its OGC API – Features provider.`,
-          legend: RAMP.map((c, i) => [c, i < RAMP.length - 1 ? `${lo[i]}–${cuts[i]}` : `${lo[i]}+`])
+          legend: RAMP.map((c, i) => [c, i < RAMP.length - 1 ? `${lo[i]}–${cuts[i]}` : `${lo[i]}+`]),
+          hint: 'Click a hex for its attributes, as QGIS\u2019s Identify tool would show them.'
         })
         map.once('idle', done)
       } catch (err) { fail(err) }
