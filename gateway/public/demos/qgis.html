@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>The layer QGIS reads · GeoLakeLayers live demo</title>
+  <title>QGIS: the layer and how to connect · GeoLakeLayers live demo</title>
   <link rel="icon" href="/favicon.svg">
   <link rel="stylesheet" href="vendor/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
@@ -65,9 +65,9 @@
         map.on('mouseleave', 'hexes', () => { map.getCanvas().style.cursor = '' })
         const lo = [1, ...cuts.map(c => c + 1)]
         caption({
-          client: 'MapLibre GL, styled like the QGIS map',
-          title: 'The layer QGIS reads, live in your browser',
-          sub: `Northern Gulf of Mexico AIS traffic on July 4 2024: ${hexes.features.length.toLocaleString()} H3 r7 hexes colored by AIS pings, the same collection QGIS adds through its OGC API – Features provider.`,
+          client: 'Browser twin of the QGIS layer (MapLibre GL)',
+          title: 'QGIS: the layer and how to connect',
+          sub: `QGIS is a desktop app, so this page stands in for it: the same collection (${hexes.features.length.toLocaleString()} H3 r7 hexes, northern Gulf of Mexico AIS on July 4 2024) drawn the way QGIS draws it, with the steps to add it to QGIS itself on the right.`,
           legend: RAMP.map((c, i) => [c, i < RAMP.length - 1 ? `${lo[i]}–${cuts[i]}` : `${lo[i]}+`]),
           hint: 'Click a hex for its attributes, as QGIS\u2019s Identify tool would show them.'
         })
