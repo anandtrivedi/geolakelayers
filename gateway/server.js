@@ -58,7 +58,9 @@ app.use(cors({
   methods: ['GET', 'POST'],
   allowedHeaders: ['authorization', 'content-type', 'x-databricks-warehouse'],
   exposedHeaders: ['Content-Crs'],
-  maxAge: 600
+  // Every gateway request carries Authorization, so each new URL needs a preflight; browsers cache one per URL
+  // for at most this long (Chrome caps it at 2 h), so a map panning back over the same tiles skips it
+  maxAge: 7200
 }))
 
 // Warehouses apps may use. The widget picks one per request (X-Databricks-Warehouse); anything not on
@@ -153,9 +155,14 @@ app.use('/api/ogc', ogc.consoleApi(ogcDeps))
 
 koop.register(provider)
 
-// Hashed assets can be cached; the page itself must revalidate so a deploy shows up on reload
+// The console's built assets have a content hash in their names, so they never change: cache them for a year.
+// Pages (and the demos, which aren't hashed) revalidate, so a deploy shows up on reload
+const HASHED_ASSETS = path.join(__dirname, 'public', 'assets') + path.sep
 app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res, file) => { if (file.endsWith('.html')) res.set('Cache-Control', 'no-cache') }
+  setHeaders: (res, file) => {
+    if (file.startsWith(HASHED_ASSETS)) res.set('Cache-Control', 'max-age=31536000, immutable')
+    else if (file.endsWith('.html')) res.set('Cache-Control', 'no-cache')
+  }
 }))
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }))

@@ -541,3 +541,79 @@ test('robustness: spatial references however clients send them; time given twice
     assert.equal(err && err.code, 400, mode)
   }
 }))
+
+test('buildQuery: a layer-info sample (anyRow) has no ORDER BY; pages keep theirs', () => inSpec(WKT_SPEC, () => {
+  assert.match(I.buildQuery('c.s.t', { resultRecordCount: '1' }, 't'), /ORDER BY objectid LIMIT 1$/)
+  const sample = I.buildQuery('c.s.t', { resultRecordCount: '1' }, 't', [], { anyRow: true })
+  assert.doesNotMatch(sample, /ORDER BY/)
+  assert.match(sample, /LIMIT 1$/)
+  assert.match(I.buildQuery('c.s.t', { resultRecordCount: '1', orderByFields: 'name' }, 't', [], { anyRow: true }), /ORDER BY name/, 'an explicit order is kept')
+}))
+
+test('executeAndRecord: a statement that outlives the timeout is cancelled and the request fails', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let cancelled = false
+  let closed = false
+  let rejectFetch
+  const session = {
+    executeStatement: async () => ({
+      fetchAll: () => new Promise((resolve, reject) => { rejectFetch = reject }),
+      cancel: async () => { cancelled = true; rejectFetch(new Error('Operation cancelled')) },
+      close: async () => { closed = true }
+    })
+  }
+  const run = I.executeAndRecord(session, 'SELECT 1', 'test', 't')
+  await new Promise(resolve => setImmediate(resolve))
+  t.mock.timers.tick(35 * 1000) // 30 s default + 5 s grace
+  await assert.rejects(run, e => e.code === 'QUERY_TIMEOUT')
+  assert.equal(cancelled, true)
+  assert.equal(closed, true)
+})
+
+test('executeAndRecord: a statement that finishes in time is not cancelled', async () => {
+  let cancelled = false
+  const session = { executeStatement: async () => ({ fetchAll: async () => [{ x: 1 }], cancel: async () => { cancelled = true }, close: async () => {} }) }
+  assert.deepEqual(await I.executeAndRecord(session, 'SELECT 1', 'test', 't'), [{ x: 1 }])
+  assert.equal(cancelled, false)
+})
+
+test('singleFlight: identical work running at once is shared; a failure is not kept', async () => {
+  let runs = 0
+  let finish
+  const work = () => { runs++; return new Promise(resolve => { finish = resolve }) }
+  const a = I.singleFlight('k', work)
+  const b = I.singleFlight('k', work)
+  await new Promise(resolve => setImmediate(resolve)) // the work starts on the next tick
+  finish(42)
+  assert.deepEqual(await Promise.all([a, b]), [42, 42])
+  assert.equal(runs, 1)
+  await assert.rejects(I.singleFlight('k2', async () => { throw new Error('boom') }), /boom/)
+  assert.equal(await I.singleFlight('k2', async () => 'ok'), 'ok', 'the next call runs again')
+})
+
+test('tableExtent: a timed-out extent is remembered (no rescans); other failures are retried', () => inSpec(WKT_SPEC, async () => {
+  let calls = 0
+  const failing = err => ({ executeStatement: async () => { calls++; throw err }, close: async () => {} })
+  assert.equal(await I.tableExtent('c.s.slow', failing(Object.assign(new Error('Query timed out after 30 s'), { code: 'QUERY_TIMEOUT' })), 't', 'u'), null)
+  assert.equal(await I.tableExtent('c.s.slow', failing(new Error('should not run')), 't', 'u'), null)
+  assert.equal(calls, 1, 'second layer-info request does not scan again')
+  calls = 0
+  await I.tableExtent('c.s.flaky', failing(new Error('HTTP 503')), 't', 'u')
+  await I.tableExtent('c.s.flaky', failing(new Error('HTTP 503')), 't', 'u')
+  assert.equal(calls, 2, 'a transient failure is tried again')
+}))
+
+test('getData layer info: the sample row is not ordered; with no whole-table extent the layer says "world", not the sample', withDb({}, async (db, table) => {
+  const model = new Model()
+  const info = () => new Promise((resolve, reject) => model.getData({ headers: { 'x-forwarded-access-token': 'tok' }, params: { id: table }, url: '/x/FeatureServer/0', query: {} }, (e, d) => e ? reject(e) : resolve(d)))
+  const run = db.session.executeStatement
+  db.session.executeStatement = async (sql, opts) => {
+    if (/MIN\(ST_XMin/.test(sql)) throw Object.assign(new Error('Query timed out after 30 s'), { code: 'QUERY_TIMEOUT' })
+    return run(sql, opts)
+  }
+  const first = await info()
+  const sample = features(db)[0]
+  assert.match(sample.sql, /LIMIT 1$/)
+  assert.doesNotMatch(sample.sql, /ORDER BY/)
+  assert.deepEqual([first.metadata.extent.xmin, first.metadata.extent.ymin, first.metadata.extent.xmax, first.metadata.extent.ymax], [-180, -90, 180, 90])
+}))

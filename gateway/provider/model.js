@@ -21,6 +21,19 @@ const DEFAULT_GEOMETRY_FORMAT = (process.env.GEOMETRY_FORMAT || config.geometryF
 const DEFAULT_SR = parseInt(process.env.SPATIAL_REFERENCE) || config.spatialReference || 4326
 const maxRows = parseInt(process.env.MAX_ROWS) || parseInt(config.maxRows) || 10000
 const queryTimeoutSeconds = parseInt(process.env.QUERY_TIMEOUT_SECONDS) || 30
+// Extra wait past queryTimeout before the gateway cancels, so a warehouse that does time out reports it first
+const QUERY_TIMEOUT_GRACE_MS = parseInt(process.env.QUERY_TIMEOUT_GRACE_MS) || 5000
+
+// Identical work already running (same key) is joined, not started again: a slow layer-info request that the
+// map retries, or several widgets opening the same layer, cost one warehouse statement instead of one each
+const inFlight = new Map()
+function singleFlight (key, fn) {
+  const running = inFlight.get(key)
+  if (running) return running
+  const p = Promise.resolve().then(fn).finally(() => inFlight.delete(key))
+  inFlight.set(key, p)
+  return p
+}
 const cacheTTLMs = parseInt(process.env.CACHE_TTL_MS) || 300000
 const CACHE_MAX_ENTRIES = 100
 // Big tables draw only when zoomed in (advertised as the layer's minScale, which every ArcGIS client honors)
@@ -70,9 +83,24 @@ async function executeAndRecord (session, sql, kind, taskId, params) {
   if (params && Object.keys(params).length) options.namedParameters = params
   const op = await session.executeStatement(sql, options)
   let rows
+  // The Thrift path sends queryTimeout, but the warehouse doesn't enforce it (statements ran 17 min, 2026-11-09):
+  // past the deadline, cancel the statement so it stops using the warehouse, and fail the request
+  const fetching = op.fetchAll()
+  fetching.catch(() => {}) // after a timeout nobody awaits it; the cancel makes it reject
+  let timer
+  const deadline = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error(`Query timed out after ${queryTimeoutSeconds} s`), { code: 'QUERY_TIMEOUT' })),
+      queryTimeoutSeconds * 1000 + QUERY_TIMEOUT_GRACE_MS)
+  })
   try {
-    rows = await op.fetchAll()
+    rows = await Promise.race([fetching, deadline])
+  } catch (err) {
+    if (err.code === 'QUERY_TIMEOUT' && typeof op.cancel === 'function') {
+      await op.cancel().catch(e => logger.warn(`${taskId}> Cancelling a timed-out statement failed: ${e.message}`))
+    }
+    throw err
   } finally {
+    clearTimeout(timer)
     // Closed even when the fetch fails, so the warehouse doesn't keep the operation open
     await op.close().catch(err => logger.warn(`${taskId}> Closing operation failed: ${err.message}`))
   }
@@ -281,7 +309,7 @@ Model.prototype.getData = function (req, callback) {
         const isLayerInfo = isLayerInfoPath(req.originalUrl || req.url)
         // Regular query
         const featureQuery = isLayerInfo ? { ...req.query, resultRecordCount: '1', resultOffset: '0' } : req.query
-        const { geojson } = await runFeatureQuery(session, table, featureQuery, { userToken, warehouseId, taskId: thisTask })
+        const { geojson } = await runFeatureQuery(session, table, featureQuery, { userToken, warehouseId, taskId: thisTask, anyRow: isLayerInfo })
 
         logger.info(`${thisTask}> Translated to ${geojson.features.length} features`)
         if (geojson.features.length > 0) {
@@ -332,8 +360,10 @@ Model.prototype.getData = function (req, callback) {
         }
 
         if (isLayerInfo) {
+          // No whole-table extent (it timed out, or failed): say "the world" rather than let Koop take the one
+          // sample row's bounds, which would zoom "to layer" onto a single feature
           const extent = await tableExtent(table, session, thisTask, who)
-          if (extent) geojson.metadata.extent = extent
+          geojson.metadata.extent = extent || { xmin: -180, ymin: -90, xmax: 180, ymax: 90, spatialReference: { wkid: S().spatialReference } }
           if (props.renderer) geojson.metadata.renderer = props.renderer
           if (props.labelingInfo) geojson.metadata.labelingInfo = props.labelingInfo
           if (props.time) {
@@ -678,7 +708,7 @@ async function tableCount (table, session, taskId, who = 'app') {
   const hit = countCache.get(key)
   if (hit && Date.now() - hit.at < cacheTTLMs * 6) return hit.count
   try {
-    const rows = await executeAndRecord(session, `SELECT COUNT(*) AS cnt FROM ${table}`, 'count', taskId)
+    const rows = await singleFlight(`count|${key}`, () => executeAndRecord(session, `SELECT COUNT(*) AS cnt FROM ${table}`, 'count', taskId))
     const count = Number(rows[0]?.cnt || 0)
     countCache.set(key, { count, at: Date.now() })
     return count
@@ -694,9 +724,9 @@ const extentCache = new Map()
 async function tableExtent (table, session, taskId, who = 'app') {
   const key = `${who}|${table}`
   const hit = extentCache.get(key)
-  if (hit && Date.now() - hit.at < cacheTTLMs * 6) return hit.extent
+  if (hit && Date.now() - hit.at < (hit.timedOut ? cacheTTLMs : cacheTTLMs * 6)) return hit.extent
   try {
-    const rows = await executeAndRecord(session, buildExtentQuery(table, {}), 'extent', taskId)
+    const rows = await singleFlight(`extent|${key}`, () => executeAndRecord(session, buildExtentQuery(table, {}), 'extent', taskId))
     const r = rows[0]
     const extent = r && r.xmin !== null && r.xmin !== undefined
       ? { xmin: r.xmin, ymin: r.ymin, xmax: r.xmax, ymax: r.ymax, spatialReference: { wkid: S().spatialReference } }
@@ -705,6 +735,10 @@ async function tableExtent (table, session, taskId, who = 'app') {
     return extent
   } catch (error) {
     logger.warn(`${taskId}> Extent query failed for ${table}: ${error.message}`)
+    // A whole-table extent that ran out of time will again: serve the layer without one for a while instead of
+    // scanning the table on every layer-info request (other failures may be transient and aren't kept)
+    // (sea.js, the Lakehouse//RT path, times out on its own with the same message but no code)
+    if (error.code === 'QUERY_TIMEOUT' || /^Query timed out after/.test(error.message)) extentCache.set(key, { extent: null, at: Date.now(), timedOut: true })
     return null
   }
 }
@@ -776,8 +810,10 @@ async function tableTimeInfo (table, [start, end], session, taskId, who = 'app')
   return info
 }
 
-// Build SQL query with ST functions and filters
-function buildQuery (table, query, taskId, extra = []) {
+// Build SQL query with ST functions and filters.
+// anyRow: the caller wants a sample, not a page (layer info), so no ORDER BY. On a table whose id is a hash of
+// the row, ordering means hashing every row; one 10-year track table took 10-17 min for its sample this way.
+function buildQuery (table, query, taskId, extra = [], { anyRow = false } = {}) {
   const returnGeometry = query.returnGeometry !== 'false'
   const offset = parseResultOffset(query.resultOffset)
   const limit = parseResultRecordCount(query.resultRecordCount)
@@ -793,7 +829,7 @@ function buildQuery (table, query, taskId, extra = []) {
   let orderByClause = ''
   if (query.orderByFields) {
     orderByClause = `ORDER BY ${sanitizeOrderBy(query.orderByFields)}`
-  } else {
+  } else if (!anyRow) {
     orderByClause = `ORDER BY ${S().objectId}`
   }
 
@@ -1167,16 +1203,19 @@ function isLayerInfoPath (url) {
 
 // One page of features: build the SQL, use the per-user cache, translate to GeoJSON. Shared by the
 // Esri path (getData) and OGC API – Features (queryFeatures). Must run with the table's spec in scope.
-async function runFeatureQuery (session, table, query, { userToken, warehouseId, taskId, extra = [], params = {}, stringifyComplex = true } = {}) {
-  const sql = buildQuery(table, query, taskId, extra)
+async function runFeatureQuery (session, table, query, { userToken, warehouseId, taskId, extra = [], params = {}, stringifyComplex = true, anyRow = false } = {}) {
+  const sql = buildQuery(table, query, taskId, extra, { anyRow })
   logger.info(`${taskId}> Executing query: ${sql}`)
   const key = queryCacheKey(userToken, warehouseId, sql, params)
   let rows = queryCacheGet(key)
   if (rows) {
     logger.info(`${taskId}> Cache hit (${rows.length} rows)`)
   } else {
-    rows = await executeAndRecord(session, sql, 'features', taskId, params)
-    queryCachePut(key, rows)
+    rows = await singleFlight(key, async () => {
+      const fetched = await executeAndRecord(session, sql, 'features', taskId, params)
+      queryCachePut(key, fetched)
+      return fetched
+    })
   }
   logger.info(`${taskId}> Received ${rows.length} rows`)
   return { rows, geojson: translateWithSTFunctions(rows, query, { stringifyComplex }) }
@@ -1486,5 +1525,7 @@ Model._internals = {
   queryCachePut,
   queryCacheStats,
   forgetTable,
-  countMatched
+  countMatched,
+  singleFlight,
+  tableExtent
 }
