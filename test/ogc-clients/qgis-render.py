@@ -2,7 +2,9 @@
 
 QGIS reads the collections through its own OGC API – Features provider (OAPIF) with an "API Header" auth
 config holding a Databricks OAuth token, exactly as a QGIS desktop user would connect. Run with QGIS's Python:
-  /Applications/QGIS-final-4_2_3.app/Contents/MacOS/python3.12 test/ogc-clients/qgis-render.py <service URL> <profile>
+  R=/Applications/QGIS-final-4_2_3.app/Contents/Resources/python3.12   # its stdlib, needed from a shell
+  PYTHONHOME=$R PYTHONPATH=$R:$R/site-packages:$R/lib-dynload \
+    /Applications/QGIS-final-4_2_3.app/Contents/MacOS/python3.12 test/ogc-clients/qgis-render.py <service URL> <profile>
 The token is only kept in a throwaway QGIS auth database and never printed.
 """
 import json

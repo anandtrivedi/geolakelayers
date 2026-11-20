@@ -1,0 +1,2 @@
+# Lockfiles resolve to the internal npm proxy; keep them local (same as gateway/.gitignore)
+package-lock.json

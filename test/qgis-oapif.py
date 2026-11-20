@@ -1,7 +1,9 @@
 """Load a GeoLakeLayers OGC service through QGIS's own OGC API – Features provider (headless).
 
-Run with QGIS's Python:
-  /Applications/QGIS-final-4_2_3.app/Contents/MacOS/python3.12 test/qgis-oapif.py <service landing URL> <profile>
+Run with QGIS's Python, which needs its own stdlib on PYTHONHOME/PYTHONPATH when started from a shell:
+  R=/Applications/QGIS-final-4_2_3.app/Contents/Resources/python3.12
+  PYTHONHOME=$R PYTHONPATH=$R:$R/site-packages:$R/lib-dynload \
+    /Applications/QGIS-final-4_2_3.app/Contents/MacOS/python3.12 test/qgis-oapif.py <service landing URL> <profile> [collection,...]
 
 The Databricks OAuth token comes from `databricks auth token` and is only kept in a throwaway QGIS auth
 database (an "API Header" config, the same one a QGIS user would create). It is never printed.
