@@ -1,0 +1,48 @@
+GeoLakeLayers
+Copyright (2026) Databricks, Inc.
+
+This software is provided under the Databricks License (see LICENSE). It includes the third-party works below,
+each under its own license. License texts are in licenses/ unless noted.
+
+----------------------------------------------------------------------------------------------------------------
+Included in this repository
+----------------------------------------------------------------------------------------------------------------
+
+Koop provider for Databricks (gateway/provider/)
+  Derived from koop-provider-databricks, which is based on a Koop provider originally published by Esri.
+  Portions Copyright 2020 Esri. Licensed under the Apache License, Version 2.0 (licenses/Apache-2.0.txt).
+  controller.js, index.js, model.js and routes.js come from that provider and were modified by Databricks; each
+  says so in its header. connection.js, logger.js, sea.js, validation.js and spec.js were written by Databricks.
+
+Leaflet 1.9.4 (gateway/console/public/demos/vendor/leaflet.*, images/)
+  Copyright (c) 2010-2023, Volodymyr Agafonkin; Copyright (c) 2010-2011, CloudMade.
+  BSD 2-Clause License (gateway/console/public/demos/vendor/LICENSE-leaflet.txt).
+
+MapLibre GL JS 5.24.0 (gateway/console/public/demos/vendor/maplibre-gl.*)
+  Copyright (c) 2023, MapLibre contributors.
+  BSD 3-Clause License (gateway/console/public/demos/vendor/LICENSE-maplibre.txt).
+
+OpenLayers 10.11.0 (gateway/console/public/demos/vendor/ol.*)
+  Copyright 2005-present, OpenLayers Contributors.
+  BSD 2-Clause License (gateway/console/public/demos/vendor/LICENSE-ol.md).
+
+The console build in gateway/public/ (and gateway/public/demos/, a copy of the vendor files above) bundles:
+
+  React and React DOM 18.3.1
+    Copyright (c) Facebook, Inc. and its affiliates. MIT License (licenses/MIT-React.txt).
+
+  DM Sans and DM Mono fonts (via @fontsource/dm-sans 5.3.0 and @fontsource/dm-mono 5.3.0)
+    Copyright 2014 The DM Sans Project Authors; Copyright 2020 The DM Mono Project Authors.
+    SIL Open Font License, Version 1.1 (licenses/OFL-1.1-DM-Sans.txt, licenses/OFL-1.1-DM-Mono.txt).
+
+----------------------------------------------------------------------------------------------------------------
+Installed at deploy time, not included in this repository
+----------------------------------------------------------------------------------------------------------------
+
+The gateway's npm dependencies (gateway/package.json: @databricks/sql, @koopjs/koop-core, express, cors, dotenv,
+js-sql-parser and their transitive dependencies) are downloaded when the app is deployed and are used under their
+own licenses. The ArcGIS Maps SDK for JavaScript and ArcGIS Experience Builder are loaded from Esri and are subject
+to Esri's terms.
+
+ArcGIS, Experience Builder and Esri are trademarks of Esri. Databricks, Unity Catalog and Delta Lake are trademarks
+of Databricks, Inc. Other names are trademarks of their owners.

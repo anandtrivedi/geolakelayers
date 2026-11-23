@@ -2,6 +2,10 @@
 
 *Built on Databricks Apps by Anand Trivedi. Licensed under the [Databricks License](LICENSE): free to use with Databricks services.*
 
+> **Databricks support doesn't cover this project.** It is provided as-is and is not an official Databricks
+> product. Test it in your own environment before relying on it. For bugs and questions, open a GitHub issue; the
+> maintainers answer on a best-effort basis. Report security issues as described in [SECURITY.md](SECURITY.md).
+
 Unity Catalog tables as live map layers for Experience Builder and OGC clients (QGIS, GDAL, web maps), served by
 a Databricks App and queried as each signed-in user. Nothing to install in ArcGIS. The layers come in two forms:
 
@@ -489,3 +493,15 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
 | `gateway/console/` | Console source; built into `gateway/public/` |
 | `test/` | Browser tests and screenshot scripts |
 | `screenshots/` | Images in this README |
+| `licenses/`, `NOTICE` | Third-party notices and license texts |
+
+## Support, security and license
+
+- **Support:** none from Databricks. These resources are provided as-is, for guidance; they are not official
+  Databricks tools or supported products, and Databricks support channels don't cover them. Open a GitHub issue
+  for bugs or feature requests; the maintainers help on a best-effort basis.
+- **Security:** see [SECURITY.md](SECURITY.md). Please don't report vulnerabilities in public issues.
+- **Maintainers:** Anand Trivedi ([@anandtrivedi](https://github.com/anandtrivedi)).
+- **License:** © 2026 Databricks, Inc. All rights reserved. The source in this repository is provided subject to
+  the [Databricks License](LICENSE). Included third-party code and fonts are listed in [NOTICE](NOTICE), under
+  their own licenses (texts in `licenses/`).

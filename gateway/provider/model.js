@@ -1,4 +1,8 @@
 /*
+  Derived from koop-provider-databricks, which is based on a Koop provider originally published by Esri
+  (Copyright 2020 Esri; Apache License, Version 2.0, see licenses/Apache-2.0.txt). Modified by Databricks.
+*/
+/*
   model.js
 
   This file is required. It must export a class with at least one public function called `getData`

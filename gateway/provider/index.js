@@ -1,4 +1,8 @@
 /*
+  Derived from koop-provider-databricks, which is based on a Koop provider originally published by Esri
+  (Copyright 2020 Esri; Apache License, Version 2.0, see licenses/Apache-2.0.txt). Modified by Databricks.
+*/
+/*
   index.js
 
   This file is required. It's role is to specify configuration settings.
