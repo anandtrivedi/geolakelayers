@@ -58,12 +58,21 @@ export function fail (err) {
   window.GLL_ERROR = el.textContent
 }
 
-// Links shown on every page: back to the console's OGC tab and to the other demos
+// Links shown on every page: back to the console's OGC tab and to the other demos, and the basemap switch
+// (it reloads the page with ?basemap=, which the demo links carry along)
 export function nav () {
   const el = document.createElement('nav')
   el.id = 'demo-nav'
-  const q = service === 'ais-demo' ? '' : `?service=${encodeURIComponent(service)}`
-  el.innerHTML = `<a href="./${q}">All demos</a><a href="/#ogc">Open in console</a>`
+  const keep = new URLSearchParams()
+  if (service !== 'ais-demo') keep.set('service', service)
+  if (basemapKey !== 'open') keep.set('basemap', basemapKey)
+  const q = keep.toString() ? `?${keep}` : ''
+  const swap = Object.entries(BASEMAPS).map(([key, b]) => {
+    const u = new URL(location.href)
+    if (key === 'open') u.searchParams.delete('basemap'); else u.searchParams.set('basemap', key)
+    return key === basemapKey ? `<b aria-current="true">${b.label}</b>` : `<a href="${u.pathname}${u.search}">${b.label}</a>`
+  }).join('')
+  el.innerHTML = `<span class="basemap" title="Basemap tiles: open and keyless, or Esri's">Basemap ${swap}</span><a href="./${q}">All demos</a><a href="/#ogc">Open in console</a>`
   document.body.appendChild(el)
 }
 
@@ -86,9 +95,44 @@ export const VESSEL_GROUPS = [
 ]
 export const vesselGroup = t => VESSEL_GROUPS.find(([, , test]) => test(Number(t)))
 
-// Esri Dark Gray Canvas (no key needed for display; keep the attribution). Tiles load in the viewer's browser.
-export const DARK_GRAY = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
-export const DARK_GRAY_ATTRIBUTION = 'Esri, HERE, Garmin, © OpenStreetMap contributors'
+// ---- Basemaps: open and keyless by default, Esri's with ?basemap=esri ----
+// Tiles load in the viewer's browser, never through the gateway, and none of these needs a key or an account.
+//   open  dark     OpenFreeMap "Dark": OpenStreetMap data in the OpenMapTiles schema, vector tiles with a MapLibre
+//                  style. No key, no registration, commercial use allowed; MapLibre shows the required attribution.
+//         imagery  USGS National Map imagery: public domain, U.S. only.
+//   esri  dark     Esri Dark Gray Canvas; imagery: Esri World Imagery. No key needed for display; keep the attribution.
+const ESRI_DARK = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+export const BASEMAPS = {
+  open: {
+    label: 'Open',
+    dark: { style: 'https://tiles.openfreemap.org/styles/dark' },
+    imagery: {
+      tiles: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Imagery: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map" target="_blank" rel="noopener">USGS The National Map</a>',
+      maxZoom: 16
+    }
+  },
+  esri: {
+    label: 'Esri',
+    dark: { tiles: ESRI_DARK, attribution: 'Esri, HERE, Garmin, © OpenStreetMap contributors', maxZoom: 16 },
+    imagery: {
+      tiles: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
+      maxZoom: 19
+    }
+  }
+}
+export const basemapKey = params.get('basemap') === 'esri' ? 'esri' : 'open'
+export const basemap = BASEMAPS[basemapKey]
+
+// A MapLibre style for the dark basemap: the open one is a hosted style URL, the Esri one a raster source
+export function maplibreDarkStyle () {
+  const b = basemap.dark
+  return b.style || { version: 8, sources: { dark: { type: 'raster', tileSize: 256, attribution: b.attribution, tiles: [b.tiles], maxzoom: b.maxZoom } }, layers: [{ id: 'dark', type: 'raster', source: 'dark' }] }
+}
+
+// The id of the first symbol (label) layer, so data can go under the basemap's place names; undefined: on top
+export const firstLabelLayer = map => map.getStyle().layers.find(l => l.type === 'symbol')?.id
 
 // AIS tracks join consecutive pings, so a vessel that went quiet draws a straight line across land. Split each
 // line where two pings are more than maxKm apart.

@@ -15,16 +15,12 @@
   <div id="status">Loading…</div>
   <script type="module">
     // AIS H3 r7 hexes off the U.S. Northeast, extruded by ping count, with the day's tracks underneath
-    import { checkService, items, caption, status, done, fail, nav, popupHtml, RAMP, breaks, splitJumps, DARK_GRAY, DARK_GRAY_ATTRIBUTION } from './common.js'
+    import { checkService, items, caption, status, done, fail, nav, popupHtml, RAMP, breaks, splitJumps, maplibreDarkStyle, firstLabelLayer } from './common.js'
     nav()
     const BBOX = '-76.5,38,-69,42'
     const map = new maplibregl.Map({
       container: 'map',
-      style: {
-        version: 8,
-        sources: { dark: { type: 'raster', tileSize: 256, attribution: DARK_GRAY_ATTRIBUTION, tiles: [DARK_GRAY] } },
-        layers: [{ id: 'dark', type: 'raster', source: 'dark' }]
-      },
+      style: maplibreDarkStyle(),
       center: [-72.9, 40.2], zoom: 7.1, pitch: 60, bearing: -24, attributionControl: { compact: true }
     })
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right')
@@ -39,13 +35,15 @@
         const cuts = breaks(hexes.features.map(f => f.properties.ping_count))
         const ln = ['ln', ['+', 1, ['get', 'ping_count']]]
         const color = ['interpolate', ['linear'], ln, ...cuts.flatMap((c, i) => [Math.log(1 + c), RAMP[i]]), Math.log(1 + cuts[3] * 4), RAMP[4]]
+        // data under the basemap's place names (the open basemap has them; the Esri raster doesn't)
+        const below = firstLabelLayer(map)
         map.addSource('tracks', { type: 'geojson', data: splitJumps(tracks) })
-        map.addLayer({ id: 'tracks', type: 'line', source: 'tracks', paint: { 'line-color': '#4fc3e8', 'line-width': 0.7, 'line-opacity': 0.45 } })
+        map.addLayer({ id: 'tracks', type: 'line', source: 'tracks', paint: { 'line-color': '#4fc3e8', 'line-width': 0.7, 'line-opacity': 0.45 } }, below)
         map.addSource('hexes', { type: 'geojson', data: hexes })
         map.addLayer({
           id: 'hexes', type: 'fill-extrusion', source: 'hexes',
           paint: { 'fill-extrusion-color': color, 'fill-extrusion-height': ['*', ln, 1600], 'fill-extrusion-opacity': 0.9 }
-        })
+        }, below)
         // Identify: a hex where there is one, else the track under the pointer
         const LAYERS = ['hexes', 'tracks'], COLLECTION = { hexes: 'hex_r7', tracks: 'tracks' }
         let popup

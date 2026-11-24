@@ -18,6 +18,11 @@ straight from Unity Catalog. Nothing was exported or copied first.
 `openlayers.html`, `leaflet.html`). They read `ais-demo` (or `?service=<name>`) as whoever opens them; no token
 needed, because the Databricks sign-in covers the page. Click any feature on any of them for its attributes (the GeoJSON properties the API returned), with a link to that feature's own `/items/<id>` request.
 
+Basemaps on the live versions are open and keyless by default: OpenFreeMap "Dark" (OpenStreetMap data; MapLibre, and Leaflet
+through the bundled `maplibre-gl-leaflet` plugin) and USGS National Map imagery (public domain, U.S. only) under
+OpenLayers. The **Basemap: Open · Esri** switch on every page, or `?basemap=esri`, uses Esri Dark Gray Canvas and
+World Imagery instead. The tiles load in the viewer's browser; none of them needs a key or an account.
+
 ## What every client needs
 
 - **The service's landing page URL**: `https://<gateway>/ogc/<service>`. Copy it from the console's **OGC / QGIS**
@@ -113,4 +118,4 @@ To open a page yourself, use
 `http://localhost:5199/maplibre.html?gateway=https://<gateway>#token=<token>`. The `#token` fragment is never
 sent to a server.
 
-Basemaps: Esri Dark Gray Canvas and World Imagery (keep the attribution).
+Basemaps on these showcase pages (and in the screenshots above): Esri Dark Gray Canvas and World Imagery (keep the attribution).

@@ -16,13 +16,31 @@
   <div id="ol-popup" hidden></div>
   <script type="module">
     // A day of vessel tracks in Puget Sound over satellite imagery, colored by vessel type
-    import { checkService, items, caption, status, done, fail, nav, popupHtml, VESSEL_GROUPS, vesselGroup, splitJumps } from './common.js'
+    import { checkService, items, caption, status, done, fail, nav, popupHtml, VESSEL_GROUPS, vesselGroup, splitJumps, basemap, basemapKey } from './common.js'
     nav()
     const BBOX = '-123.2,47.0,-122.2,48.4'
+    const EMPTY = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    // a tile that is nearly all white, sampled at 8x8, is a no-coverage tile
+    function dropBlankTiles (tile, src) {
+      const img = tile.getImage()
+      fetch(src).then(r => r.blob()).then(async blob => {
+        const c = new OffscreenCanvas(8, 8).getContext('2d')
+        c.drawImage(await createImageBitmap(blob, { resizeWidth: 8, resizeHeight: 8 }), 0, 0)
+        const px = c.getImageData(0, 0, 8, 8).data
+        let white = 0
+        for (let i = 0; i < px.length; i += 4) if (px[i] > 240 && px[i + 1] > 240 && px[i + 2] > 240) white++
+        if (white >= 60) { img.src = EMPTY; return }
+        const url = URL.createObjectURL(blob)
+        img.addEventListener('load', () => URL.revokeObjectURL(url), { once: true })
+        img.src = url
+      }).catch(() => { img.src = src })
+    }
     const imagery = new ol.layer.Tile({
       source: new ol.source.XYZ({
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attributions: 'Imagery © Esri, Maxar, Earthstar Geographics', maxZoom: 19
+        url: basemap.imagery.tiles, attributions: basemap.imagery.attribution, maxZoom: basemap.imagery.maxZoom, crossOrigin: 'anonymous',
+        // USGS imagery covers the U.S. only; outside it (Vancouver Island is in view) the server answers with plain
+        // white tiles. Drop those so the dark map background shows instead. Esri's World Imagery covers everywhere.
+        ...(basemapKey === 'open' ? { tileLoadFunction: dropBlankTiles } : {})
       })
     })
     // Commercial traffic on top with a dark casing; pleasure craft faint underneath (they are most of the tracks)
@@ -35,7 +53,8 @@
     const map = new ol.Map({
       target: 'map',
       layers: [imagery, new ol.layer.Vector({ source, renderOrder: null, style: f => styles[vesselGroup(f.get('vessel_type'))[0]] })],
-      view: new ol.View({ center: ol.proj.fromLonLat([-122.48, 47.72]), zoom: 9.6 })
+      // opens a little south of the tracks' center on the open basemap, so the first view stays inside USGS coverage
+      view: new ol.View({ center: ol.proj.fromLonLat(basemapKey === 'open' ? [-122.42, 47.54] : [-122.48, 47.72]), zoom: 9.6 })
     })
     // Identify: an overlay anchored where the track was clicked
     const popupEl = document.getElementById('ol-popup')

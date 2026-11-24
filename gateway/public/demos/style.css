@@ -19,6 +19,10 @@ body { font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe U
 #demo-nav { position: absolute; top: 20px; right: 20px; z-index: 1000; display: flex; gap: 8px; }
 #demo-nav a { color: #eef2f3; background: rgba(11, 32, 38, 0.88); text-decoration: none; font-size: 13px; padding: 7px 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.18); }
 #demo-nav a:hover { border-color: #4fc3e8; }
+#demo-nav .basemap { display: flex; align-items: center; gap: 2px; color: #9aa5ad; background: rgba(11, 32, 38, 0.88); font-size: 12px; padding: 3px 3px 3px 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.18); }
+#demo-nav .basemap a, #demo-nav .basemap b { font-size: 12px; padding: 4px 9px; border-radius: 6px; border: 0; background: none; margin-left: 4px; }
+#demo-nav .basemap b { color: #0b2026; background: #4fc3e8; font-weight: 600; }
+#demo-nav .basemap a:hover { background: rgba(79, 195, 232, 0.16); }
 #connect { position: absolute; right: 20px; bottom: 36px; z-index: 1000; width: 360px; background: rgba(11, 32, 38, 0.92); color: #eef2f3; border-radius: 12px; padding: 14px 18px; font-size: 13px; line-height: 1.45; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
 #connect h2 { font-size: 15px; margin: 0 0 8px; }
 #connect ol { margin: 0; padding-left: 18px; }

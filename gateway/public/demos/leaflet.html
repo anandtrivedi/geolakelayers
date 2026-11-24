@@ -8,6 +8,9 @@
   <link rel="stylesheet" href="vendor/leaflet.css">
   <link rel="stylesheet" href="style.css">
   <script src="vendor/leaflet.js"></script>
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <script src="vendor/maplibre-gl.js"></script>
+  <script src="vendor/leaflet-maplibre-gl.js"></script>
 </head>
 <body>
   <div id="map"></div>
@@ -16,13 +19,16 @@
   <script type="module">
     // Ten minutes of AIS positions in the Houston Ship Channel and Galveston Bay, using the collection's
     // time field (OGC API – Features datetime=), colored by speed over ground
-    import { checkService, items, caption, status, done, fail, nav, popupHtml, DARK_GRAY, DARK_GRAY_ATTRIBUTION } from './common.js'
+    import { checkService, items, caption, status, done, fail, nav, popupHtml, basemap } from './common.js'
     nav()
     const BBOX = '-95.3,29.0,-94.6,29.8'
     const WHEN = '2024-07-04T15:00:00Z/2024-07-04T15:10:00Z'
     const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([29.42, -94.95], 11)
     L.control.zoom({ position: 'bottomright' }).addTo(map)
-    L.tileLayer(DARK_GRAY, { attribution: DARK_GRAY_ATTRIBUTION, maxZoom: 16 }).addTo(map)
+    // The open basemap is vector tiles with a MapLibre style, drawn in Leaflet by maplibre-gl-leaflet; Esri's is raster
+    const dark = basemap.dark
+    if (dark.style) L.maplibreGL({ style: dark.style, interactive: false }).addTo(map)
+    else L.tileLayer(dark.tiles, { attribution: dark.attribution, maxZoom: dark.maxZoom }).addTo(map)
     const SPEED = [[0.5, '#5c6b73', 'Moored / drifting'], [5, '#4fc3e8', '0.5–5 kn'], [12, '#f7d154', '5–12 kn'], [Infinity, '#ff6b4a', '> 12 kn']]
     const colorOf = sog => SPEED.find(([max]) => (sog ?? 0) <= max)[1]
     try {
