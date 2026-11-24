@@ -233,8 +233,15 @@ you if it's allowed.
 
 ![Two workspaces in one app, with Map Layers](screenshots/builder-two-workspaces.png)
 
-To see a layer's rows, add a **Table** widget, pick the map, and turn on **Display layers generated at
-runtime**. Clicking a feature shows its fields when the Map widget's pop-ups are enabled.
+Start-up layers are also the widget's output data sources, so other widgets connect to them in the builder like
+to any layer: a **Filter** narrows the map, and a **Chart** and **Table** on the same data follow along. Filter
+dropdowns and chart statistics run as SQL over the whole table, not just the features on screen.
+
+![A Filter on a Unity Catalog layer narrowing the map, chart and table together](screenshots/exb-filter-zoom.gif)
+*Filter, Chart and Table connected to a start-up layer: picking a carrier filters the map, the chart and the table.*
+
+For layers viewers add at runtime, add a **Table** widget, pick the map, and turn on **Display layers generated
+at runtime**. Clicking a feature shows its fields when the Map widget's pop-ups are enabled.
 
 ## Editing
 
