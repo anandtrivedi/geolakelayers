@@ -18,9 +18,14 @@ Leaflet 1.9.4 (gateway/console/public/demos/vendor/leaflet.*, images/)
   Copyright (c) 2010-2023, Volodymyr Agafonkin; Copyright (c) 2010-2011, CloudMade.
   BSD 2-Clause License (gateway/console/public/demos/vendor/LICENSE-leaflet.txt; also copied to gateway/public/demos/vendor/).
 
-MapLibre GL JS 5.24.0 (gateway/console/public/demos/vendor/maplibre-gl.*)
+MapLibre GL JS 6.18.0 (gateway/console/public/demos/vendor/maplibre-gl.mjs, maplibre-gl-worker.mjs, maplibre-gl.css)
   Copyright (c) 2023, MapLibre contributors.
   BSD 3-Clause License (gateway/console/public/demos/vendor/LICENSE-maplibre.txt; also copied to gateway/public/demos/vendor/).
+
+maplibre-gl-leaflet 0.1.4 (gateway/console/public/demos/vendor/leaflet-maplibre-gl.js)
+  Copyright (c) 2021 MapLibre contributors; Copyright (c) 2014, Mapbox.
+  ISC License (gateway/console/public/demos/vendor/LICENSE-maplibre-gl-leaflet.txt; also copied to
+  gateway/public/demos/vendor/).
 
 OpenLayers 10.11.0 (gateway/console/public/demos/vendor/ol.*)
   Copyright 2005-present, OpenLayers Contributors.
@@ -42,7 +47,8 @@ Installed at deploy time, not included in this repository
 The gateway's npm dependencies (gateway/package.json: @databricks/sql, @koopjs/koop-core, express, cors, dotenv,
 js-sql-parser and their transitive dependencies) are downloaded when the app is deployed and are used under their
 own licenses. The ArcGIS Maps SDK for JavaScript and ArcGIS Experience Builder are loaded from Esri and are subject
-to Esri's terms.
+to Esri's terms. The demo maps load basemap tiles at run time from OpenFreeMap (OpenStreetMap data, (c) OpenStreetMap
+contributors, ODbL), the USGS National Map, and, when chosen, Esri; each is credited on the map.
 
 Screenshots of ArcGIS software in screenshots/ and gateway/public/assets/ are included for documentation; the
 software shown is (c) Esri. ArcGIS, Experience Builder and Esri are trademarks of Esri. Databricks, Unity Catalog and Delta Lake are trademarks
