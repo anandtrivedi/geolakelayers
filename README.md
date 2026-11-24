@@ -231,8 +231,6 @@ you if it's allowed.
 
 ![Workspace card in the widget settings](screenshots/settings-workspace-card.png)
 
-![Two workspaces in one app, with Map Layers](screenshots/builder-two-workspaces.png)
-
 Start-up layers are also the widget's output data sources, so other widgets connect to them in the builder like
 to any layer: a **Filter** narrows the map, and a **Chart** and **Table** on the same data follow along. Filter
 dropdowns and chart statistics run as SQL over the whole table, not just the features on screen.
