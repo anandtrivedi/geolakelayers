@@ -7,7 +7,6 @@
   <link rel="icon" href="/favicon.svg">
   <link rel="stylesheet" href="vendor/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
-  <script src="vendor/maplibre-gl.js"></script>
 </head>
 <body>
   <div id="map"></div>
@@ -15,6 +14,8 @@
   <div id="status">Loading…</div>
   <script type="module">
     // AIS H3 r7 hexes off the U.S. Northeast, extruded by ping count, with the day's tracks underneath
+    // MapLibre 6 ships as an ES module; its worker (vendor/maplibre-gl-worker.mjs) loads from beside it
+    import * as maplibregl from './vendor/maplibre-gl.mjs'
     import { checkService, items, caption, status, done, fail, nav, popupHtml, RAMP, breaks, splitJumps, maplibreDarkStyle, firstLabelLayer } from './common.js'
     nav()
     const BBOX = '-76.5,38,-69,42'

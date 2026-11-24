@@ -9,8 +9,6 @@
   <link rel="stylesheet" href="style.css">
   <script src="vendor/leaflet.js"></script>
   <link rel="stylesheet" href="vendor/maplibre-gl.css">
-  <script src="vendor/maplibre-gl.js"></script>
-  <script src="vendor/leaflet-maplibre-gl.js"></script>
 </head>
 <body>
   <div id="map"></div>
@@ -27,7 +25,13 @@
     L.control.zoom({ position: 'bottomright' }).addTo(map)
     // The open basemap is vector tiles with a MapLibre style, drawn in Leaflet by maplibre-gl-leaflet; Esri's is raster
     const dark = basemap.dark
-    if (dark.style) L.maplibreGL({ style: dark.style, interactive: false }).addTo(map)
+    if (dark.style) {
+      // the plugin is a classic script that finds MapLibre and Leaflet as globals; MapLibre 6 is a module, so
+      // expose it first, then load the plugin
+      window.maplibregl = await import('./vendor/maplibre-gl.mjs')
+      await new Promise((ok, bad) => { const s = document.createElement('script'); s.src = 'vendor/leaflet-maplibre-gl.js'; s.onload = ok; s.onerror = bad; document.head.appendChild(s) })
+      L.maplibreGL({ style: dark.style, interactive: false }).addTo(map)
+    }
     else L.tileLayer(dark.tiles, { attribution: dark.attribution, maxZoom: dark.maxZoom }).addTo(map)
     const SPEED = [[0.5, '#5c6b73', 'Moored / drifting'], [5, '#4fc3e8', '0.5–5 kn'], [12, '#f7d154', '5–12 kn'], [Infinity, '#ff6b4a', '> 12 kn']]
     const colorOf = sog => SPEED.find(([max]) => (sog ?? 0) <= max)[1]

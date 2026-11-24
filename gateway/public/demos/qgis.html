@@ -7,7 +7,6 @@
   <link rel="icon" href="/favicon.svg">
   <link rel="stylesheet" href="vendor/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
-  <script src="vendor/maplibre-gl.js"></script>
 </head>
 <body>
   <div id="map"></div>
@@ -29,6 +28,8 @@
   <script type="module">
     // The same layer and styling as the QGIS render (screenshots/ogc-qgis.png), drawn live in the browser:
     // H3 r7 hexes across the northern Gulf of Mexico in a magma ramp by AIS pings, over a dark basemap
+    // MapLibre 6 ships as an ES module; its worker (vendor/maplibre-gl-worker.mjs) loads from beside it
+    import * as maplibregl from './vendor/maplibre-gl.mjs'
     import { checkService, items, caption, status, done, fail, nav, popupHtml, landingUrl, RAMP, breaks, maplibreDarkStyle, firstLabelLayer } from './common.js'
     nav()
     const landing = document.getElementById('landing')
