@@ -2,9 +2,13 @@
 
 ## Reporting a vulnerability
 
-Please email **bugbounty@databricks.com** to report a security vulnerability. Don't open a public GitHub issue.
-Include what you found, how to reproduce it and what it could affect. We'll confirm we received your report and
-keep you updated; you can email again at any time to ask about its status.
+Please report security vulnerabilities privately through GitHub: on this repository's **Security** tab, choose
+**Report a vulnerability** ([private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)).
+Don't open a public issue. Include what you found, how to reproduce it and what it could affect. The maintainers
+will acknowledge the report and follow up in the advisory on a best-effort basis.
+
+GeoLakeLayers is a community project, not an official Databricks product, so Databricks' own security and support
+channels don't cover it.
 
 ## Supported versions
 
