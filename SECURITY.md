@@ -29,8 +29,10 @@ admin lists in the bundle variable `open_tables`, read as the service principal 
 **How the widget gets a token.** An Experience Builder page can't call the gateway with the Apps front-door cookie,
 so the widget opens `/auth/handoff?origin=<page origin>` in a popup. The user signs in there (first party), and the
 page hands the forwarded token to its opener with `postMessage`, with that exact origin as the target origin, and
-only when the origin is in the gateway's `ALLOWED_ORIGINS`. (If a first Databricks login drops the origin, the page
-targets each allowed origin in turn; the browser delivers the message only to an opener on a matching one.) The handoff page is `no-store` and can't be framed. The widget keeps
+only when the origin is in the gateway's `ALLOWED_ORIGINS`. If a first Databricks login drops the origin, the popup
+comes back with `resume=1` and no origin; the page then calls `postMessage` once per allowed origin, and the browser
+delivers each message only if the opener's origin matches that target. A window on an origin that isn't allowed
+never receives the token. The handoff page is `no-store` and can't be framed. The widget keeps
 the token in memory (never in storage) and adds it as `Authorization: Bearer` to gateway requests only. The front
 door accepts OAuth tokens, not personal access tokens. `ALLOWED_ORIGINS` is set by a Databricks admin in the bundle;
 the widget's own settings can't change it.

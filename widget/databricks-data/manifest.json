@@ -4,7 +4,7 @@
   "type": "widget",
   "version": "1.20.3",
   "exbVersion": "1.20.0",
-  "author": "Databricks Field Engineering",
+  "author": "Anand Trivedi",
   "description": "Browse Unity Catalog tables and add them to a map as live layers served by the Databricks feature gateway",
   "copyright": "",
   "license": "Databricks License",

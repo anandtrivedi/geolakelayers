@@ -1,6 +1,6 @@
 # GeoLakeLayers
 
-*Built on Databricks Apps by Anand Trivedi. Licensed under the [Databricks License](LICENSE): free to use with Databricks services.*
+*Built on Databricks Apps by Anand Trivedi. Provided under the [Databricks License](LICENSE), which limits use to use with Databricks services.*
 
 > **Databricks support doesn't cover this project.** It is provided as-is and is not an official Databricks
 > product. Test it in your own environment before relying on it. For bugs and questions, open a GitHub issue; the
@@ -44,7 +44,6 @@ exception is **Optimize for maps**, which writes a map-friendly copy of a table 
 Use the Custom Data Feed when layers have to open in Map Viewer, ArcGIS Pro or Field Maps; use GeoLakeLayers for
 per-user access, OGC clients, or when nothing can be installed in ArcGIS.
 
-![Published experience with Unity Catalog layers](screenshots/published-app-layers.png)
 
 Which client uses what (Experience Builder, OGC clients like QGIS and GDAL, scripts) is covered in
 [docs/guide.md](docs/guide.md). The same page is the console's **Help** panel.
@@ -482,6 +481,8 @@ viewers can browse and add tables, whether layers can be edited, start-up layers
   `scripts/test-all.sh` runs both (set `EXB_CLIENT` to the Developer Edition `client` folder).
 - `test/index.html` and `test/browser-test.mjs`: the widget's request path on plain ArcGIS Maps SDK, run
   headless against a deployed gateway. `test/console-shots.mjs` screenshots the console.
+- Node.js: `gateway/package.json` requires 22.23.4+ on 22.x, or 24.22.1+. Those are the first releases with the
+  fix for CVE-2026-111497; the console's Server gauge (`/api/load`) shows the version the Apps runtime runs.
 - `CLAUDE.md` has the design notes and known gotchas.
 
 ## Repository layout

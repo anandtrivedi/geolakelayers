@@ -16,15 +16,15 @@ Koop provider for Databricks (gateway/provider/)
 
 Leaflet 1.9.4 (gateway/console/public/demos/vendor/leaflet.*, images/)
   Copyright (c) 2010-2023, Volodymyr Agafonkin; Copyright (c) 2010-2011, CloudMade.
-  BSD 2-Clause License (gateway/console/public/demos/vendor/LICENSE-leaflet.txt).
+  BSD 2-Clause License (gateway/console/public/demos/vendor/LICENSE-leaflet.txt; also copied to gateway/public/demos/vendor/).
 
 MapLibre GL JS 5.24.0 (gateway/console/public/demos/vendor/maplibre-gl.*)
   Copyright (c) 2023, MapLibre contributors.
-  BSD 3-Clause License (gateway/console/public/demos/vendor/LICENSE-maplibre.txt).
+  BSD 3-Clause License (gateway/console/public/demos/vendor/LICENSE-maplibre.txt; also copied to gateway/public/demos/vendor/).
 
 OpenLayers 10.11.0 (gateway/console/public/demos/vendor/ol.*)
   Copyright 2005-present, OpenLayers Contributors.
-  BSD 2-Clause License (gateway/console/public/demos/vendor/LICENSE-ol.md).
+  BSD 2-Clause License (gateway/console/public/demos/vendor/LICENSE-ol.md; also copied to gateway/public/demos/vendor/).
 
 The console build in gateway/public/ (and gateway/public/demos/, a copy of the vendor files above) bundles:
 
@@ -44,5 +44,6 @@ js-sql-parser and their transitive dependencies) are downloaded when the app is 
 own licenses. The ArcGIS Maps SDK for JavaScript and ArcGIS Experience Builder are loaded from Esri and are subject
 to Esri's terms.
 
-ArcGIS, Experience Builder and Esri are trademarks of Esri. Databricks, Unity Catalog and Delta Lake are trademarks
+Screenshots of ArcGIS software in screenshots/ and gateway/public/assets/ are included for documentation; the
+software shown is (c) Esri. ArcGIS, Experience Builder and Esri are trademarks of Esri. Databricks, Unity Catalog and Delta Lake are trademarks
 of Databricks, Inc. Other names are trademarks of their owners.
