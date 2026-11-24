@@ -26,9 +26,9 @@ await page.waitForSelector('.node.catalog', { timeout: 60000 })
 const opened = await page.$$eval('.node.catalog', (els, c) => { const el = els.find(e => e.textContent.includes(c)); if (el) el.click(); return !!el }, process.env.CATALOG || 'main')
 if (opened) {
   await page.waitForSelector('.node.table', { timeout: 120000 }).catch(() => {})
-  await page.$$eval('.node.schema', (els, sc) => { const el = els.find(e => e.textContent.includes(sc)) || els[0]; el?.click() }, process.env.SCHEMA || 'maritime')
+  await page.$$eval('.node.schema', (els, sc) => { const el = els.find(e => e.textContent.includes(sc)) || els[0]; el?.click() }, process.env.SCHEMA || '')
   await page.waitForSelector('.node.table', { timeout: 30000 })
-  await page.$$eval('.node.table', (els, t) => { const el = els.find(e => e.textContent.includes(t)) || els[0]; el?.click() }, process.env.TABLE || 'gold_anomaly_loitering')
+  await page.$$eval('.node.table', (els, t) => { const el = els.find(e => e.textContent.includes(t)) || els[0]; el?.click() }, process.env.TABLE || '')
   await page.waitForFunction(() => !document.querySelector('.map-preview-status'), { timeout: 120000 }).catch(() => {})
   await sleep(2500)
 }
