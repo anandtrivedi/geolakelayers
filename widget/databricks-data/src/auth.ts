@@ -98,19 +98,32 @@ function memo<T> (key: string, fn: () => Promise<T>): Promise<T> {
 }
 const memoKey = (gateway: string, path: string) => `${gateway}|${warehouses[gateway] || ''}|${tokens[gateway]?.user || ''}|${path}`
 
+// A lookup that hasn't answered by then is abandoned, so a hung request (seen after a cold sign-in) fails
+// and leaves the cache instead of holding a spinner until reload. A cold catalog listing takes seconds to tens
+// of seconds, so this is generous.
+export const LOOKUP_TIMEOUT_MS = 90 * 1000
+const NO_ANSWER = 'The gateway did not answer. If this keeps happening, sign in again.'
+
 async function getJson (gateway: string, path: string): Promise<any> {
   if (!tokens[gateway]) throw new Error('Not signed in')
-  let r: Response
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), LOOKUP_TIMEOUT_MS)
   try {
-    r = await fetch(`${gateway}${path}`, { headers: gatewayHeaders(gateway) })
-  } catch {
-    // A rejected/expired token comes back as a cross-origin login redirect, which fetch reports this way
-    throw new Error('The gateway did not answer. If this keeps happening, sign in again.')
+    let r: Response
+    try {
+      r = await fetch(`${gateway}${path}`, { headers: gatewayHeaders(gateway), signal: abort.signal })
+    } catch {
+      // A rejected/expired token comes back as a cross-origin login redirect, which fetch reports this way
+      throw new Error(NO_ANSWER)
+    }
+    if (r.status === 401) { signOut(gateway, true); throw new Error('Your Databricks sign-in expired. Sign in again.') }
+    const d = await r.json().catch(() => ({}))
+    if (abort.signal.aborted) throw new Error(NO_ANSWER)
+    if (!r.ok) throw new Error(d.error?.message || d.error || `HTTP ${r.status}`)
+    return d
+  } finally {
+    clearTimeout(timer)
   }
-  if (r.status === 401) { signOut(gateway, true); throw new Error('Your Databricks sign-in expired. Sign in again.') }
-  const d = await r.json().catch(() => ({}))
-  if (!r.ok) throw new Error(d.error?.message || d.error || `HTTP ${r.status}`)
-  return d
 }
 
 /** realtime: a Lakehouse//RT warehouse (map reads there; metadata and edits stay on the gateway's bound warehouse) */

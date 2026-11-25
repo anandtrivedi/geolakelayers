@@ -114,6 +114,49 @@ describe('auth', () => {
     expect(a.getToken(GW)).toBeUndefined()
   })
 
+  test('a lookup that never answers times out, is not cached, and the retry goes out again', async () => {
+    const a = fresh()
+    a.listenForToken(GW, () => {})
+    sendToken('tok')
+    const fetchMock = (global as any).fetch as jest.Mock
+    // a request that hangs until it is aborted, like the first catalog call after a cold sign-in
+    fetchMock.mockImplementationOnce((_url: string, init: any) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+    }))
+    const first = a.fetchCatalog(GW, ['atrivedi'])
+    const caught = expect(first).rejects.toThrow('did not answer')
+    // a re-expand before the timeout shares the pending request
+    const again = a.fetchCatalog(GW, ['atrivedi'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    jest.advanceTimersByTime(a.LOOKUP_TIMEOUT_MS - 1)
+    await Promise.resolve()
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(false)
+    jest.advanceTimersByTime(1)
+    await caught
+    await expect(again).rejects.toThrow('did not answer')
+    fetchMock.mockReturnValueOnce(ok({ tables: [{ table: 'atrivedi.s.t' }] }))
+    expect(await a.fetchCatalog(GW, ['atrivedi'])).toEqual([{ table: 'atrivedi.s.t' }])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('a response body that stalls past the timeout also fails', async () => {
+    const a = fresh()
+    a.listenForToken(GW, () => {})
+    sendToken('tok')
+    const fetchMock = (global as any).fetch as jest.Mock
+    fetchMock.mockImplementationOnce((_url: string, init: any) => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      })
+    }))
+    const p = expect(a.fetchCatalogNames(GW)).rejects.toThrow('did not answer')
+    await Promise.resolve()
+    jest.advanceTimersByTime(a.LOOKUP_TIMEOUT_MS)
+    await p
+  })
+
   test('signOut clears this gateway\'s cached lookups only', async () => {
     const a = fresh()
     a.listenForToken(GW, () => {})
